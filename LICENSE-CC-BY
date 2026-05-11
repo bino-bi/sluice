@@ -1,0 +1,25 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+Documentation, example configurations, and other non-code works under `docs/`,
+`examples/`, and the Markdown files at the repository root (`README.md`,
+`CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
+`THREAT_MODEL.md`, `GOVERNANCE.md`, `ROADMAP.md`, and this file) are licensed
+under the Creative Commons Attribution 4.0 International License.
+
+The full license text is available at:
+
+  https://creativecommons.org/licenses/by/4.0/legalcode
+
+A human-readable summary is at:
+
+  https://creativecommons.org/licenses/by/4.0/
+
+Attribution notice:
+
+  Sluice documentation — Copyright (c) the Sluice authors.
+  Licensed under CC BY 4.0.
+  Source: https://github.com/bino-bi/sluice
+
+Code (under `cmd/`, `internal/`, `pkg/`, `scripts/`) is governed by
+`LICENSE` (AGPL-3.0-or-later) and `LICENSE-APACHE` (Apache-2.0 for `pkg/`);
+this file covers only the non-code artifacts listed above.

@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, '***' AS email, NULL AS ssn, NULL AS dob FROM pg.public.users",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-users-dob",
+    "ColumnMaskPolicy/mask-users-email",
+    "ColumnMaskPolicy/mask-users-ssn",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "9cd0f84c87fbabb8",
+  "masks": [
+    "pg.public.users.dob=null",
+    "pg.public.users.email=constant",
+    "pg.public.users.ssn=null"
+  ]
+}

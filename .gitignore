@@ -1,0 +1,31 @@
+# Build output
+/bin/
+/dist/
+/coverage.out
+/coverage.html
+
+# Go
+*.test
+*.out
+/vendor/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / secrets never committed
+*.local.yaml
+*.local.yml
+*.env
+.env.*
+!.env.example
+
+# goreleaser
+/dist/

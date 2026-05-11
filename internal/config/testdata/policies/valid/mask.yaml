@@ -1,0 +1,13 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["warehouse.public.customers"]
+          columns: ["email"]
+  mask:
+    type: "null"

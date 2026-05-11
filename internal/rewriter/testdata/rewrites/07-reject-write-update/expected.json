@@ -1,0 +1,8 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ACL_REJECTED",
+  "applied_policies": [
+    "SqlAccessPolicy/allow-all"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, 'high' AS email FROM pg.public.customers",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email-high",
+    "ColumnMaskPolicy/mask-email-low",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "3b36da4db7d394a8",
+  "masks": [
+    "pg.public.customers.email=constant"
+  ]
+}

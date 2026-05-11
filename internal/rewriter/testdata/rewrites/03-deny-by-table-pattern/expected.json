@@ -1,0 +1,11 @@
+{
+  "outcome": "deny",
+  "changed": false,
+  "deny_policy": "deny-pii",
+  "deny_code": "ACL_DENIED",
+  "error_code": "ACL_DENIED",
+  "applied_policies": [
+    "SqlAccessPolicy/allow-all",
+    "SqlAccessPolicy/deny-pii"
+  ]
+}

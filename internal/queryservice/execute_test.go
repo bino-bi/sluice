@@ -1,0 +1,396 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package queryservice_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/parser"
+	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/rewriter"
+	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+)
+
+// ---- fake parser ----
+
+type fakeAST struct {
+	shape       parser.QueryShape
+	tables      []parser.TableRef
+	fingerprint string
+	stmt        parser.StmtKind
+	source      string
+}
+
+func (a *fakeAST) Raw() any                   { return nil }
+func (a *fakeAST) Fingerprint() string        { return a.fingerprint }
+func (a *fakeAST) Tables() []parser.TableRef  { return a.tables }
+func (a *fakeAST) Catalogs() []string         { return []string{"pg"} }
+func (a *fakeAST) Shape() parser.QueryShape   { return a.shape }
+func (a *fakeAST) Clone() parser.AST          { c := *a; return &c }
+func (a *fakeAST) Statement() parser.StmtKind { return a.stmt }
+func (a *fakeAST) Source() string             { return a.source }
+
+type fakeParser struct {
+	ast *fakeAST
+	err error
+}
+
+func (p *fakeParser) Parse(_ context.Context, sql string) (parser.AST, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.ast == nil {
+		return &fakeAST{
+			tables:      []parser.TableRef{{Catalog: "pg", Schema: "public", Table: "orders"}},
+			stmt:        parser.StmtSelect,
+			fingerprint: "fp-in",
+			source:      sql,
+		}, nil
+	}
+	cp := *p.ast
+	cp.source = sql
+	return &cp, nil
+}
+func (p *fakeParser) Deparse(_ context.Context, _ parser.AST) (string, error) { return "", nil }
+func (p *fakeParser) Fingerprint(_ string) (string, error)                    { return "fp-in", nil }
+func (p *fakeParser) Name() string                                            { return "fake" }
+
+// ---- fake policy engine ----
+
+type fakePolicy struct {
+	decision *policy.Decision
+	err      error
+}
+
+func (p *fakePolicy) Evaluate(_ context.Context, _ policy.Input) (*policy.Decision, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.decision, nil
+}
+func (p *fakePolicy) Explain(_ context.Context, _ policy.Input) (*pkgapi.ExplainResult, error) {
+	return &pkgapi.ExplainResult{Effective: pkgapi.EffectiveDecision{Decision: "allow"}}, p.err
+}
+
+// ---- fake rewriter ----
+
+type fakeRewriter struct {
+	result *rewriter.RewriteResult
+	err    error
+}
+
+func (r *fakeRewriter) Rewrite(_ context.Context, req rewriter.RewriteRequest) (*rewriter.RewriteResult, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.result != nil {
+		return r.result, nil
+	}
+	return &rewriter.RewriteResult{
+		SQL:         req.Raw,
+		Fingerprint: "fp-out",
+	}, nil
+}
+
+// ---- fake executor ----
+
+type fakeExecutor struct {
+	columns []executor.ColumnInfo
+	rows    [][]any
+	err     error
+}
+
+func (e *fakeExecutor) Execute(_ context.Context, _ executor.Request) (*executor.Response, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
+	rowCount := new(int64)
+	iter := &fakeIter{rows: e.rows, rowCount: rowCount}
+	resp := &executor.Response{Columns: e.columns, Rows: iter, RowCount: rowCount}
+	return resp, nil
+}
+
+type fakeIter struct {
+	rows     [][]any
+	rowCount *int64
+	idx      int
+	closed   bool
+	err      error
+}
+
+func (it *fakeIter) Next() bool {
+	if it.closed || it.idx >= len(it.rows) {
+		return false
+	}
+	*it.rowCount++
+	return true
+}
+func (it *fakeIter) Scan(dest ...any) error {
+	if len(dest) != len(it.rows[it.idx]) {
+		return errors.New("fake: scan mismatch")
+	}
+	for i, v := range it.rows[it.idx] {
+		if d, ok := dest[i].(*any); ok {
+			*d = v
+		}
+	}
+	it.idx++
+	return nil
+}
+func (it *fakeIter) Err() error { return it.err }
+func (it *fakeIter) Close() error {
+	if it.closed {
+		return nil
+	}
+	it.closed = true
+	return nil
+}
+
+// ---- fake audit dispatcher ----
+
+type fakeAudit struct {
+	mu      sync.Mutex
+	records []*audit.Record
+	err     error
+}
+
+func (a *fakeAudit) Enqueue(_ context.Context, r *audit.Record) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.err != nil {
+		return a.err
+	}
+	a.records = append(a.records, r)
+	return nil
+}
+func (a *fakeAudit) all() []*audit.Record {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]*audit.Record(nil), a.records...)
+}
+
+// ---- helpers ----
+
+func buildService(t *testing.T, p *fakeParser, pol *fakePolicy, rw *fakeRewriter, ex *fakeExecutor, a *fakeAudit) *queryservice.Service {
+	t.Helper()
+	return queryservice.New(queryservice.Options{
+		Parser:   p,
+		Policy:   pol,
+		Rewriter: rw,
+		Executor: ex,
+		Audit:    a,
+		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+	})
+}
+
+// ---- tests ----
+
+func TestExecute_HappyPath(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{
+			Outcome: policy.OutcomeAllow,
+			Applied: []pkgapi.AppliedPolicy{{Kind: pkgapi.KindSQLAccessPolicy, Name: "p1"}},
+		}},
+		&fakeRewriter{},
+		&fakeExecutor{
+			columns: []executor.ColumnInfo{{Name: "id"}, {Name: "name"}},
+			rows:    [][]any{{int64(1), "alice"}, {int64(2), "bob"}},
+		},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id, name FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.QueryID == "" {
+		t.Fatalf("query id missing")
+	}
+	// Drain & close to trigger audit emission.
+	for res.Rows.Next() {
+		var id, name any
+		if err := res.Rows.Scan(&id, &name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+	}
+	if err := res.Rows.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	recs := a.all()
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 audit record, got %d", len(recs))
+	}
+	if recs[0].Decision != audit.DecisionAllow {
+		t.Fatalf("decision = %s, want allow", recs[0].Decision)
+	}
+	if recs[0].RowCount != 2 {
+		t.Fatalf("row_count = %d, want 2", recs[0].RowCount)
+	}
+	if recs[0].SQLFingerprint == "" {
+		t.Fatalf("sql_fingerprint empty")
+	}
+}
+
+func TestExecute_DenyEmitsOnce(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{
+			Outcome:    policy.OutcomeDeny,
+			DenyReason: &policy.DenyReason{PolicyName: "deny-all", Message: "blocked"},
+		}},
+		&fakeRewriter{},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT * FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatalf("expected deny error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeACLDenied {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeACLDenied)
+	}
+	if ae.Policy != "deny-all" {
+		t.Fatalf("policy = %q, want deny-all", ae.Policy)
+	}
+	recs := a.all()
+	if len(recs) != 1 {
+		t.Fatalf("deny must emit exactly 1 audit record, got %d", len(recs))
+	}
+	if recs[0].Decision != audit.DecisionDeny {
+		t.Fatalf("decision = %s, want deny", recs[0].Decision)
+	}
+}
+
+func TestExecute_RejectEmitsOnce(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{
+			Outcome:    policy.OutcomeReject,
+			Rejections: []policy.Rejection{{PolicyName: "no-cart", RuleName: "rule-1", Message: "cart blocked"}},
+		}},
+		&fakeRewriter{},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatalf("expected reject error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeACLRejected {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeACLRejected)
+	}
+	if a.all()[0].Decision != audit.DecisionReject {
+		t.Fatalf("expected reject decision in audit")
+	}
+}
+
+func TestExecute_ParseErrorWithAllow(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{err: parser.ErrSyntax},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "I AM NOT SQL",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatalf("expected syntax error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeSyntax {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeSyntax)
+	}
+	if a.all()[0].Decision != audit.DecisionError {
+		t.Fatalf("expected error decision")
+	}
+}
+
+func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{err: rewriter.ErrUnsupportedSyntax},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if err == nil {
+		t.Fatalf("expected rewrite error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeUnsupportedSyntax {
+		t.Fatalf("code = %s, want unsupported", ae.Code)
+	}
+	if len(a.all()) != 1 {
+		t.Fatalf("expected 1 audit record on rewrite error, got %d", len(a.all()))
+	}
+}
+
+func TestExecute_ExecErrorEmitsOnce(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{err: errors.New("boom")},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if err == nil {
+		t.Fatalf("expected exec error")
+	}
+	recs := a.all()
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 audit record, got %d", len(recs))
+	}
+	if recs[0].Decision != audit.DecisionError {
+		t.Fatalf("decision = %s, want error", recs[0].Decision)
+	}
+}
+
+func TestExecute_PayloadTooLarge(t *testing.T) {
+	a := &fakeAudit{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    a,
+		Limits:   queryservice.Limits{MaxSQLBytes: 10},
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "this payload is way over 10 bytes"})
+	if err == nil {
+		t.Fatalf("expected payload-too-large")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodePayloadTooLarge {
+		t.Fatalf("code = %s", ae.Code)
+	}
+}

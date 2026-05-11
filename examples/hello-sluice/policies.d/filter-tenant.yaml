@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-tenant
+  priority: 80
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
+  combine: restrictive
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenantId }}"

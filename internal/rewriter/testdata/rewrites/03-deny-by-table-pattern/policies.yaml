@@ -1,0 +1,25 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-pii
+  priority: 100
+spec:
+  effect: deny
+  message: "PII tables are off-limits"
+  errorCode: ACL_DENIED
+  match:
+    any:
+      - resources:
+          tables: ["*_pii"]

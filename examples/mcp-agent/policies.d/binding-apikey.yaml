@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The MCP stdio transport runs as a local child process — there is no
+# HTTP layer to attach a header-based identity to. The composition
+# root synthesises this subject for every tool call made over stdio.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: mcp-local
+spec:
+  claims:
+    subjectId: "subjectId"
+    groups: "groups"
+  apiKeys:
+    - id: "mcp"
+      hashRef: "secret://env/SLUICE_APIKEY_MCP_HASH"
+      groups: ["agents"]
+      claims:
+        subjectId: "mcp-agent"

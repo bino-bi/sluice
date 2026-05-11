@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Binds a single API key to a synthetic subject. The hashRef below
+# resolves to hex(HMAC-SHA256(pepper, "<id>:<material>")), with the demo
+# pepper "hello-sluice-demo-pepper" and material "world". Do not use
+# these values in production.
+#
+# To regenerate the stored hash after rotating the material:
+#   sluice apikey hash --pepper hello-sluice-demo-pepper \
+#                      --id hello --material <new-material>
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: demo-apikeys
+spec:
+  claims:
+    subjectId: "hello"
+    tenantId: "acme"
+    groups: "groups"
+  apiKeys:
+    # The presented header "X-Api-Key: sl_demo_hello.world" splits on the
+    # last "." — everything before it is the keyID, everything after is
+    # the material. So id here must match the full prefix.
+    - id: "sl_demo_hello"
+      # hex(HMAC-SHA256(pepper, "sl_demo_hello:world"))
+      hashRef: "secret://env/SLUICE_APIKEY_HELLO_HASH"
+      groups: ["analytics"]

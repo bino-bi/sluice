@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# golangci-lint v2 configuration — https://golangci-lint.run/usage/configuration/
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - depguard        # layering enforcement
+    - errcheck
+    - errorlint
+    - forbidigo       # forbid fmt.Print* outside cmd/sluice
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unused
+
+  settings:
+    depguard:
+      rules:
+        public-api-isolation:
+          # pkg/** is the public API surface. It must never depend on internal
+          # code. Enforced from day one to prevent drift.
+          files:
+            - "**/pkg/**/*.go"
+          deny:
+            - pkg: github.com/bino-bi/sluice/internal
+              desc: "pkg/** must not import internal/** (public-API isolation)"
+
+    forbidigo:
+      # fmt.Print*/Println/Printf write to stdout/stderr directly. Only the CLI
+      # composition root (cmd/sluice) is allowed to do so. Everything else
+      # must use log/slog.
+      forbid:
+        - pattern: '^fmt\.Print(ln|f)?$'
+          msg: "use log/slog instead of fmt.Print* (outside cmd/sluice)"
+      analyze-types: true
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true   # re-enable once public APIs stabilize
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+          disabled: true   # doc.go covers this; revive's check is too strict
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: unused-parameter
+          disabled: true
+        - name: unreachable-code
+        - name: redundant-import-alias
+
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    generated: lax
+    paths:
+      - __INTERNAL
+      - testdata
+    rules:
+      # forbidigo: allow fmt.Print* inside cmd/sluice (CLI output) and in *_test.go.
+      - path: '^cmd/sluice/'
+        linters:
+          - forbidigo
+      - path: '_test\.go$'
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/bino-bi/sluice

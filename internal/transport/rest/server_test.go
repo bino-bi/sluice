@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package rest_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/transport/rest"
+	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+)
+
+// fakeService satisfies the queryservice.Service shape the REST handler
+// uses. We cannot mock *queryservice.Service directly (it is a concrete
+// type), so the test spins up a real Service only when it needs to; most
+// tests drive the routes via a recording handler stub.
+type stubIdentifier struct {
+	user *identity.UserCtx
+	err  error
+}
+
+func (s *stubIdentifier) Identify(_ context.Context, _ *http.Request) (*identity.UserCtx, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.user, nil
+}
+
+func (s *stubIdentifier) Name() string { return "stub" }
+
+func TestHandleHealth_Liveness200(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    nil,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("status field: got %q want ok", body["status"])
+	}
+}
+
+func TestHandleReady_NoRegistry200(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier: &stubIdentifier{},
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/ready", nil)
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", w.Code)
+	}
+}
+
+func TestHandleVersion200(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{Identifier: &stubIdentifier{}})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/version", nil)
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", w.Code)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := body["version"]; !ok {
+		t.Fatalf("version key missing")
+	}
+}
+
+func TestHandleQuery_Unauthorized401(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier: &stubIdentifier{err: identity.ErrNoCredential},
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query",
+		strings.NewReader(`{"sql":"SELECT 1"}`))
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d want 401", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); !strings.Contains(got, "Bearer") {
+		t.Fatalf("WWW-Authenticate: got %q want Bearer", got)
+	}
+}
+
+func TestHandleQuery_BodyCap413(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0", MaxBodyBytes: 16}, rest.Deps{
+		Service:    newRealService(t),
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	// The body is longer than 16 bytes.
+	body := bytes.NewBufferString(`{"sql":"SELECT 1 AS n"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusRequestEntityTooLarge && w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 413 or 400", w.Code)
+	}
+}
+
+func TestHandleQuery_AcceptCSV(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS n"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Fatalf("Content-Type: got %q", ct)
+	}
+	if !strings.Contains(w.Body.String(), "n\n1\n") {
+		t.Fatalf("body: got %q", w.Body.String())
+	}
+}
+
+func TestHandleQuery_JSONHappyPath(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS id, 'hi' AS name"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Query-Id"); got == "" {
+		t.Fatalf("X-Query-Id header missing")
+	}
+	var body2 struct {
+		QueryID   string   `json:"query_id"`
+		Columns   []string `json:"columns"`
+		Rows      [][]any  `json:"rows"`
+		RowCount  int64    `json:"row_count"`
+		Truncated bool     `json:"truncated"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body2.Columns) != 2 || body2.Columns[0] != "id" || body2.Columns[1] != "name" {
+		t.Fatalf("columns: got %v", body2.Columns)
+	}
+	if len(body2.Rows) != 1 {
+		t.Fatalf("rows: got %d want 1", len(body2.Rows))
+	}
+}
+
+func TestHandleQuery_InvalidJSON400(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    newRealService(t),
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{not-json`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400: body=%s", w.Code, w.Body.String())
+	}
+	ae := decodeError(t, w.Body)
+	if ae.Code != pkgerr.CodeSyntax {
+		t.Fatalf("code: got %q want %q", ae.Code, pkgerr.CodeSyntax)
+	}
+}
+
+func TestShutdownIsGraceful(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{
+		Listen:          ":0",
+		ShutdownTimeout: 500 * time.Millisecond,
+	}, rest.Deps{Identifier: &stubIdentifier{}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	// ListenAndServe is not called in this test — we just verify the method
+	// terminates cleanly when the context is already done.
+	done := make(chan struct{})
+	go func() {
+		_ = srv.Shutdown(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not return")
+	}
+}
+
+// newRealService stands up a queryservice backed by fakes that accept any
+// SELECT as an allow and execute against DuckDB directly. Used by
+// handler integration tests.
+func newRealService(t *testing.T) *queryservice.Service {
+	t.Helper()
+	return newQuerySvc(t)
+}
+
+// decodeError reads an APIError JSON body.
+func decodeError(t *testing.T, r io.Reader) *pkgerr.APIError {
+	t.Helper()
+	var ae pkgerr.APIError
+	if err := json.NewDecoder(r).Decode(&ae); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	return &ae
+}
+
+var _ apitypes.QueryRequest
+var _ executor.OutputFormat

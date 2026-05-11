@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Multi-service stack: Postgres (transactional orders), MinIO
+# (S3-compatible Parquet store), a one-shot seed service that writes
+# `countries.parquet` into the bucket, and the Sluice gateway that
+# attaches both as DuckDB catalogs.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "sluice"
+      POSTGRES_PASSWORD: "demo-pg-password"
+      POSTGRES_DB: "orders"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./seed/postgres.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sluice -d orders"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "sluice-demo"
+      MINIO_ROOT_PASSWORD: "demo-s3-password"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  # One-shot seeder: writes countries.parquet into the ref-data bucket.
+  seed-parquet:
+    image: alpine:3.20
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache duckdb curl >/dev/null
+        wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+        mc alias set local http://minio:9000 sluice-demo demo-s3-password
+        mc mb -p local/ref-data || true
+        duckdb :memory: "COPY (SELECT * FROM (VALUES ('US','United States','Americas'),('DE','Germany','EMEA'),('FR','France','EMEA'),('JP','Japan','APAC')) t(code,name,region)) TO '/tmp/c.parquet' (FORMAT PARQUET);"
+        mc cp /tmp/c.parquet local/ref-data/countries.parquet
+        echo "seeded ref-data/countries.parquet"
+
+  sluice:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: sluice:cross-source-join
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed-parquet:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+      - "9091:9091"
+    environment:
+      SLUICE_APIKEY_PEPPER: "cross-source-demo-pepper"
+      SLUICE_AUDIT_GENESIS: "cross-source-demo-genesis"
+      SLUICE_APIKEY_ANALYST_HASH: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3"
+      SLUICE_PG_PASSWORD: "demo-pg-password"
+      # JSON credentials for the S3 driver — the driver parses {"key_id","secret"}.
+      SLUICE_S3_CREDS: '{"key_id":"sluice-demo","secret":"demo-s3-password"}'
+    volumes:
+      - ./server.yaml:/etc/sluice/server.yaml:ro
+      - ./policies.d:/etc/sluice/policies.d:ro
+      - ./data:/data
+    working_dir: /etc/sluice
+    command:
+      - "serve"
+      - "--config=/etc/sluice/server.yaml"
+      - "--policies-dir=/etc/sluice/policies.d"
+    restart: unless-stopped

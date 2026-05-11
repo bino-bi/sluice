@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.go      text diff=golang
+*.md      text diff=markdown
+*.yaml    text
+*.yml     text
+*.sh      text eol=lf
+
+*.png     binary
+*.jpg     binary

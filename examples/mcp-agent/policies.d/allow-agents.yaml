@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Narrow access for agent sessions: the products table only. No PII,
+# no joins across catalogs, and nothing that could expose the catalog
+# shape beyond the one table. Keep the matrix tight — agents tend to
+# explore, and the policy is what keeps that exploration on rails.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-agents
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["agents"]
+        resources:
+          tables:
+            - "shop.main.products"

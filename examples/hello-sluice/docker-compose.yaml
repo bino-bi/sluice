@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# hello-sluice docker-compose — one Sluice service with the seeded SQLite
+# catalog bind-mounted read-only. Build from the repository root so the
+# Dockerfile sees the source tree.
+
+services:
+  sluice:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: sluice:hello
+    container_name: hello-sluice
+    ports:
+      - "8080:8080"  # REST
+      - "9091:9091"  # admin (optional)
+    environment:
+      # Secrets resolved via `secret://env/...` in server.yaml and policies.
+      SLUICE_APIKEY_PEPPER: "hello-sluice-demo-pepper"
+      SLUICE_AUDIT_GENESIS: "hello-sluice-demo-genesis"
+      # hex(HMAC-SHA256(pepper, "sl_demo_hello:world")) — same value printed by
+      #   sluice apikey hash --pepper hello-sluice-demo-pepper \
+      #                      --id sl_demo_hello --material world
+      SLUICE_APIKEY_HELLO_HASH: "c0c9ab61795cbbb79767ef51dd0199cfbfd93ed4fd5fe767af1e81192f385153"
+    volumes:
+      - ./server.yaml:/etc/sluice/server.yaml:ro
+      - ./policies.d:/etc/sluice/policies.d:ro
+      - ./data:/data
+    working_dir: /etc/sluice
+    command:
+      - "serve"
+      - "--config=/etc/sluice/server.yaml"
+      - "--policies-dir=/etc/sluice/policies.d"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/sluice", "version"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+    restart: unless-stopped

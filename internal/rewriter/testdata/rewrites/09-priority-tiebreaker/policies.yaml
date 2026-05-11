@@ -1,0 +1,44 @@
+# Two masks target the same column. The higher priority wins.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email-low
+  priority: 10
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: constant
+    args:
+      value: "low"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email-high
+  priority: 90
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: constant
+    args:
+      value: "high"

@@ -1,0 +1,41 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: constant
+    args:
+      value: "redacted@example.com"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-ssn
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["customers"]
+          columns: ["ssn"]
+  mask:
+    type: "null"

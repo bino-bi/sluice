@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: analyst
+spec:
+  claims:
+    subjectId: "subjectId"
+    groups: "groups"
+  apiKeys:
+    - id: "analyst"
+      hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"
+      groups: ["analytics"]
+      claims:
+        subjectId: "pii-analyst"

@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: nightly
+
+on:
+  schedule:
+    # 02:37 UTC every night — offset to avoid the top-of-hour runner rush.
+    - cron: '37 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]   # macOS runner containers blocked on CGO+docker
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: sluice
+          POSTGRES_DB: sluice_it
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: sluice
+          MYSQL_DATABASE: sluice_it
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -psluice"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: sluice
+          MINIO_ROOT_PASSWORD: sluicesluice
+        ports: ['9000:9000']
+        options: --health-cmd="curl -f http://localhost:9000/minio/health/live" --health-interval=10s
+    env:
+      INTEGRATION: '1'
+      POSTGRES_DSN: postgres://postgres:sluice@localhost:5432/sluice_it?sslmode=disable
+      MYSQL_DSN: root:sluice@tcp(localhost:3306)/sluice_it
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: sluice
+      S3_SECRET_KEY: sluicesluice
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: test-integration
+        run: make test-integration
+
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: FuzzParse
+            pkg: ./internal/pgquery/
+          - target: FuzzRecordCanonical
+            pkg: ./internal/audit/
+          - target: FuzzTemplate
+            pkg: ./internal/policy/
+          - target: FuzzRewrite
+            pkg: ./internal/rewriter/
+          - target: FuzzValidateArgs
+            pkg: ./pkg/mask/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: ${{ matrix.target }} 10m
+        run: go test -run=^$ -fuzz=${{ matrix.target }} -fuzztime=10m ${{ matrix.pkg }}
+
+  bench:
+    name: bench (regression telemetry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: run benchmarks
+        run: go test -run=^$ -bench=. -benchmem -benchtime=2s ./... | tee bench.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: bench.txt
+          retention-days: 30
+
+  coverage:
+    name: coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: make coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 30

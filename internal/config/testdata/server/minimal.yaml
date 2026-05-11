@@ -1,0 +1,8 @@
+rest:
+  listen: ":8081"
+logging:
+  level: debug
+  format: text
+limits:
+  maxRows: 5000
+  queryTimeout: 15s

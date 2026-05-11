@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, NULL AS ssn FROM pg.hr.employees",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-ssn",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "ae9b3e9951ff4b86",
+  "masks": [
+    "pg.hr.employees.ssn=null"
+  ]
+}

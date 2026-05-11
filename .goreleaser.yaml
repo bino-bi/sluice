@@ -1,0 +1,182 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# goreleaser v2 configuration — https://goreleaser.com
+#
+# Multi-arch release: linux/darwin amd64+arm64, windows amd64. CGO on because
+# pg_query_go and go-duckdb both require it. Cross-compilation uses the
+# ghcr.io/goreleaser/goreleaser-cross image (release.yaml pins the version) so
+# all five platforms build in one container without a host-side toolchain dance.
+#
+# Per plan/25-release.md (Slice 10): docker manifest lists, cosign keyless
+# signatures, syft SBOM (CycloneDX), SLSA provenance via the release workflow.
+
+version: 2
+
+project_name: sluice
+
+before:
+  hooks:
+    - go mod download
+    - go mod tidy
+
+builds:
+  - id: sluice-cgo
+    main: ./cmd/sluice
+    binary: sluice
+    env:
+      - CGO_ENABLED=1
+      - >-
+        {{- if eq .Os "linux" }}{{- if eq .Arch "amd64" }}CC=x86_64-linux-gnu-gcc{{ end }}{{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}{{- end }}
+      - >-
+        {{- if eq .Os "darwin" }}{{- if eq .Arch "amd64" }}CC=o64-clang{{ end }}{{- if eq .Arch "arm64" }}CC=oa64-clang{{ end }}{{- end }}
+      - >-
+        {{- if eq .Os "windows" }}{{- if eq .Arch "amd64" }}CC=x86_64-w64-mingw32-gcc{{ end }}{{- end }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/bino-bi/sluice/internal/version.Version={{.Version}}
+      - -X github.com/bino-bi/sluice/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/bino-bi/sluice/internal/version.CommitFull={{.FullCommit}}
+      - -X github.com/bino-bi/sluice/internal/version.BuildTime={{.Date}}
+      - -X github.com/bino-bi/sluice/internal/version.Parser=pg_query
+
+archives:
+  - id: default
+    ids: [sluice-cgo]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - LICENSE-APACHE
+      - LICENSE-CC-BY
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+      - SECURITY.md
+      - THREAT_MODEL.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-dev+{{ .ShortCommit }}'
+
+changelog:
+  disable: true
+
+dockers:
+  - id: sluice-amd64
+    ids: [sluice-cgo]
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - 'ghcr.io/bino-bi/sluice:{{ .Version }}-amd64'
+      - 'ghcr.io/bino-bi/sluice:latest-amd64'
+    dockerfile: Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title=sluice
+      - --label=org.opencontainers.image.description=Policy-enforcing SQL/MCP gateway
+      - --label=org.opencontainers.image.url=https://github.com/bino-bi/sluice
+      - --label=org.opencontainers.image.source=https://github.com/bino-bi/sluice
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+  - id: sluice-arm64
+    ids: [sluice-cgo]
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - 'ghcr.io/bino-bi/sluice:{{ .Version }}-arm64'
+      - 'ghcr.io/bino-bi/sluice:latest-arm64'
+    dockerfile: Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title=sluice
+      - --label=org.opencontainers.image.description=Policy-enforcing SQL/MCP gateway
+      - --label=org.opencontainers.image.url=https://github.com/bino-bi/sluice
+      - --label=org.opencontainers.image.source=https://github.com/bino-bi/sluice
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+docker_manifests:
+  - name_template: 'ghcr.io/bino-bi/sluice:{{ .Version }}'
+    image_templates:
+      - 'ghcr.io/bino-bi/sluice:{{ .Version }}-amd64'
+      - 'ghcr.io/bino-bi/sluice:{{ .Version }}-arm64'
+  - name_template: 'ghcr.io/bino-bi/sluice:latest'
+    image_templates:
+      - 'ghcr.io/bino-bi/sluice:latest-amd64'
+      - 'ghcr.io/bino-bi/sluice:latest-arm64'
+
+sboms:
+  - id: default
+    artifacts: archive
+    documents:
+      - '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.sbom.cdx.json'
+    cmd: syft
+    args: ['$artifact', '--output', 'cyclonedx-json=$document']
+
+signs:
+  - id: cosign
+    cmd: cosign
+    signature: '${artifact}.sig'
+    certificate: '${artifact}.pem'
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - id: cosign-docker
+    cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - --yes
+      - ${artifact}@${digest}
+    output: true
+
+release:
+  github:
+    owner: bino-bi
+    name: sluice
+  prerelease: auto
+  draft: false
+  name_template: '{{ .Tag }}'
+  header: |
+    ## Sluice {{ .Tag }}
+
+    See [CHANGELOG.md](https://github.com/bino-bi/sluice/blob/main/CHANGELOG.md) for highlights.
+  footer: |
+    ---
+    Verify artefact signatures with cosign:
+
+    ```
+    cosign verify-blob \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github.com/bino-bi/sluice/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    ```

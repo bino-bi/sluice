@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Two API keys bound to two distinct tenants. The claim layout is the
+# same for both — only the literal tenantId differs, so a single
+# RowFilterPolicy template captures both subjects.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: tenants
+spec:
+  claims:
+    subjectId: "subjectId"
+    tenantId: "tenantId"
+    groups: "groups"
+  apiKeys:
+    - id: "acme"
+      hashRef: "secret://env/SLUICE_APIKEY_ACME_HASH"
+      groups: ["analytics"]
+      claims:
+        subjectId: "acme-analyst"
+        tenantId: "acme"
+    - id: "beta"
+      hashRef: "secret://env/SLUICE_APIKEY_BETA_HASH"
+      groups: ["analytics"]
+      claims:
+        subjectId: "beta-analyst"
+        tenantId: "beta"

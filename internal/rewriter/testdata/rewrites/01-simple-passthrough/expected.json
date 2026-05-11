@@ -1,0 +1,9 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM pg.public.orders WHERE active = true",
+  "changed": false,
+  "applied_policies": [
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "12110514f8724917"
+}

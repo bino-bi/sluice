@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: CC-BY-4.0
+site_name: Sluice
+site_description: Policy-enforcing SQL/MCP gateway for DuckDB-attached data sources.
+site_url: https://bino-bi.github.io/sluice/
+site_author: Sluice maintainers
+copyright: Copyright &copy; Sluice maintainers — docs CC-BY-4.0
+repo_name: bino-bi/sluice
+repo_url: https://github.com/bino-bi/sluice
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - Install: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+      - First query: getting-started/first-query.md
+  - Concepts:
+      - concepts/index.md
+      - Policies: concepts/policies.md
+      - Row filters: concepts/row-filters.md
+      - Column masks: concepts/column-masks.md
+      - Identity: concepts/identity.md
+      - Audit: concepts/audit.md
+  - Reference:
+      - reference/index.md
+      - CLI: reference/cli.md
+      - Policy schema: reference/policy-schema.md
+      - REST API: reference/rest-api.md
+      - MCP tools: reference/mcp.md
+      - Metrics: reference/metrics.md
+      - Error codes: reference/error-codes.md
+      - Configuration: reference/configuration.md
+  - Operations:
+      - operations/index.md
+      - Deployment: operations/deployment.md
+      - Configuration reload: operations/hot-reload.md
+      - Observability: operations/observability.md
+      - Data sources: operations/data-sources.md
+  - Security:
+      - security/index.md
+      - Threat model: security/threat-model.md
+      - Hardening: security/hardening.md
+      - Key rotation: security/key-rotation.md
+  - Compliance:
+      - compliance/index.md
+      - GDPR: compliance/gdpr.md
+      - BSI C5: compliance/bsi-c5.md
+      - SOC 2: compliance/soc2.md
+  - Cookbook:
+      - cookbook/index.md
+      - Multi-tenant isolation: cookbook/multi-tenant.md
+      - PII masking: cookbook/pii-masking.md
+      - Break-glass access: cookbook/break-glass.md
+      - Cross-source joins: cookbook/cross-source-joins.md
+      - MCP agents: cookbook/mcp-agents.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bino-bi/sluice

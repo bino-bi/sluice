@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} ${{ matrix.tags }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        tags: ['', 'pure_parser']
+        include:
+          # Windows exercises the build path only — cgo-heavy DuckDB tests
+          # are proven by the Linux/macOS lanes. Keeps tier-2 coverage
+          # without drowning the PR lane in flaky MSYS toolchain failures.
+          - os: windows-latest
+            tags: ''
+            build-only: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+          cache: true
+
+      - name: Verify module is tidy
+        if: matrix.build-only != 'true'
+        run: |
+          go mod download
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: go vet
+        run: go vet -tags "${{ matrix.tags }}" ./...
+
+      - name: go build
+        run: go build -tags "${{ matrix.tags }}" ./...
+
+      - name: go test
+        if: matrix.build-only != 'true'
+        run: go test -race -short -tags "${{ matrix.tags }}" ./...
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

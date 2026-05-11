@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "1415448f36f41db9",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

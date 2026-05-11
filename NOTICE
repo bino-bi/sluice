@@ -1,0 +1,10 @@
+Sluice — SQL access-policy gateway
+Copyright (c) 2026 bino-bi contributors
+
+This product is licensed under the GNU Affero General Public License, version 3
+or any later version (AGPL-3.0-or-later), with the exception of files under
+`pkg/` and `sdk/`, which are licensed under the Apache License, Version 2.0.
+
+See LICENSE for the AGPL text and LICENSE-APACHE for the Apache text.
+
+Every source file carries an SPDX license identifier in its header.

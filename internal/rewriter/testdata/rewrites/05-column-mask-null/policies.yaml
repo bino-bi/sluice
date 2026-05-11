@@ -1,0 +1,25 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-hr
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-ssn
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["employees"]
+          columns: ["ssn"]
+  mask:
+    type: "null"

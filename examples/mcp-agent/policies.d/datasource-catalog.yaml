@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: shop
+spec:
+  type: sqlite
+  path: ./data/shop.db
+  readonly: true
+  schemas: ["main"]

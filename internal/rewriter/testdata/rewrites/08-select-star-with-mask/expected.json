@@ -1,0 +1,15 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, 'redacted@example.com' AS email, NULL AS ssn FROM pg.public.customers",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "ColumnMaskPolicy/mask-ssn",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "3b36da4db7d394a8",
+  "masks": [
+    "pg.public.customers.email=constant",
+    "pg.public.customers.ssn=null"
+  ]
+}

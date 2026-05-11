@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: docs-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs-deploy.yaml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install mkdocs + material
+        run: |
+          pip install --upgrade pip
+          pip install \
+            'mkdocs==1.6.*' \
+            'mkdocs-material==9.5.*' \
+            'pymdown-extensions==10.*' \
+            'mkdocs-minify-plugin==0.8.*'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Regenerate reference docs
+        run: |
+          if [ -f Makefile ] && grep -q '^docs-generate:' Makefile; then
+            make docs-generate
+          fi
+
+      - name: Build mkdocs site
+        run: |
+          if [ -f mkdocs.yml ]; then
+            mkdocs build --strict --site-dir site
+          else
+            echo "mkdocs.yml not yet committed; skipping build"
+            mkdir -p site
+            echo "Sluice docs coming soon." > site/index.html
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

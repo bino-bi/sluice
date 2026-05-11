@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: CC-BY-4.0
+services:
+  sluice:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: sluice:pii-masking
+    container_name: pii-masking-sluice
+    ports:
+      - "8080:8080"
+      - "9091:9091"
+    environment:
+      SLUICE_APIKEY_PEPPER: "pii-masking-demo-pepper"
+      SLUICE_AUDIT_GENESIS: "pii-masking-demo-genesis"
+      SLUICE_APIKEY_ANALYST_HASH: "4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f"
+    volumes:
+      - ./server.yaml:/etc/sluice/server.yaml:ro
+      - ./policies.d:/etc/sluice/policies.d:ro
+      - ./data:/data
+    working_dir: /etc/sluice
+    command:
+      - "serve"
+      - "--config=/etc/sluice/server.yaml"
+      - "--policies-dir=/etc/sluice/policies.d"
+    restart: unless-stopped

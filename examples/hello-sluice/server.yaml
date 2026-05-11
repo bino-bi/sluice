@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Sluice server configuration for the hello-sluice example.
+
+rest:
+  listen: ":8080"
+  maxBodyBytes: 1048576
+  requestTimeout: 30s
+
+admin:
+  enabled: true
+  listen: ":9091"
+  # In real deployments put this in a secret manager and use
+  # token: "secret://env/SLUICE_ADMIN_TOKEN" once the secrets-env provider
+  # accepts literal values. For the example we inline:
+  token: "demo-admin-token-change-me"
+
+duckdb:
+  memoryLimit: "512MB"
+  threads: 2
+  maxOpen: 4
+  maxIdle: 2
+
+datasources:
+  # Directory is resolved from the single policies.directory — this block
+  # only toggles runtime behaviour.
+  failFast: true
+
+policies:
+  directory: "./policies.d"
+  reload: true
+
+audit:
+  file:
+    path: "/data/audit"
+    rotateDaily: true
+    rotateSizeMB: 64
+    # For the demo we use a literal env-resolved seed. Operators should
+    # point this at Vault / AWS Secrets Manager / GCP Secret Manager.
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  # HMAC pepper for API-key verification. Stored as an env-resolved
+  # secret; the demo startup sets it to "hello-sluice-demo-pepper".
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"
+
+logging:
+  level: "info"
+  format: "json"
+
+limits:
+  maxRows: 10000
+  maxSqlBytes: 65536
+  queryTimeout: 15s
+  maxConcurrent: 32

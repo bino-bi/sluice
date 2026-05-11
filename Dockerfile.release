@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Release Dockerfile consumed by goreleaser. The binary is built outside
+# the container (by goreleaser-cross) and copied in — no builder stage
+# here. Image labels are supplied by goreleaser via --label flags.
+#
+# For a local-build image (one-shot `docker build .`), use the root
+# Dockerfile, which carries its own golang:1.25-bookworm builder stage.
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+COPY sluice /usr/local/bin/sluice
+
+USER nonroot:nonroot
+WORKDIR /var/lib/sluice
+
+EXPOSE 8080 8081 9090
+
+ENTRYPOINT ["/usr/local/bin/sluice"]
+CMD ["serve"]

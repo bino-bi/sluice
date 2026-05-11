@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: CC-BY-4.0
+services:
+  sluice:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: sluice:multi-tenant
+    container_name: multi-tenant-sluice
+    ports:
+      - "8080:8080"
+      - "9091:9091"
+    environment:
+      SLUICE_APIKEY_PEPPER: "multi-tenant-demo-pepper"
+      SLUICE_AUDIT_GENESIS: "multi-tenant-demo-genesis"
+      # HMAC-SHA256 of the key material over the demo pepper, hex-encoded.
+      # Regenerate with `./bin/sluice apikey hash` once that subcommand lands
+      # (v0.2). For the demo these match the key strings in the README.
+      SLUICE_APIKEY_ACME_HASH: "7f1b8d3a2c5e6f4a9b0d1e2f3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d"
+      SLUICE_APIKEY_BETA_HASH: "8a2c9e4b3d6f5a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b"
+    volumes:
+      - ./server.yaml:/etc/sluice/server.yaml:ro
+      - ./policies.d:/etc/sluice/policies.d:ro
+      - ./data:/data
+    working_dir: /etc/sluice
+    command:
+      - "serve"
+      - "--config=/etc/sluice/server.yaml"
+      - "--policies-dir=/etc/sluice/policies.d"
+    restart: unless-stopped

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Keep the Docker build context small.
+
+.git
+.github
+.claude
+__INTERNAL
+bin
+dist
+coverage.out
+coverage.html
+testdata/**/*.duckdb
+testdata/**/*.sqlite
+examples/*/data
+*.md
+!README.md
+Dockerfile
+.dockerignore
+.goreleaser.yaml
+.golangci.yaml
+.editorconfig
+.gitattributes
+.gitignore
