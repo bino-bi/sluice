@@ -67,6 +67,10 @@ type Options struct {
 	// ERR_APPROVAL_PENDING.
 	Approvals        approvalBroker
 	ApprovalSyncWait time.Duration
+
+	// Budget, when set, enforces per-subject daily budgets: Check runs
+	// pre-admission and Record accumulates usage after execution.
+	Budget budgetGate
 }
 
 // Limits controls request-level bounds the service enforces before it
@@ -242,4 +246,10 @@ type auditEmitter interface {
 // rateLimiter wraps the subset of *ratelimit.Limiter we need.
 type rateLimiter interface {
 	Allow(subject, issuer string) bool
+}
+
+// budgetGate wraps the subset of *budget.Manager we need.
+type budgetGate interface {
+	Check(ctx context.Context, subject, issuer string) error
+	Record(subject, issuer string, cpu time.Duration, rows int64)
 }

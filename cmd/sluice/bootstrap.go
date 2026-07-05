@@ -12,6 +12,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/budget"
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/datasource"
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/duckdbfile" // driver registration
@@ -64,6 +65,7 @@ type runtimeDeps struct {
 	rateLimiter  *ratelimit.Limiter
 	rewriteCache *policycache.Cache
 	approvals    *approval.Broker
+	budget       *budget.Manager
 	rest         *rest.Server
 	mcp          *mcp.Server
 	admin        *admin.Server
@@ -253,6 +255,12 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		return nil, fmt.Errorf("approval broker: %w", err)
 	}
 
+	// 14d. Per-subject budget manager (opt-in, SQLite-backed).
+	deps.budget, err = buildBudgetManager(scfg, snap, deps.log)
+	if err != nil {
+		return nil, fmt.Errorf("budget manager: %w", err)
+	}
+
 	qopts := queryservice.Options{
 		Parser:          deps.parser,
 		Policy:          deps.policyEngine,
@@ -280,6 +288,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if deps.approvals != nil {
 		qopts.Approvals = deps.approvals
 		qopts.ApprovalSyncWait = scfg.Approval.SyncWait
+	}
+	if deps.budget != nil {
+		qopts.Budget = deps.budget
 	}
 	deps.service = queryservice.New(qopts)
 
@@ -348,6 +359,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 				bySub, byIss := buildRateSpecs(cur)
 				deps.rateLimiter.SetSpecs(bySub, byIss)
 			}
+			if deps.budget != nil {
+				deps.budget.SetSpecs(buildBudgetSpecs(cur))
+			}
 			if deps.rewriteCache != nil {
 				deps.rewriteCache.Purge()
 			}
@@ -404,6 +418,10 @@ func (d *runtimeDeps) Close(ctx context.Context) {
 	}
 	if d.watcher != nil {
 		_ = d.watcher.Close()
+	}
+	if d.budget != nil {
+		// Final flush so the last window of usage is persisted.
+		_ = d.budget.Close(ctx)
 	}
 	if d.auditDisp != nil {
 		_ = d.auditDisp.Close(ctx)

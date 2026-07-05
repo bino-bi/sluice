@@ -192,6 +192,11 @@ type auditedRows struct {
 	closed  bool
 	iterErr error
 	parent  *QueryResult
+	// Budget write-back (set only when a budget manager is configured).
+	recordBudget  bool
+	budgetSubject string
+	budgetIssuer  string
+	execDur       time.Duration
 }
 
 func (r *auditedRows) Next() bool {
@@ -247,5 +252,10 @@ func (r *auditedRows) Close() error {
 		setErrorCode(comp, closeErr)
 	}
 	r.svc.emit(context.Background(), comp, r.start)
+
+	// Budget write-back: record the executor duration + rows served once.
+	if r.recordBudget && r.svc.opts.Budget != nil {
+		r.svc.opts.Budget.Record(r.budgetSubject, r.budgetIssuer, r.execDur, comp.RowCount)
+	}
 	return closeErr
 }

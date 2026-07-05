@@ -51,6 +51,19 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 	}
 
+	// 0c. Per-subject daily budget (pre-admission). A subject over its
+	// budget is refused before any work. Usage is recorded post-execution.
+	if s.opts.Budget != nil && req.User != nil {
+		if err := s.opts.Budget.Check(ctx, req.User.Subject, req.User.Issuer); err != nil {
+			rec := s.buildAuditBase(req, qid, nil)
+			rec.Decision = audit.DecisionError
+			rec.ErrorCode = string(pkgerr.CodeBudgetExceeded)
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.FromError(err).WithQueryID(qid)
+		}
+	}
+
 	if len(req.SQL) > s.opts.Limits.MaxSQLBytes {
 		rec := s.buildAuditBase(req, qid, nil)
 		rec.Decision = audit.DecisionError
@@ -292,13 +305,23 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		Decision:   audit.DecisionAllow,
 		DurationMs: 0,
 	}
-	qr.Rows = &auditedRows{
+	ar := &auditedRows{
 		inner:  resp.Rows,
 		svc:    s,
 		qid:    qid,
 		start:  start,
 		parent: qr,
 	}
+	// Budget usage: capture the execute duration now (excludes client
+	// streaming so a slow reader does not burn budget); rows are known at
+	// Close. Record fires once in Close.
+	if s.opts.Budget != nil && req.User != nil {
+		ar.budgetSubject = req.User.Subject
+		ar.budgetIssuer = req.User.Issuer
+		ar.execDur = s.opts.Clock().Sub(start)
+		ar.recordBudget = true
+	}
+	qr.Rows = ar
 	// Release concurrency slot when the iterator is closed — but don't
 	// leak semaphore slots if the caller forgets. We release now because
 	// DuckDB holds its own connection pool slot for the duration, and

@@ -72,6 +72,11 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `approval.grantTtl` | `Duration` | `5m0s` | `SLUICE_APPROVAL__GRANTTTL` |
 | `approval.maxPending` | `int` | `1000` | `SLUICE_APPROVAL__MAXPENDING` |
 | `approval.sqlSampleBytes` | `int` | `2048` | `SLUICE_APPROVAL__SQLSAMPLEBYTES` |
+| `budget.enabled` | `bool` | `false` | `SLUICE_BUDGET__ENABLED` |
+| `budget.stateDir` | `string` | `./state` | `SLUICE_BUDGET__STATEDIR` |
+| `budget.flushInterval` | `Duration` | `5s` | `SLUICE_BUDGET__FLUSHINTERVAL` |
+| `budget.failClosed` | `bool` | `true` | `SLUICE_BUDGET__FAILCLOSED` |
+| `budget.retentionDays` | `int` | `35` | `SLUICE_BUDGET__RETENTIONDAYS` |
 
 ## Secrets
 

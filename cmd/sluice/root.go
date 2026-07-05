@@ -26,6 +26,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAPIKeyCmd())
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newMCPCmd())
+	root.AddCommand(newBudgetCmd())
 
 	return root
 }

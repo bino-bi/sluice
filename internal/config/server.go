@@ -29,6 +29,7 @@ type ServerConfig struct {
 	Limits      LimitsConfig      `mapstructure:"limits"`
 	Cache       CacheConfig       `mapstructure:"cache"`
 	Approval    ApprovalConfig    `mapstructure:"approval"`
+	Budget      BudgetConfig      `mapstructure:"budget"`
 }
 
 // RESTConfig configures the public REST transport. TLS is MVP-optional.
@@ -148,6 +149,15 @@ type CacheConfig struct {
 	Rewrite RewriteCacheConfig `mapstructure:"rewrite"`
 }
 
+// BudgetConfig configures per-subject daily budget enforcement.
+type BudgetConfig struct {
+	Enabled       bool          `mapstructure:"enabled"`
+	StateDir      string        `mapstructure:"stateDir"`
+	FlushInterval time.Duration `mapstructure:"flushInterval"`
+	FailClosed    bool          `mapstructure:"failClosed"`
+	RetentionDays int           `mapstructure:"retentionDays"`
+}
+
 // ApprovalConfig configures the human-approval workflow. The feature
 // activates when at least one ApprovalPolicy is loaded; PublicBaseURL is
 // then required (validated at serve boot).
@@ -253,6 +263,13 @@ func DefaultServerConfig() ServerConfig {
 			MaxPending:     1000,
 			SQLSampleBytes: 2048,
 		},
+		Budget: BudgetConfig{
+			Enabled:       false,
+			StateDir:      "./state",
+			FlushInterval: 5 * time.Second,
+			FailClosed:    true,
+			RetentionDays: 35,
+		},
 	}
 }
 
@@ -353,4 +370,10 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("approval.grantTtl", d.Approval.GrantTTL)
 	v.SetDefault("approval.maxPending", d.Approval.MaxPending)
 	v.SetDefault("approval.sqlSampleBytes", d.Approval.SQLSampleBytes)
+
+	v.SetDefault("budget.enabled", d.Budget.Enabled)
+	v.SetDefault("budget.stateDir", d.Budget.StateDir)
+	v.SetDefault("budget.flushInterval", d.Budget.FlushInterval)
+	v.SetDefault("budget.failClosed", d.Budget.FailClosed)
+	v.SetDefault("budget.retentionDays", d.Budget.RetentionDays)
 }
