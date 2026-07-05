@@ -14,6 +14,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/schema"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
@@ -72,6 +73,21 @@ type RewriteResult struct {
 	Fingerprint string
 	Changed     bool
 	Rewrites    []string
+	// PostMasks lists columns that must be masked in Go after execution
+	// (FPE, fake, jitter, hmac). ColumnIndex is the zero-based position in
+	// the result set; queryservice builds one mask per entry.
+	PostMasks []PostMask
+}
+
+// PostMask describes one post-query masking instruction bound to a result
+// column position.
+type PostMask struct {
+	ColumnIndex int
+	TableKey    string
+	Column      string
+	Type        apitypes.MaskType
+	Args        pkgmask.Args
+	Policy      string
 }
 
 // Rewrite applies req.Decision to req.AST. The general flow is:
@@ -216,6 +232,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		Fingerprint: fp,
 		Changed:     true,
 		Rewrites:    state.rewrites,
+		PostMasks:   state.postMasks,
 	}, nil
 }
 
@@ -230,8 +247,9 @@ type state struct {
 	masks          *pkgmask.Registry
 	salts          pkgmask.SaltStore
 
-	params   []any
-	rewrites []string
+	params    []any
+	rewrites  []string
+	postMasks []PostMask
 }
 
 // needsMutation reports whether the decision requires any AST change.

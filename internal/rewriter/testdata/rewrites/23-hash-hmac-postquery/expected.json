@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, email FROM pg.hr.employees",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/hmac-email",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "378322db32f486ea",
+  "masks": [
+    "pg.hr.employees.email=hash"
+  ],
+  "post_masks": [
+    "pg.hr.employees.email=hash@1"
+  ]
+}

@@ -236,6 +236,8 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Logger:          deps.log,
 		RateLimiter:     deps.rateLimiter,
 		AuditBestEffort: !scfg.Audit.FailClosed,
+		Keys:            secrets.NewKeyStore(deps.resolver),
+		Salts:           secrets.NewSaltStore(deps.resolver),
 		Limits: queryservice.Limits{
 			DefaultMaxRows: scfg.Limits.MaxRows,
 			MaxRowsCeiling: scfg.Limits.MaxRowsCeiling,

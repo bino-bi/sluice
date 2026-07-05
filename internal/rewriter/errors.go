@@ -24,8 +24,16 @@ var (
 	// columns for the target table.
 	ErrSchemaMissing = errors.New("rewriter: schema not available for expansion")
 
-	// ErrMaskUnsupported marks a mask type without an MVP provider.
-	ErrMaskUnsupported = errors.New("rewriter: mask provider not enabled in MVP")
+	// ErrMaskUnsupported marks a mask type without a registered provider.
+	ErrMaskUnsupported = errors.New("rewriter: mask provider not enabled")
+
+	// ErrMaskPostQueryContext marks a post-query-masked column appearing
+	// somewhere other than a bare top-level select item — a WHERE/HAVING/
+	// JOIN/GROUP/ORDER predicate or a wrapping expression. Filtering or
+	// computing on the raw value of an FPE/fake/jitter-masked column is an
+	// inference oracle, so the request is refused. Maps to
+	// pkg/errors.CodeMaskContext.
+	ErrMaskPostQueryContext = errors.New("rewriter: post-query masked column used outside a bare select item")
 
 	// ErrForeignAST indicates the AST did not come from the pg_query
 	// backend — the MVP rewriter is pg_query-only.

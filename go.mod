@@ -3,6 +3,7 @@ module github.com/bino-bi/sluice
 go 1.25.0
 
 require (
+	github.com/capitalone/fpe v1.2.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.2

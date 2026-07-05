@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
+	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
 // Options wires the service together. Parser, Policy, Rewriter, Executor,
@@ -44,6 +45,13 @@ type Options struct {
 	// returned. When true, an audit enqueue failure is logged and the query
 	// proceeds anyway.
 	AuditBestEffort bool
+
+	// Masks resolves post-query mask providers (FPE, fake, jitter, hmac).
+	// Nil falls back to mask.Default(). Keys and Salts resolve their key /
+	// salt references from internal/secrets.
+	Masks *pkgmask.Registry
+	Keys  pkgmask.KeyStore
+	Salts pkgmask.SaltStore
 }
 
 // Limits controls request-level bounds the service enforces before it

@@ -173,6 +173,30 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 		return nil, execErrToAPI(execErr, qid)
 	}
 
+	// 5b. Post-query mask decorators (FPE, fake, jitter, hmac). Build them
+	// before the audit gate so a construction failure refuses the query
+	// with nothing served and nothing falsely audited as allowed.
+	if len(rewriteResp.PostMasks) > 0 {
+		masked, mErr := s.buildMaskedRows(ctx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		if mErr != nil {
+			_ = resp.Rows.Close()
+			setErrorCode(rec, mErr)
+			rec.Decision = audit.DecisionError
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, toAPIError(mErr, qid)
+		}
+		resp.Rows = masked
+		if rec.Extras == nil {
+			rec.Extras = map[string]any{}
+		}
+		labels := make([]string, 0, len(rewriteResp.PostMasks))
+		for _, pm := range rewriteResp.PostMasks {
+			labels = append(labels, pm.TableKey+"."+pm.Column+"="+string(pm.Type))
+		}
+		rec.Extras["post_masks"] = labels
+	}
+
 	// 6. Fail-closed audit gate. Durably record the access decision BEFORE
 	// any row reaches the caller. When fail-closed (the default) an enqueue
 	// failure refuses the query so no data is served unaudited. A completion
@@ -296,6 +320,8 @@ func toAPIError(err error, qid string) error {
 	}
 	// Rewriter sentinels.
 	switch {
+	case stderrors.Is(err, rewriter.ErrMaskPostQueryContext):
+		return pkgerr.Wrap(pkgerr.CodeMaskContext, err).WithQueryID(qid)
 	case stderrors.Is(err, rewriter.ErrUnsupportedSyntax):
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
 	case stderrors.Is(err, rewriter.ErrDeparseFailed):

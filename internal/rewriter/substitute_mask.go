@@ -25,6 +25,15 @@ func (s *state) applySubstituteMask(raw *pg.ParseResult) error {
 	if raw == nil || len(s.decision.ColumnMasks) == 0 {
 		return nil
 	}
+	// Post-query masks (FPE, fake, jitter, hmac) are planned first: bare
+	// top-level select items are recorded for Go-side masking, and any
+	// other use of such a column is refused. The SQL substitution pass
+	// then leaves those columns untouched.
+	if s.hasPostQueryMasks() {
+		if err := s.planPostMasks(raw); err != nil {
+			return err
+		}
+	}
 	for _, stmt := range raw.Stmts {
 		if stmt == nil {
 			continue
@@ -235,6 +244,11 @@ func (s *state) maybeSubstituteColumnRef(n *pg.Node, aliases aliasMap) (*pg.Node
 	}
 	mask, tableKey, ok := s.lookupMaskForColumn(aliases, qualifier, column)
 	if !ok {
+		return nil, "", nil
+	}
+	// Post-query masks are handled by planPostMasks; leave the column ref
+	// intact here so the value returns raw for Go-side masking.
+	if s.isPostQueryMask(mask) {
 		return nil, "", nil
 	}
 	expr, err := s.buildMaskExpr(mask, tableKey, column, n)

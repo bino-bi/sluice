@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -56,6 +57,7 @@ type goldenExpected struct {
 	Fingerprint string    `json:"fingerprint,omitempty"` // kept for audit wiring; may be empty
 	Masks       []string  `json:"masks,omitempty"`       // "table.column=maskType" for quick-grep
 	Filters     []string  `json:"filters,omitempty"`     // sorted table keys with active filter
+	PostMasks   []string  `json:"post_masks,omitempty"`  // "table.column=maskType@index" for post-query masks
 	_           [0]string // guard against accidental field reorder — JSON keys are the ABI
 }
 
@@ -160,15 +162,25 @@ func runGoldenFixture(t *testing.T, dir string) {
 	switch {
 	case rewriteErr != nil:
 		var apiErr *pkgerr.APIError
-		if errors.As(rewriteErr, &apiErr) {
+		switch {
+		case errors.As(rewriteErr, &apiErr):
 			got.ErrorCode = string(apiErr.Code)
 			got.DenyPolicy = apiErr.Policy
+		case errors.Is(rewriteErr, rewriter.ErrMaskPostQueryContext):
+			got.ErrorCode = string(pkgerr.CodeMaskContext)
+		case errors.Is(rewriteErr, rewriter.ErrUnsupportedSyntax):
+			got.ErrorCode = string(pkgerr.CodeUnsupportedSyntax)
 		}
 	case res != nil:
 		got.SQL = res.SQL
 		got.Changed = res.Changed
 		got.Params = res.Params
 		got.Fingerprint = res.Fingerprint
+		for _, pm := range res.PostMasks {
+			got.PostMasks = append(got.PostMasks,
+				pm.TableKey+"."+pm.Column+"="+string(pm.Type)+"@"+itoaGolden(pm.ColumnIndex))
+		}
+		sort.Strings(got.PostMasks)
 	}
 	if parseErr != nil && rewriteErr != nil && got.ErrorCode == "" {
 		got.ErrorCode = "ERR_SYNTAX"
@@ -247,6 +259,9 @@ func compareExpected(t *testing.T, want, got goldenExpected) {
 	}
 	if !stringSliceEqual(want.Filters, got.Filters) {
 		t.Errorf("filters: want %v got %v", want.Filters, got.Filters)
+	}
+	if !stringSliceEqual(want.PostMasks, got.PostMasks) {
+		t.Errorf("post_masks: want %v got %v", want.PostMasks, got.PostMasks)
 	}
 	// Fingerprint intentionally not asserted — pg_query bumps the hash
 	// every release and noise shouldn't block SQL-level goldens.
@@ -327,4 +342,8 @@ type goldenSaltStore struct{}
 
 func (goldenSaltStore) Get(_ context.Context, _ string) ([]byte, error) {
 	return []byte("golden-salt"), nil
+}
+
+func itoaGolden(n int) string {
+	return strconv.Itoa(n)
 }

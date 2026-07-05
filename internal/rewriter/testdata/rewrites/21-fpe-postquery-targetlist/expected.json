@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, ssn FROM pg.hr.employees",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/fpe-ssn",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "e90e5ac34a8db5d6",
+  "masks": [
+    "pg.hr.employees.ssn=fpe"
+  ],
+  "post_masks": [
+    "pg.hr.employees.ssn=fpe@1"
+  ]
+}

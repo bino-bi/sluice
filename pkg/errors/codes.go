@@ -18,6 +18,7 @@ const (
 	CodeMultipleStatements Code = "ERR_MULTIPLE_STATEMENTS"
 	CodeUnsupportedSyntax  Code = "ERR_UNSUPPORTED_SYNTAX"
 	CodeRewriteFailed      Code = "ERR_REWRITE_FAILED"
+	CodeMaskContext        Code = "ERR_MASK_UNSUPPORTED_CONTEXT"
 
 	// Identity / authorization
 	CodeUnauthorized      Code = "ERR_UNAUTHORIZED"
@@ -59,6 +60,7 @@ var httpStatusByCode = map[Code]int{
 	CodeMultipleStatements:    http.StatusBadRequest,
 	CodeUnsupportedSyntax:     http.StatusBadRequest,
 	CodeRewriteFailed:         http.StatusBadRequest,
+	CodeMaskContext:           http.StatusBadRequest,
 	CodeUnauthorized:          http.StatusUnauthorized,
 	CodeForbidden:             http.StatusForbidden,
 	CodeACLDenied:             http.StatusForbidden,
@@ -85,6 +87,7 @@ var defaultMessage = map[Code]string{
 	CodeMultipleStatements:    "only a single statement is allowed per request",
 	CodeUnsupportedSyntax:     "SQL feature not supported",
 	CodeRewriteFailed:         "policy rewrite failed",
+	CodeMaskContext:           "a post-query masked column cannot appear in a filter, join, or expression",
 	CodeUnauthorized:          "authentication required",
 	CodeForbidden:             "access forbidden",
 	CodeACLDenied:             "access denied by policy",
@@ -128,6 +131,7 @@ func AllCodes() []Code {
 		CodeMultipleStatements,
 		CodeUnsupportedSyntax,
 		CodeRewriteFailed,
+		CodeMaskContext,
 		CodeUnauthorized,
 		CodeForbidden,
 		CodeACLDenied,

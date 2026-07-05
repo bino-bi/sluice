@@ -2,7 +2,12 @@
 
 package mask
 
-import "fmt"
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+)
 
 // hashProvider replaces a value with its hex digest. Algorithm "sha256"
 // runs in SQL (optionally salted via SaltRef); "hmac_sha256" requires the
@@ -40,15 +45,50 @@ func (hashProvider) MaskArrow(_ MaskArrowContext) error {
 	return ErrSQLOnly
 }
 
-// ValidateArgs accepts algorithm "" (defaults to sha256) or "sha256".
-// "hmac_sha256" is rejected until the post-query mask path lands.
+// ValidateArgs accepts algorithm "" (defaults to sha256), "sha256", or
+// "hmac_sha256". The HMAC variant requires a saltRef (the HMAC key) and
+// runs post-query.
 func (hashProvider) ValidateArgs(a Args) error {
 	switch a.Algorithm {
 	case "", "sha256":
 		return nil
 	case "hmac_sha256":
-		return fmt.Errorf("%w: algorithm hmac_sha256 requires the post-query mask path (not yet enabled)", ErrInvalidArgs)
+		if a.SaltRef == "" {
+			return fmt.Errorf("%w: hmac_sha256 requires saltRef (the HMAC key)", ErrInvalidArgs)
+		}
+		return nil
 	default:
-		return fmt.Errorf("%w: algorithm %q unknown (use sha256)", ErrInvalidArgs, a.Algorithm)
+		return fmt.Errorf("%w: algorithm %q unknown (use sha256 or hmac_sha256)", ErrInvalidArgs, a.Algorithm)
 	}
+}
+
+// PostQuery reports whether these args select the post-query path. Only
+// hmac_sha256 does; plain sha256 runs in SQL.
+func (hashProvider) PostQuery(a Args) bool {
+	return a.Algorithm == "hmac_sha256"
+}
+
+// NewRowMask builds the HMAC-SHA256 masker, resolving the key from the
+// salt store.
+func (hashProvider) NewRowMask(ctx RowMaskContext) (RowMask, error) {
+	if ctx.Salts == nil {
+		return nil, fmt.Errorf("%w: hmac_sha256 requires a salt store", ErrInvalidArgs)
+	}
+	key, err := ctx.Salts.Get(ctx.Ctx, ctx.Args.SaltRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve hmac key: %w", err)
+	}
+	return &hmacRowMask{key: key}, nil
+}
+
+type hmacRowMask struct{ key []byte }
+
+// Mask returns the hex HMAC-SHA256 of the value.
+func (m *hmacRowMask) Mask(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	h := hmac.New(sha256.New, m.key)
+	_, _ = fmt.Fprintf(h, "%v", value)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

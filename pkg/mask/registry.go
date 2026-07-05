@@ -90,5 +90,8 @@ func builtins() []Provider {
 		newHashProvider(),
 		newRegexProvider(),
 		newTruncateProvider(),
+		newFPEProvider(),
+		newJitterProvider(),
+		newFakeProvider(),
 	}
 }
