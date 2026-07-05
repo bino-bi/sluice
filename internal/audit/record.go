@@ -19,6 +19,7 @@ type EventType string
 // EventType constants.
 const (
 	EventQuery          EventType = "query"
+	EventQueryResult    EventType = "query-result"
 	EventPolicyDecision EventType = "policy-decision"
 	EventConfigReload   EventType = "config-reload"
 	EventAuthEvent      EventType = "auth-event"

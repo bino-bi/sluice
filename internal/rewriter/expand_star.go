@@ -136,8 +136,8 @@ func (s *state) fromNeedsExpansion(aliases aliasMap) bool {
 		if _, ok := s.decision.RowFilters[tkey]; ok {
 			return true
 		}
-		for maskKey := range s.decision.ColumnMasks {
-			if maskKey[:len(tkey)+1] == tkey+"." {
+		for _, m := range s.decision.ColumnMasks {
+			if m.TableKey == tkey {
 				return true
 			}
 		}

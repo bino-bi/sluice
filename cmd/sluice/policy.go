@@ -62,6 +62,16 @@ Exit codes mirror 'sluice config validate':
 				}
 				return &exitError{Code: 1, Err: err}
 			}
+			// Structural decode passed; also run the policy compiler so a
+			// manifest that is schema-valid but uses an unimplemented feature
+			// (e.g. a partial/hash mask, a CEL condition, an enforcementMode
+			// other than Enforce) fails here at validate time — with a precise
+			// kind/name/field message — rather than aborting a live reload.
+			if _, cerr := policy.Compile(context.Background(), snap); cerr != nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), cerr.Error())
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "1 policy compile error(s)")
+				return &exitError{Code: 3}
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"policies OK: %s (%d objects, digest %s)\n",
 				args[0], len(snap.Policies), shortDigest(snap.Digest),

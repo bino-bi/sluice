@@ -29,8 +29,12 @@ type Decision struct {
 	ColumnMasks map[string]*CompiledMask   // key: catalog.schema.table.column
 	Rejections  []Rejection
 	Applied     []apitypes.AppliedPolicy
-	Evaluated   int
-	Duration    time.Duration
+	// Shadow lists policies that matched but ran in Audit / DryRun mode:
+	// they did not affect this decision but are recorded so operators can
+	// see what a not-yet-enforced policy would have done.
+	Shadow    []apitypes.AppliedPolicy
+	Evaluated int
+	Duration  time.Duration
 }
 
 // DenyReason carries the policy that produced a deny outcome.

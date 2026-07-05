@@ -12,16 +12,17 @@ type SubjectBinding struct {
 
 // SubjectBindingSpec is the body of a SubjectBinding.
 type SubjectBindingSpec struct {
-	Issuer       string          `yaml:"issuer,omitempty" json:"issuer,omitempty"`
-	Audience     string          `yaml:"audience,omitempty" json:"audience,omitempty"`
-	JWKSURL      string          `yaml:"jwksUrl,omitempty" json:"jwksUrl,omitempty"`
-	JWKSCacheTTL Duration        `yaml:"jwksCacheTtl,omitempty" json:"jwksCacheTtl,omitempty"`
-	ClockSkew    Duration        `yaml:"clockSkew,omitempty" json:"clockSkew,omitempty"`
-	Claims       ClaimPaths      `yaml:"claims,omitempty" json:"claims,omitempty"`
-	GroupsSource string          `yaml:"groupsSource,omitempty" json:"groupsSource,omitempty"`
-	RateLimit    *RateLimitSpec  `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
-	Budget       *BudgetSpec     `yaml:"budget,omitempty" json:"budget,omitempty"`
-	APIKeys      []APIKeyBinding `yaml:"apiKeys,omitempty" json:"apiKeys,omitempty"`
+	Issuer        string          `yaml:"issuer,omitempty" json:"issuer,omitempty"`
+	Audience      string          `yaml:"audience,omitempty" json:"audience,omitempty"`
+	JWKSURL       string          `yaml:"jwksUrl,omitempty" json:"jwksUrl,omitempty"`
+	HMACSecretRef string          `yaml:"hmacSecretRef,omitempty" json:"hmacSecretRef,omitempty"`
+	JWKSCacheTTL  Duration        `yaml:"jwksCacheTtl,omitempty" json:"jwksCacheTtl,omitempty"`
+	ClockSkew     Duration        `yaml:"clockSkew,omitempty" json:"clockSkew,omitempty"`
+	Claims        ClaimPaths      `yaml:"claims,omitempty" json:"claims,omitempty"`
+	GroupsSource  string          `yaml:"groupsSource,omitempty" json:"groupsSource,omitempty"`
+	RateLimit     *RateLimitSpec  `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
+	Budget        *BudgetSpec     `yaml:"budget,omitempty" json:"budget,omitempty"`
+	APIKeys       []APIKeyBinding `yaml:"apiKeys,omitempty" json:"apiKeys,omitempty"`
 }
 
 // ClaimPaths maps well-known subject attributes onto JWT claim paths.

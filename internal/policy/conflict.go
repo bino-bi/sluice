@@ -5,6 +5,7 @@ package policy
 import (
 	"sort"
 
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -20,35 +21,40 @@ import (
 //     mode; restrictive policies AND together, permissive ones OR.
 //  4. Masks per column follow priority desc, specificity desc, name asc.
 //  5. Reject rules are appended verbatim (one per firing rule).
-func resolve(matched []*CompiledPolicy, tables []parser.TableRef) *Decision {
+func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action) *Decision {
 	dec := &Decision{
 		Outcome:     OutcomeAllow,
 		RowFilters:  map[string]*CompiledFilter{},
 		ColumnMasks: map[string]*CompiledMask{},
 		Applied:     make([]apitypes.AppliedPolicy, 0, len(matched)),
 	}
+	// Partition by enforcement mode: only Enforce policies shape the
+	// decision; Audit / DryRun policies are recorded as shadow outcomes.
+	enforced := make([]*CompiledPolicy, 0, len(matched))
 	for _, p := range matched {
-		dec.Applied = append(dec.Applied, apitypes.AppliedPolicy{
-			Kind:     p.Kind,
-			Name:     p.Name,
-			Priority: p.Priority,
-		})
+		ap := apitypes.AppliedPolicy{Kind: p.Kind, Name: p.Name, Priority: p.Priority}
+		if p.Enforcement == apitypes.EnforcementAudit || p.Enforcement == apitypes.EnforcementDryRun {
+			dec.Shadow = append(dec.Shadow, ap)
+			continue
+		}
+		enforced = append(enforced, p)
+		dec.Applied = append(dec.Applied, ap)
 	}
 
 	// Step 1 + 2: access gate.
-	if denyOrAllow(matched, dec); dec.Outcome == OutcomeDeny {
+	if denyOrAllow(enforced, dec); dec.Outcome == OutcomeDeny {
 		// Deny short-circuits — downstream steps do not run.
 		return dec
 	}
 
 	// Step 3: row filters per table.
-	collectRowFilters(matched, tables, dec)
+	collectRowFilters(enforced, tables, user, action, dec)
 
 	// Step 4: column masks per column.
-	collectColumnMasks(matched, tables, dec)
+	collectColumnMasks(enforced, tables, user, action, dec)
 
 	// Step 5: reject rules.
-	for _, p := range matched {
+	for _, p := range enforced {
 		if p.Kind != apitypes.KindQueryRejectPolicy || p.Reject == nil {
 			continue
 		}
@@ -121,16 +127,16 @@ func denyOrAllow(matched []*CompiledPolicy, dec *Decision) {
 // collectRowFilters walks every matched RowFilterPolicy and folds its
 // predicate into dec.RowFilters[tableKey]. Multiple filters on the same
 // table are combined per the policy's Combine mode.
-func collectRowFilters(matched []*CompiledPolicy, tables []parser.TableRef, dec *Decision) {
+func collectRowFilters(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, dec *Decision) {
 	for _, p := range matched {
 		if p.Kind != apitypes.KindRowFilterPolicy || p.RowFilter == nil {
 			continue
 		}
-		tableRefs := p.Match.MatchingTables(MatchContext{Tables: tables})
+		tableRefs := p.Match.MatchingTables(MatchContext{User: user, Tables: tables, Action: action})
 		if p.Exclude != nil && len(tableRefs) > 0 {
 			kept := tableRefs[:0]
 			for _, t := range tableRefs {
-				if !p.Exclude.Match(MatchContext{Tables: []parser.TableRef{t}}) {
+				if !p.Exclude.Match(MatchContext{User: user, Tables: []parser.TableRef{t}, Action: action}) {
 					kept = append(kept, t)
 				}
 			}
@@ -172,7 +178,7 @@ func combinePredicates(a, b *CompiledPredicate, combine apitypes.Combine) *Compi
 // collectColumnMasks walks every matched ColumnMaskPolicy and selects,
 // per column, the winning mask. Ordering is priority desc, specificity
 // desc, name asc — stable and deterministic.
-func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, dec *Decision) {
+func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, dec *Decision) {
 	type candidate struct {
 		policy      *CompiledPolicy
 		tableKey    string
@@ -184,9 +190,9 @@ func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, dec
 		if p.Kind != apitypes.KindColumnMaskPolicy || p.ColumnMask == nil {
 			continue
 		}
-		tableRefs := p.Match.MatchingTables(MatchContext{Tables: tables})
+		tableRefs := p.Match.MatchingTables(MatchContext{User: user, Tables: tables, Action: action})
 		for _, t := range tableRefs {
-			if p.Exclude != nil && p.Exclude.Match(MatchContext{Tables: []parser.TableRef{t}}) {
+			if p.Exclude != nil && p.Exclude.Match(MatchContext{User: user, Tables: []parser.TableRef{t}, Action: action}) {
 				continue
 			}
 			cands = append(cands, candidate{

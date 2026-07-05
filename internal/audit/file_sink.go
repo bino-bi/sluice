@@ -12,11 +12,49 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// auditNameRe matches the trailing YYYY-MM-DD[-seq] of an audit filename,
+// independent of the configured prefix.
+var auditNameRe = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.jsonl$`)
+
+// auditNameKey returns the (date, seq) sort key for an audit filename.
+func auditNameKey(name string) (string, int, bool) {
+	m := auditNameRe.FindStringSubmatch(name)
+	if m == nil {
+		return "", 0, false
+	}
+	seq := 0
+	if m[2] != "" {
+		seq, _ = strconv.Atoi(m[2])
+	}
+	return m[1], seq, true
+}
+
+// sortAuditNames orders audit filenames chronologically by (date, seq)
+// rather than lexicographically. A size-rotated `...-D-1.jsonl` must sort
+// AFTER the seq-0 `...-D.jsonl`, which plain byte order gets wrong because
+// '-' (0x2D) sorts before '.' (0x2E). Unparseable names fall back to
+// lexicographic order so the sort stays total.
+func sortAuditNames(names []string) {
+	sort.Slice(names, func(i, j int) bool {
+		di, si, oki := auditNameKey(names[i])
+		dj, sj, okj := auditNameKey(names[j])
+		if !oki || !okj {
+			return names[i] < names[j]
+		}
+		if di != dj {
+			return di < dj
+		}
+		return si < sj
+	})
+}
 
 // FileOptions configures a FileSink.
 type FileOptions struct {
@@ -251,7 +289,7 @@ func (s *FileSink) openLatest() error {
 		}
 		picks = append(picks, name)
 	}
-	sort.Strings(picks)
+	sortAuditNames(picks)
 
 	now := s.clock().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)

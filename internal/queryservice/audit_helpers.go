@@ -144,8 +144,9 @@ func tableKey(t parser.TableRef) string {
 }
 
 // emit finalises durationMs on rec and pushes it onto the audit
-// dispatcher. Enqueue errors are logged but not returned — we do not want
-// to mask the real query error with an audit error on response paths.
+// dispatcher. Enqueue errors are logged but not returned — used on paths
+// that serve no data (deny / reject / error), where masking the real error
+// with an audit error would be counterproductive.
 func (s *Service) emit(ctx context.Context, rec *audit.Record, start time.Time) {
 	rec.DurationMs = s.opts.Clock().Sub(start).Milliseconds()
 	if err := s.opts.Audit.Enqueue(ctx, rec); err != nil {
@@ -157,14 +158,36 @@ func (s *Service) emit(ctx context.Context, rec *audit.Record, start time.Time) 
 	}
 }
 
-// auditedRows is the RowIterator wrapper that emits exactly one audit
-// record when the caller closes the iterator. Close is idempotent on the
-// audit side: only the first Close emits.
+// emitAccess is the fail-closed audit gate for the data-serving (allow)
+// path. It durably records the access decision before any row is returned.
+// When the enqueue fails and the service is fail-closed (the default), it
+// returns ERR_AUDIT_UNAVAILABLE so the caller refuses to serve; in
+// best-effort mode the failure is logged and nil is returned.
+func (s *Service) emitAccess(ctx context.Context, rec *audit.Record, start time.Time) error {
+	rec.DurationMs = s.opts.Clock().Sub(start).Milliseconds()
+	if err := s.opts.Audit.Enqueue(ctx, rec); err != nil {
+		s.opts.Logger.Error("audit enqueue failed",
+			"query_id", rec.QueryID,
+			"decision", rec.Decision,
+			"error", err.Error(),
+		)
+		if !s.opts.AuditBestEffort {
+			return pkgerr.New(pkgerr.CodeAuditUnavailable).WithQueryID(rec.QueryID)
+		}
+	}
+	return nil
+}
+
+// auditedRows is the RowIterator wrapper that emits the best-effort
+// query-result completion record when the caller closes the iterator. The
+// access decision itself was already durably recorded (fail-closed) before
+// the iterator was handed out; this record adds the final RowCount and
+// Truncated for forensics. Close is idempotent: only the first Close emits.
 type auditedRows struct {
 	inner executor.RowIterator
 	// owner / bookkeeping needed to finish the audit record.
 	svc     *Service
-	rec     *audit.Record
+	qid     string
 	start   time.Time
 	closed  bool
 	iterErr error
@@ -203,23 +226,26 @@ func (r *auditedRows) Close() error {
 	r.closed = true
 	closeErr := r.inner.Close()
 
-	// Row count & truncated are finalised on the inner iterator's Close.
+	// Completion record: the access was already audited (fail-closed) before
+	// any row was served, so this best-effort record only adds the final
+	// RowCount / Truncated (and any late iteration error) for forensics.
+	comp := &audit.Record{
+		EventType: audit.EventQueryResult,
+		QueryID:   r.qid,
+		Decision:  audit.DecisionAllow,
+	}
 	if r.parent != nil {
 		if r.parent.RowCount != nil {
-			r.rec.RowCount = *r.parent.RowCount
+			comp.RowCount = *r.parent.RowCount
 		}
-		r.rec.Truncated = r.parent.Truncated
+		comp.Truncated = r.parent.Truncated
 	}
-	// Map iteration errors to the audit record (decision stays "allow"
-	// but errorCode fills in).
 	if r.iterErr != nil {
-		r.rec.Decision = audit.DecisionError
-		setErrorCode(r.rec, r.iterErr)
+		comp.Decision = audit.DecisionError
+		setErrorCode(comp, r.iterErr)
 	} else if closeErr != nil {
-		// Closing failed; record but keep decision=allow so the audit
-		// still reflects the policy outcome accurately.
-		setErrorCode(r.rec, closeErr)
+		setErrorCode(comp, closeErr)
 	}
-	r.svc.emit(context.Background(), r.rec, r.start)
+	r.svc.emit(context.Background(), comp, r.start)
 	return closeErr
 }

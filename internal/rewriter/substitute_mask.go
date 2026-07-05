@@ -4,6 +4,7 @@ package rewriter
 
 import (
 	"fmt"
+	"strings"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 
@@ -246,39 +247,98 @@ func (s *state) maybeSubstituteColumnRef(n *pg.Node, aliases aliasMap) (*pg.Node
 // lookupMaskForColumn returns the mask registered for the column under
 // the resolved TableRef. A qualifier matches alias-exact; if no
 // qualifier was given we walk every aliased table looking for a unique
-// hit.
+// hit. Mask column selectors may be wildcard patterns ("*", "ssn_*"), so
+// resolution matches the actual column against each mask's pattern rather
+// than doing an exact key lookup.
 func (s *state) lookupMaskForColumn(aliases aliasMap, qualifier, column string) (*policy.CompiledMask, string, bool) {
 	if qualifier != "" {
 		ref, ok := aliases[qualifier]
 		if !ok {
 			return nil, "", false
 		}
-		key := ref.Catalog + "." + ref.Schema + "." + ref.Table + "." + column
-		m, ok := s.decision.ColumnMasks[key]
-		if !ok {
-			return nil, "", false
+		tk := ref.Catalog + "." + ref.Schema + "." + ref.Table
+		if m, ok := s.maskForResolvedColumn(tk, column); ok {
+			return m, tk, true
 		}
-		return m, ref.Catalog + "." + ref.Schema + "." + ref.Table, true
+		return nil, "", false
 	}
 	var hit *policy.CompiledMask
 	var hitKey string
 	for _, ref := range aliases {
-		key := ref.Catalog + "." + ref.Schema + "." + ref.Table + "." + column
-		if m, ok := s.decision.ColumnMasks[key]; ok {
-			if hit != nil {
-				// Ambiguous — two tables in scope both have a mask
-				// for this column. DuckDB will error on ambiguity; we
-				// let the user see that error rather than pick.
-				return nil, "", false
-			}
-			hit = m
-			hitKey = ref.Catalog + "." + ref.Schema + "." + ref.Table
+		tk := ref.Catalog + "." + ref.Schema + "." + ref.Table
+		m, ok := s.maskForResolvedColumn(tk, column)
+		if !ok {
+			continue
 		}
+		if hit != nil && hitKey != tk {
+			// Ambiguous — two distinct tables in scope both mask this
+			// column. DuckDB will error on ambiguity; we let the user see
+			// that error rather than pick.
+			return nil, "", false
+		}
+		hit = m
+		hitKey = tk
 	}
 	if hit == nil {
 		return nil, "", false
 	}
 	return hit, hitKey, true
+}
+
+// maskForResolvedColumn returns the highest-precedence mask on tableKey
+// whose column pattern matches column. Precedence: priority desc, then
+// column specificity desc (literal beats wildcard), then policy name asc —
+// matching the engine's mask conflict order.
+func (s *state) maskForResolvedColumn(tableKey, column string) (*policy.CompiledMask, bool) {
+	var best *policy.CompiledMask
+	for _, m := range s.decision.ColumnMasks {
+		if m.TableKey != tableKey || !maskColumnMatches(m.Column, column) {
+			continue
+		}
+		if best == nil || maskMoreSpecific(m, best) {
+			best = m
+		}
+	}
+	return best, best != nil
+}
+
+// maskColumnMatches reports whether a mask column selector pattern matches
+// the concrete column name. Literal patterns compare exactly (fast path);
+// wildcard patterns compile through the apitypes wildcard grammar.
+func maskColumnMatches(pattern, column string) bool {
+	if pattern == column {
+		return true
+	}
+	if !strings.ContainsAny(pattern, "*") {
+		return false
+	}
+	m, err := apitypes.CompileWildcard(pattern)
+	if err != nil {
+		return false
+	}
+	return m.Match(column)
+}
+
+// maskMoreSpecific reports whether mask a outranks mask b under the mask
+// conflict order (priority desc, specificity desc, name asc).
+func maskMoreSpecific(a, b *policy.CompiledMask) bool {
+	if a.Priority != b.Priority {
+		return a.Priority > b.Priority
+	}
+	as, bs := colSpecificity(a.Column), colSpecificity(b.Column)
+	if as != bs {
+		return as > bs
+	}
+	return a.Policy < b.Policy
+}
+
+// colSpecificity scores a column pattern: literal names (no wildcard) rank
+// above any wildcard pattern; among wildcards, more literal characters wins.
+func colSpecificity(pattern string) int {
+	if !strings.ContainsAny(pattern, "*") {
+		return 1000 + len(pattern)
+	}
+	return len(strings.ReplaceAll(pattern, "*", ""))
 }
 
 // splitColumnRef returns (qualifier, columnName) from a ColumnRef's

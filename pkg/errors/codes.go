@@ -39,6 +39,9 @@ const (
 	CodePayloadTooLarge Code = "ERR_PAYLOAD_TOO_LARGE"
 	CodeResultTruncated Code = "ERR_RESULT_TRUNCATED"
 
+	// Audit
+	CodeAuditUnavailable Code = "ERR_AUDIT_UNAVAILABLE"
+
 	// Catch-all
 	CodeInternal Code = "ERR_INTERNAL"
 )
@@ -70,6 +73,7 @@ var httpStatusByCode = map[Code]int{
 	CodeBudgetExceeded:        http.StatusTooManyRequests,
 	CodePayloadTooLarge:       http.StatusRequestEntityTooLarge,
 	CodeResultTruncated:       http.StatusOK,
+	CodeAuditUnavailable:      http.StatusServiceUnavailable,
 	CodeInternal:              http.StatusInternalServerError,
 }
 
@@ -95,6 +99,7 @@ var defaultMessage = map[Code]string{
 	CodeBudgetExceeded:        "query budget exceeded",
 	CodePayloadTooLarge:       "payload too large",
 	CodeResultTruncated:       "result truncated",
+	CodeAuditUnavailable:      "audit log unavailable; request refused (fail-closed)",
 	CodeInternal:              "internal error",
 }
 
@@ -137,6 +142,7 @@ func AllCodes() []Code {
 		CodeBudgetExceeded,
 		CodePayloadTooLarge,
 		CodeResultTruncated,
+		CodeAuditUnavailable,
 		CodeInternal,
 	}
 }

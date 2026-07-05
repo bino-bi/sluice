@@ -29,6 +29,20 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 	}
 	releaseSlot := s.releaseFn()
 
+	// 0b. Per-subject rate limit.
+	if s.opts.RateLimiter != nil && req.User != nil {
+		if !s.opts.RateLimiter.Allow(req.User.Subject, req.User.Issuer) {
+			rec := s.buildAuditBase(req, qid, nil)
+			rec.Decision = audit.DecisionError
+			rec.ErrorCode = string(pkgerr.CodeRateLimited)
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.New(pkgerr.CodeRateLimited).
+				WithQueryID(qid).
+				WithMessage("per-subject rate limit exceeded")
+		}
+	}
+
 	if len(req.SQL) > s.opts.Limits.MaxSQLBytes {
 		rec := s.buildAuditBase(req, qid, nil)
 		rec.Decision = audit.DecisionError
@@ -40,8 +54,14 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 	if req.Timeout <= 0 {
 		req.Timeout = s.opts.Limits.DefaultTimeout
 	}
+	if req.Timeout > s.opts.Limits.MaxTimeout {
+		req.Timeout = s.opts.Limits.MaxTimeout
+	}
 	if req.MaxRows <= 0 {
 		req.MaxRows = s.opts.Limits.DefaultMaxRows
+	}
+	if req.MaxRows > s.opts.Limits.MaxRowsCeiling {
+		req.MaxRows = s.opts.Limits.MaxRowsCeiling
 	}
 
 	// 1. Parse (best-effort; the regex fallback carries us when the
@@ -132,7 +152,17 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 		return nil, execErrToAPI(execErr, qid)
 	}
 
-	// 6. Wrap rows: audit emission deferred until iterator.Close.
+	// 6. Fail-closed audit gate. Durably record the access decision BEFORE
+	// any row reaches the caller. When fail-closed (the default) an enqueue
+	// failure refuses the query so no data is served unaudited. A completion
+	// record carrying the final RowCount is emitted best-effort at Close.
+	rec.Decision = audit.DecisionAllow
+	if err := s.emitAccess(ctx, rec, start); err != nil {
+		_ = resp.Rows.Close()
+		releaseSlot()
+		return nil, err
+	}
+
 	qr := &QueryResult{
 		QueryID:    qid,
 		Columns:    resp.Columns,
@@ -146,7 +176,7 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 	qr.Rows = &auditedRows{
 		inner:  resp.Rows,
 		svc:    s,
-		rec:    rec,
+		qid:    qid,
 		start:  start,
 		parent: qr,
 	}

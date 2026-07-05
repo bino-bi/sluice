@@ -25,6 +25,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/internal/secrets"
@@ -57,6 +58,7 @@ type runtimeDeps struct {
 	identifier  identity.Identifier
 	apikey      *identity.APIKeyIdentifier
 	service     *queryservice.Service
+	rateLimiter *ratelimit.Limiter
 	rest        *rest.Server
 	mcp         *mcp.Server
 	admin       *admin.Server
@@ -215,18 +217,29 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		return nil, fmt.Errorf("identity: %w", err)
 	}
 
-	// 14. Queryservice.
+	// 14. Per-subject rate limiter (from SubjectBinding.spec.rateLimit).
+	deps.rateLimiter = ratelimit.New(nil)
+	{
+		bySub, byIss := buildRateSpecs(snap)
+		deps.rateLimiter.SetSpecs(bySub, byIss)
+	}
+
+	// 14b. Queryservice.
 	deps.service = queryservice.New(queryservice.Options{
-		Parser:   deps.parser,
-		Policy:   deps.policyEng,
-		Rewriter: deps.rewrite,
-		Executor: deps.exec,
-		Audit:    deps.auditDisp,
-		Schema:   deps.schemaCache,
-		Logger:   deps.log,
+		Parser:          deps.parser,
+		Policy:          deps.policyEng,
+		Rewriter:        deps.rewrite,
+		Executor:        deps.exec,
+		Audit:           deps.auditDisp,
+		Schema:          deps.schemaCache,
+		Logger:          deps.log,
+		RateLimiter:     deps.rateLimiter,
+		AuditBestEffort: !scfg.Audit.FailClosed,
 		Limits: queryservice.Limits{
 			DefaultMaxRows: scfg.Limits.MaxRows,
+			MaxRowsCeiling: scfg.Limits.MaxRowsCeiling,
 			DefaultTimeout: scfg.Limits.QueryTimeout,
+			MaxTimeout:     scfg.Limits.MaxQueryTimeout,
 			MaxSQLBytes:    scfg.Limits.MaxSQLBytes,
 			MaxConcurrent:  scfg.Limits.MaxConcurrent,
 		},
@@ -291,6 +304,10 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 				} else {
 					deps.apikey.SetBindings(bindings)
 				}
+			}
+			if deps.rateLimiter != nil {
+				bySub, byIss := buildRateSpecs(cur)
+				deps.rateLimiter.SetSpecs(bySub, byIss)
 			}
 			deps.schemaCache.InvalidateAll()
 		})
@@ -409,9 +426,14 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 		if err != nil {
 			return nil, nil, fmt.Errorf("binding registry: %w", err)
 		}
+		hmacSecrets, err := buildHMACSecrets(ctx, r, snap)
+		if err != nil {
+			return nil, nil, err
+		}
 		jwtID, err := identity.NewJWTIdentifier(identity.JWTOptions{
-			Bindings: bindReg,
-			Logger:   log,
+			Bindings:    bindReg,
+			HMACSecrets: hmacSecrets,
+			Logger:      log,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("jwt identifier: %w", err)
@@ -443,6 +465,64 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 		return identity.NewComposite(), nil, nil
 	}
 	return identity.NewComposite(children...), apikeyID, nil
+}
+
+// buildRateSpecs extracts per-subject and per-issuer rate-limit specs from
+// every SubjectBinding.spec.rateLimit. API-key bindings key by their
+// claims.subjectId; JWT bindings key by issuer so the limit applies per
+// authenticated subject under that issuer.
+func buildRateSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]ratelimit.Spec) {
+	bySubject = map[string]ratelimit.Spec{}
+	byIssuer = map[string]ratelimit.Spec{}
+	if snap == nil {
+		return bySubject, byIssuer
+	}
+	for _, sb := range snap.SubjectBindings {
+		if sb == nil || sb.Spec.RateLimit == nil || sb.Spec.RateLimit.RPS <= 0 {
+			continue
+		}
+		spec := ratelimit.Spec{RPS: sb.Spec.RateLimit.RPS, Burst: sb.Spec.RateLimit.Burst}
+		if spec.Burst <= 0 {
+			spec.Burst = 1
+		}
+		if sb.Spec.Claims.SubjectID != "" {
+			bySubject[sb.Spec.Claims.SubjectID] = spec
+		}
+		if sb.Spec.Issuer != "" {
+			byIssuer[sb.Spec.Issuer] = spec
+		}
+	}
+	return bySubject, byIssuer
+}
+
+// buildHMACSecrets resolves each SubjectBinding's hmacSecretRef into the
+// issuer→secret map the JWT identifier uses to verify HS256/HS384 tokens.
+// Without this a binding that advertises an HS* issuer could never
+// authenticate, since RS/ES keys come from JWKS and HMAC has no network
+// path. A trailing newline (common in file-mounted secrets) is trimmed.
+func buildHMACSecrets(ctx context.Context, r *secrets.Resolver, snap *config.Snapshot) (map[string][]byte, error) {
+	if snap == nil {
+		return nil, nil
+	}
+	out := map[string][]byte{}
+	for _, sb := range snap.SubjectBindings {
+		if sb == nil || sb.Spec.HMACSecretRef == "" {
+			continue
+		}
+		issuer := sb.Spec.Issuer
+		if issuer == "" {
+			issuer = sb.Metadata.Name
+		}
+		sec, err := r.Resolve(ctx, sb.Spec.HMACSecretRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve hmacSecretRef for issuer %q: %w", issuer, err)
+		}
+		out[issuer] = []byte(strings.TrimRight(string(sec), "\r\n"))
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // buildAPIKeyBindings walks every SubjectBinding in snap, resolves each

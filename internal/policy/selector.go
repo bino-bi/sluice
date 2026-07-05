@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"regexp"
@@ -67,6 +68,10 @@ type compiledResource struct {
 type MatchContext struct {
 	User   *identity.UserCtx
 	Tables []parser.TableRef
+	// Action is the SQL verb of the statement (SELECT/INSERT/…). Empty when
+	// the verb is unknown (e.g. regex fallback). A resource selector that
+	// constrains actions matches only when Action is one of them.
+	Action apitypes.Action
 }
 
 // compileSelector lowers an apitypes.Selector into a CompiledSelector. A
@@ -240,7 +245,7 @@ func (s *CompiledSelector) MatchingTables(ctx MatchContext) []parser.TableRef {
 	}
 	var out []parser.TableRef
 	for _, t := range ctx.Tables {
-		single := MatchContext{User: ctx.User, Tables: []parser.TableRef{t}}
+		single := MatchContext{User: ctx.User, Tables: []parser.TableRef{t}, Action: ctx.Action}
 		if s.Match(single) {
 			out = append(out, t)
 		}
@@ -315,6 +320,22 @@ func (c CompiledClause) Match(ctx MatchContext) bool {
 		}
 	}
 	if c.Resource == nil || c.Resource.empty {
+		return true
+	}
+	// Action scoping is query-global: when the resource constrains actions,
+	// the statement's verb must be one of them. An unknown verb never
+	// satisfies an action constraint (fail-closed).
+	if len(c.Resource.actions) > 0 {
+		if ctx.Action == "" {
+			return false
+		}
+		if _, ok := c.Resource.actions[ctx.Action]; !ok {
+			return false
+		}
+	}
+	// A resource that constrains only actions (no catalog/schema/table
+	// matchers) matches every table once the action check has passed.
+	if len(c.Resource.catalogs) == 0 && len(c.Resource.schemas) == 0 && len(c.Resource.tables) == 0 {
 		return true
 	}
 	for _, tref := range ctx.Tables {
@@ -514,14 +535,42 @@ func toStringSlice(v any) []string {
 	return nil
 }
 
-// deepEqual compares two values from JSON/YAML decoding. Numbers can
-// arrive as float64 (json) or int (yaml); a stringified fallback
-// equalises numeric literals.
+// deepEqual compares two claim values from JSON/YAML decoding. Exact
+// type+value matches win first. Numbers may arrive as float64 (JSON) or int
+// (YAML), so numeric values are compared numerically. Crucially there is no
+// stringify fallback: a numeric claim never equals a string policy value
+// (e.g. 1 != "1", true != "true"), which prevents type-confused matches in
+// security-sensitive claim gating.
 func deepEqual(a, b any) bool {
 	if a == b {
 		return true
 	}
-	as := fmt.Sprintf("%v", a)
-	bs := fmt.Sprintf("%v", b)
-	return as == bs
+	if af, aok := numericValue(a); aok {
+		if bf, bok := numericValue(b); bok {
+			return af == bf
+		}
+	}
+	return false
+}
+
+// numericValue coerces the integer/float shapes JSON and YAML decoders
+// produce into a float64 for numeric comparison.
+func numericValue(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }

@@ -190,6 +190,60 @@ func TestFileSink_PermissionsAndRestart(t *testing.T) {
 	}
 }
 
+// TestFileSink_SameDaySizeRotationOrdering guards the filename-ordering
+// bug: a same-day size rotation produces audit-D.jsonl (seq 0) and
+// audit-D-1.jsonl (seq 1). Lexicographic order sorts seq-1 first (because
+// '-' < '.'), which made Verify falsely report tampering and made a restart
+// prime lastHash from the wrong file. Chronological (day, seq) ordering
+// fixes both.
+func TestFileSink_SameDaySizeRotationOrdering(t *testing.T) {
+	dir := t.TempDir()
+	clock := func() time.Time { return time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC) }
+	sink, err := audit.NewFileSink(audit.FileOptions{Dir: dir, RotateSizeMB: 1, Clock: clock})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	anchor := audit.GenesisPriorHash([]byte("seed"))
+	big := strings.Repeat("x", 600*1024)
+	r1 := chain(t, anchor, func(r *audit.Record) { r.QueryID = "q-1"; r.SQLSample = big })
+	r2 := chain(t, r1.Hash, func(r *audit.Record) { r.QueryID = "q-2"; r.SQLSample = big })
+	if err := sink.Record(context.Background(), r1); err != nil {
+		t.Fatalf("record 1: %v", err)
+	}
+	if err := sink.Record(context.Background(), r2); err != nil {
+		t.Fatalf("record 2: %v", err)
+	}
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Sanity: two files, seq-0 and seq-1 within the same day.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 files, got %v", fileNames(entries))
+	}
+
+	// Verify must chain across the rotation, not falsely report tampering.
+	rep, verr := audit.Verify(dir, anchor)
+	if verr != nil {
+		t.Fatalf("verify falsely reported a broken chain across same-day rotation: %v", verr)
+	}
+	if rep.Records != 2 {
+		t.Fatalf("verify records = %d, want 2", rep.Records)
+	}
+
+	// Restart must select the seq-1 file as latest and prime lastHash from
+	// r2 (the true tail), not from the seq-0 file.
+	sink2, err := audit.NewFileSink(audit.FileOptions{Dir: dir, RotateSizeMB: 1, Clock: clock})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = sink2.Close(context.Background()) }()
+	if sink2.LastHash() != r2.Hash {
+		t.Fatalf("restart LastHash = %q, want r2 %q", sink2.LastHash(), r2.Hash)
+	}
+}
+
 func readAll(t *testing.T, path string) []map[string]any {
 	t.Helper()
 	f, err := os.Open(path)

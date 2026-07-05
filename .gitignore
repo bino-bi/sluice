@@ -29,3 +29,6 @@ Thumbs.db
 
 # goreleaser
 /dist/
+
+# stray root build output (use ./bin/sluice)
+/sluice

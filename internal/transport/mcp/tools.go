@@ -45,6 +45,166 @@ func (s *Server) registerTools() {
 		},
 		s.toolDescribeTable,
 	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "whoami",
+			Description: "Report the identity this session is authenticated as (subject, groups, claims).",
+		},
+		s.toolWhoAmI,
+	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "explain_access",
+			Description: "Explain, for the current identity, which policies apply to a table or candidate SQL — the effective decision plus row filters and column masks — WITHOUT running the query. Use this to understand what is allowed and why before calling execute_sql.",
+		},
+		s.toolExplainAccess,
+	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "list_accessible_tables",
+			Description: "List the tables the current identity is allowed to query, optionally within one catalog.",
+		},
+		s.toolListAccessibleTables,
+	)
+}
+
+// WhoAmIArgs takes no parameters.
+type WhoAmIArgs struct{}
+
+// WhoAmIOutput describes the authenticated identity.
+type WhoAmIOutput struct {
+	Anonymous  bool     `json:"anonymous"`
+	Subject    string   `json:"subject,omitempty"`
+	Issuer     string   `json:"issuer,omitempty"`
+	Email      string   `json:"email,omitempty"`
+	Groups     []string `json:"groups,omitempty"`
+	AuthMethod string   `json:"auth_method,omitempty"`
+}
+
+func (s *Server) toolWhoAmI(ctx context.Context, _ *sdkmcp.CallToolRequest, _ WhoAmIArgs) (*sdkmcp.CallToolResult, WhoAmIOutput, error) {
+	user, ok := userFrom(ctx)
+	out := WhoAmIOutput{Anonymous: !ok || user == nil}
+	if user != nil {
+		out.Subject = user.Subject
+		out.Issuer = user.Issuer
+		out.Email = user.Email
+		out.Groups = append([]string(nil), user.Groups...)
+		out.AuthMethod = string(user.AuthMethod)
+	}
+	text := "anonymous"
+	if !out.Anonymous {
+		text = fmt.Sprintf("subject=%s issuer=%s groups=%v", out.Subject, out.Issuer, out.Groups)
+	}
+	return &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
+	}, out, nil
+}
+
+// ExplainAccessArgs selects a table or a candidate SQL statement to explain.
+type ExplainAccessArgs struct {
+	Table string `json:"table,omitempty" jsonschema:"fully-qualified table (catalog.schema.table) to check"`
+	SQL   string `json:"sql,omitempty" jsonschema:"a candidate SELECT to check instead of a single table"`
+}
+
+// PolicyRefInfo names a policy that applied.
+type PolicyRefInfo struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Priority int32  `json:"priority,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// MaskRefInfo names a column mask that would apply.
+type MaskRefInfo struct {
+	Column   string `json:"column"`
+	MaskType string `json:"mask_type"`
+	Policy   string `json:"policy"`
+}
+
+// ExplainAccessOutput is the agent-facing explanation.
+type ExplainAccessOutput struct {
+	Subject     string          `json:"subject"`
+	Resource    string          `json:"resource"`
+	Decision    string          `json:"decision"`
+	RowFilters  []string        `json:"row_filters,omitempty"`
+	ColumnMasks []MaskRefInfo   `json:"column_masks,omitempty"`
+	Matched     []PolicyRefInfo `json:"matched,omitempty"`
+	Rejected    []PolicyRefInfo `json:"rejected,omitempty"`
+}
+
+func (s *Server) toolExplainAccess(ctx context.Context, _ *sdkmcp.CallToolRequest, in ExplainAccessArgs) (*sdkmcp.CallToolResult, ExplainAccessOutput, error) {
+	user, _ := userFrom(ctx)
+	input := queryservice.ExplainInput{User: user, Origin: queryservice.OriginMCP}
+	if in.Table != "" {
+		ref, err := parseTableRef(in.Table)
+		if err != nil {
+			return toolErrorResult(pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())), ExplainAccessOutput{}, nil
+		}
+		input.Table = ref
+	}
+	input.SimulatedSQL = in.SQL
+	res, err := s.deps.Service.Explain(ctx, input)
+	if err != nil {
+		return toolErrorResult(err), ExplainAccessOutput{}, nil
+	}
+	out := ExplainAccessOutput{
+		Subject:    res.Subject,
+		Resource:   res.Resource,
+		Decision:   res.Effective.Decision,
+		RowFilters: append([]string(nil), res.Effective.RowFilters...),
+	}
+	for _, m := range res.Effective.ColumnMasks {
+		out.ColumnMasks = append(out.ColumnMasks, MaskRefInfo{Column: m.Column, MaskType: string(m.MaskType), Policy: m.Policy})
+	}
+	for _, p := range res.Matched {
+		out.Matched = append(out.Matched, PolicyRefInfo{Kind: string(p.Kind), Name: p.Name, Priority: p.Priority})
+	}
+	for _, p := range res.Rejected {
+		out.Rejected = append(out.Rejected, PolicyRefInfo{Kind: string(p.Kind), Name: p.Name, Reason: p.Reason})
+	}
+	return &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: renderExplain(out)}},
+	}, out, nil
+}
+
+// ListAccessibleTablesArgs optionally restricts to one catalog.
+type ListAccessibleTablesArgs struct {
+	Catalog string `json:"catalog,omitempty" jsonschema:"optional catalog to restrict to"`
+}
+
+func (s *Server) toolListAccessibleTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListAccessibleTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
+	user, _ := userFrom(ctx)
+	tables, err := s.deps.Service.AccessibleTables(ctx, user, in.Catalog)
+	if err != nil {
+		return toolErrorResult(err), ListTablesOutput{}, nil
+	}
+	out := ListTablesOutput{Tables: make([]string, 0, len(tables))}
+	for _, t := range tables {
+		out.Tables = append(out.Tables, qualified(t))
+	}
+	return &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: fmt.Sprintf("%d accessible table(s)", len(out.Tables))}},
+	}, out, nil
+}
+
+// renderExplain produces a compact human/LLM-readable summary of an access
+// explanation.
+func renderExplain(o ExplainAccessOutput) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "decision=%s subject=%s resource=%s\n", o.Decision, o.Subject, o.Resource)
+	for _, p := range o.Matched {
+		fmt.Fprintf(&b, "matched: %s/%s (priority=%d)\n", p.Kind, p.Name, p.Priority)
+	}
+	for _, p := range o.Rejected {
+		fmt.Fprintf(&b, "rejected: %s/%s — %s\n", p.Kind, p.Name, p.Reason)
+	}
+	for _, f := range o.RowFilters {
+		fmt.Fprintf(&b, "row filter on: %s\n", f)
+	}
+	for _, m := range o.ColumnMasks {
+		fmt.Fprintf(&b, "mask: %s → %s (policy %s)\n", m.Column, m.MaskType, m.Policy)
+	}
+	return b.String()
 }
 
 // ExecuteSQLArgs is the typed argument schema for execute_sql. The SDK
@@ -164,7 +324,8 @@ type ListTablesOutput struct {
 }
 
 func (s *Server) toolListTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
-	tables, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema)
+	user, _ := userFrom(ctx)
+	tables, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user)
 	if err != nil {
 		return toolErrorResult(err), ListTablesOutput{}, nil
 	}
@@ -198,12 +359,13 @@ type ColumnMetaInfo struct {
 }
 
 func (s *Server) toolDescribeTable(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeTableArgs) (*sdkmcp.CallToolResult, DescribeTableOutput, error) {
+	user, _ := userFrom(ctx)
 	ref, err := parseTableRef(in.Table)
 	if err != nil {
 		return toolErrorResult(pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())),
 			DescribeTableOutput{}, nil
 	}
-	entry, err := s.deps.Service.DescribeTable(ctx, ref)
+	entry, err := s.deps.Service.DescribeTable(ctx, ref, user)
 	if err != nil {
 		return toolErrorResult(err), DescribeTableOutput{}, nil
 	}

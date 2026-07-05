@@ -240,8 +240,12 @@ func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.
 	if cp.Enforcement == "" {
 		cp.Enforcement = apitypes.EnforcementEnforce
 	}
-	if cp.Enforcement != apitypes.EnforcementEnforce {
-		return fmt.Errorf("spec.enforcementMode: %q not supported in MVP (use Enforce)", cp.Enforcement)
+	switch cp.Enforcement {
+	case apitypes.EnforcementEnforce, apitypes.EnforcementAudit, apitypes.EnforcementDryRun:
+		// Enforce shapes the decision; Audit/DryRun match and are recorded
+		// as shadow outcomes but do not affect enforcement.
+	default:
+		return fmt.Errorf("spec.enforcementMode: %q invalid (use Enforce, Audit, or DryRun)", cp.Enforcement)
 	}
 	return nil
 }

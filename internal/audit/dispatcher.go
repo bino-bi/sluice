@@ -173,14 +173,20 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 	if r == nil {
 		return fmt.Errorf("audit: nil record")
 	}
+	// The whole operation is serialised under mu so records enter the queue
+	// in strict chain order AND so the chain tip (lastHash) advances only
+	// once the record is safely queued. A dropped record therefore never
+	// leaves a gap: the next record chains onto the same prior hash. In
+	// normal operation the non-blocking send succeeds immediately, so mu is
+	// held only briefly; it is held across the bounded wait only when the
+	// queue is already full (i.e. the gateway is overloaded), which is
+	// exactly when serialising enqueues is acceptable. Sink I/O still runs
+	// off-lock on the worker goroutine.
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.closed {
-		d.mu.Unlock()
 		return ErrClosed
 	}
-	// Finalise inside the lock so records are appended in strict chain
-	// order. Sink writes happen on the worker goroutine so we don't hold
-	// the mutex across I/O.
 	if r.Timestamp.IsZero() {
 		r.Timestamp = d.opts.Clock().UTC()
 	}
@@ -190,19 +196,17 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 	r.PriorHash = d.lastHash
 	h, err := ComputeHash(d.lastHash, r)
 	if err != nil {
-		d.mu.Unlock()
 		return err
 	}
 	r.Hash = h
-	d.lastHash = h
-	d.mu.Unlock()
 
-	d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
 	d.pending.Add(1)
 
 	// Non-blocking fast path.
 	select {
 	case d.queue <- r:
+		d.lastHash = h
+		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
 		return nil
 	default:
 	}
@@ -212,6 +216,8 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 	defer timer.Stop()
 	select {
 	case d.queue <- r:
+		d.lastHash = h
+		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
 		return nil
 	case <-ctx.Done():
 		d.pending.Done()

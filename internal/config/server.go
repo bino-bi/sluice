@@ -80,6 +80,11 @@ type PoliciesConfig struct {
 // AuditConfig selects audit sinks. MVP ships file only; richer sinks land in v1.
 type AuditConfig struct {
 	File *FileSinkConfig `mapstructure:"file"`
+
+	// FailClosed refuses to serve a query when its access audit record
+	// cannot be durably enqueued. Default true — audit-first posture. Set
+	// to false to fall back to best-effort auditing (serve on audit drop).
+	FailClosed bool `mapstructure:"failClosed"`
 }
 
 // FileSinkConfig configures the append-only audit log file.
@@ -105,8 +110,10 @@ type IdentityConfig struct {
 // LimitsConfig bundles request-size / concurrency / cross-catalog switches.
 type LimitsConfig struct {
 	MaxRows             int64         `mapstructure:"maxRows"`
+	MaxRowsCeiling      int64         `mapstructure:"maxRowsCeiling"`
 	MaxSQLBytes         int           `mapstructure:"maxSqlBytes"`
 	QueryTimeout        time.Duration `mapstructure:"queryTimeout"`
+	MaxQueryTimeout     time.Duration `mapstructure:"maxQueryTimeout"`
 	MaxConcurrent       int           `mapstructure:"maxConcurrent"`
 	DisableCrossCatalog bool          `mapstructure:"disableCrossCatalog"`
 }
@@ -156,11 +163,16 @@ func DefaultServerConfig() ServerConfig {
 			Level:  "info",
 			Format: "json",
 		},
+		Audit: AuditConfig{
+			FailClosed: true,
+		},
 		Limits: LimitsConfig{
-			MaxRows:       100_000,
-			MaxSQLBytes:   1 << 20,
-			QueryTimeout:  30 * time.Second,
-			MaxConcurrent: 100,
+			MaxRows:         100_000,
+			MaxRowsCeiling:  100_000,
+			MaxSQLBytes:     1 << 20,
+			QueryTimeout:    30 * time.Second,
+			MaxQueryTimeout: 30 * time.Second,
+			MaxConcurrent:   100,
 		},
 	}
 }
@@ -237,9 +249,12 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("logging.level", d.Logging.Level)
 	v.SetDefault("logging.format", d.Logging.Format)
 
+	v.SetDefault("audit.failClosed", d.Audit.FailClosed)
 	v.SetDefault("limits.maxRows", d.Limits.MaxRows)
+	v.SetDefault("limits.maxRowsCeiling", d.Limits.MaxRowsCeiling)
 	v.SetDefault("limits.maxSqlBytes", d.Limits.MaxSQLBytes)
 	v.SetDefault("limits.queryTimeout", d.Limits.QueryTimeout)
+	v.SetDefault("limits.maxQueryTimeout", d.Limits.MaxQueryTimeout)
 	v.SetDefault("limits.maxConcurrent", d.Limits.MaxConcurrent)
 	v.SetDefault("limits.disableCrossCatalog", d.Limits.DisableCrossCatalog)
 }

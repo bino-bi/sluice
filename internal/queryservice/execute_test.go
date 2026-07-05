@@ -11,6 +11,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -106,9 +107,11 @@ type fakeExecutor struct {
 	columns []executor.ColumnInfo
 	rows    [][]any
 	err     error
+	lastReq executor.Request
 }
 
-func (e *fakeExecutor) Execute(_ context.Context, _ executor.Request) (*executor.Response, error) {
+func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*executor.Response, error) {
+	e.lastReq = req
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -229,18 +232,142 @@ func TestExecute_HappyPath(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	recs := a.all()
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 audit record, got %d", len(recs))
+	// Fail-closed model: an access record (emitted before rows are served)
+	// plus a best-effort completion record carrying the final RowCount.
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 audit records (access + result), got %d", len(recs))
 	}
-	if recs[0].Decision != audit.DecisionAllow {
-		t.Fatalf("decision = %s, want allow", recs[0].Decision)
+	access := recs[0]
+	if access.EventType != audit.EventQuery {
+		t.Fatalf("record[0] event_type = %s, want query", access.EventType)
 	}
-	if recs[0].RowCount != 2 {
-		t.Fatalf("row_count = %d, want 2", recs[0].RowCount)
+	if access.Decision != audit.DecisionAllow {
+		t.Fatalf("access decision = %s, want allow", access.Decision)
 	}
-	if recs[0].SQLFingerprint == "" {
-		t.Fatalf("sql_fingerprint empty")
+	if access.SQLFingerprint == "" {
+		t.Fatalf("sql_fingerprint empty on access record")
 	}
+	result := recs[1]
+	if result.EventType != audit.EventQueryResult {
+		t.Fatalf("record[1] event_type = %s, want query-result", result.EventType)
+	}
+	if result.RowCount != 2 {
+		t.Fatalf("result row_count = %d, want 2", result.RowCount)
+	}
+}
+
+func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
+	a := &fakeAudit{}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    a,
+		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+		Limits: queryservice.Limits{
+			DefaultMaxRows: 100,
+			MaxRowsCeiling: 10,
+			DefaultTimeout: 30 * time.Second,
+			MaxTimeout:     5 * time.Second,
+		},
+	})
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:     "SELECT id FROM pg.public.orders",
+		MaxRows: 2_000_000_000,
+		Timeout: time.Hour,
+		Origin:  queryservice.OriginMCP,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	_ = res.Rows.Close()
+	if ex.lastReq.MaxRows != 10 {
+		t.Errorf("MaxRows = %d, want clamped to 10", ex.lastReq.MaxRows)
+	}
+	if ex.lastReq.Timeout != 5*time.Second {
+		t.Errorf("Timeout = %s, want clamped to 5s", ex.lastReq.Timeout)
+	}
+}
+
+type denyingRateLimiter struct{}
+
+func (denyingRateLimiter) Allow(_, _ string) bool { return false }
+
+func TestExecute_RateLimitedSubject(t *testing.T) {
+	a := &fakeAudit{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:      &fakeParser{},
+		Policy:      &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter:    &fakeRewriter{},
+		Executor:    &fakeExecutor{},
+		Audit:       a,
+		Clock:       func() time.Time { return time.Unix(1713600000, 0) },
+		RateLimiter: denyingRateLimiter{},
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginMCP,
+		User:   &identity.UserCtx{Subject: "alice"},
+	})
+	if err == nil {
+		t.Fatal("expected rate-limit error")
+	}
+	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeRateLimited {
+		t.Fatalf("code = %v, want %s", err, pkgerr.CodeRateLimited)
+	}
+	// A rate-limited request is still audited (decision=error).
+	recs := a.all()
+	if len(recs) != 1 || recs[0].ErrorCode != string(pkgerr.CodeRateLimited) {
+		t.Fatalf("want 1 audit record with rate-limit code, got %+v", recs)
+	}
+}
+
+func TestExecute_FailClosedWhenAuditUnavailable(t *testing.T) {
+	a := &fakeAudit{err: audit.ErrQueueFull}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}, rows: [][]any{{int64(1)}}}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    a,
+		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+		// AuditBestEffort defaults false → fail-closed.
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginMCP,
+	})
+	if err == nil {
+		t.Fatal("expected fail-closed error when audit cannot be enqueued")
+	}
+	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeAuditUnavailable {
+		t.Fatalf("code = %v, want %s", err, pkgerr.CodeAuditUnavailable)
+	}
+}
+
+func TestExecute_BestEffortServesWhenAuditUnavailable(t *testing.T) {
+	a := &fakeAudit{err: audit.ErrQueueFull}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}, rows: [][]any{{int64(1)}}}
+	svc := queryservice.New(queryservice.Options{
+		Parser:          &fakeParser{},
+		Policy:          &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter:        &fakeRewriter{},
+		Executor:        ex,
+		Audit:           a,
+		Clock:           func() time.Time { return time.Unix(1713600000, 0) },
+		AuditBestEffort: true,
+	})
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginMCP,
+	})
+	if err != nil {
+		t.Fatalf("best-effort must serve despite audit failure: %v", err)
+	}
+	_ = res.Rows.Close()
 }
 
 func TestExecute_DenyEmitsOnce(t *testing.T) {

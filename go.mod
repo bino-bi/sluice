@@ -3,7 +3,9 @@ module github.com/bino-bi/sluice
 go 1.25.0
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/jsonschema-go v0.4.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/modelcontextprotocol/go-sdk v1.5.0
@@ -13,6 +15,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
+	golang.org/x/sync v0.20.0
 	google.golang.org/protobuf v1.36.8
 	modernc.org/sqlite v1.49.1
 	sigs.k8s.io/yaml v1.6.0
@@ -29,11 +32,9 @@ require (
 	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
-	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -63,7 +64,6 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
 	golang.org/x/text v0.28.0 // indirect

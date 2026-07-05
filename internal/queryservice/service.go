@@ -31,6 +31,19 @@ type Options struct {
 	Logger *slog.Logger
 
 	Limits Limits
+
+	// RateLimiter, when set, gates each request against the caller's
+	// per-subject rate limit before any work is done. Nil disables per-
+	// subject rate limiting (the global concurrency gate still applies).
+	RateLimiter rateLimiter
+
+	// AuditBestEffort relaxes the fail-closed audit posture. When false
+	// (the default), a query is not served unless its access audit record
+	// is durably enqueued — if the audit dispatcher cannot accept the
+	// record, Execute returns ERR_AUDIT_UNAVAILABLE and no rows are
+	// returned. When true, an audit enqueue failure is logged and the query
+	// proceeds anyway.
+	AuditBestEffort bool
 }
 
 // Limits controls request-level bounds the service enforces before it
@@ -39,8 +52,18 @@ type Limits struct {
 	// DefaultMaxRows is applied when QueryRequest.MaxRows is zero.
 	DefaultMaxRows int64
 
+	// MaxRowsCeiling is the hard upper bound on MaxRows, regardless of the
+	// caller-supplied value. Zero falls back to DefaultMaxRows so that, by
+	// default, no caller (including an untrusted agent) can request more
+	// than the default row count.
+	MaxRowsCeiling int64
+
 	// DefaultTimeout is applied when QueryRequest.Timeout is zero.
 	DefaultTimeout time.Duration
+
+	// MaxTimeout is the hard upper bound on the per-request Timeout. Zero
+	// falls back to DefaultTimeout.
+	MaxTimeout time.Duration
 
 	// MaxSQLBytes rejects inputs larger than this before parsing. Zero
 	// falls back to parser.DefaultMaxSQLBytes.
@@ -93,6 +116,12 @@ func New(opts Options) *Service {
 	}
 	if opts.Limits.DefaultMaxRows <= 0 {
 		opts.Limits.DefaultMaxRows = 100_000
+	}
+	if opts.Limits.MaxRowsCeiling <= 0 {
+		opts.Limits.MaxRowsCeiling = opts.Limits.DefaultMaxRows
+	}
+	if opts.Limits.MaxTimeout <= 0 {
+		opts.Limits.MaxTimeout = opts.Limits.DefaultTimeout
 	}
 	if opts.Limits.MaxSQLBytes <= 0 {
 		opts.Limits.MaxSQLBytes = parser.DefaultMaxSQLBytes
@@ -164,4 +193,9 @@ type executorRun interface {
 // auditEmitter wraps the subset of *audit.Dispatcher we need.
 type auditEmitter interface {
 	Enqueue(ctx context.Context, r *audit.Record) error
+}
+
+// rateLimiter wraps the subset of *ratelimit.Limiter we need.
+type rateLimiter interface {
+	Allow(subject, issuer string) bool
 }

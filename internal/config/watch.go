@@ -51,12 +51,15 @@ type Watcher struct {
 
 	fsw *fsnotify.Watcher
 
-	// triggerCh coalesces reload requests (fs events + manual Reload).
-	triggerCh chan struct{}
-	stop      chan struct{}
-	stopped   chan struct{}
+	stop    chan struct{}
+	stopped chan struct{}
 
 	started atomic.Bool
+
+	// reloadMu serialises Load+Publish so a fsnotify-triggered reload and a
+	// manual Reload (SIGHUP / admin) cannot run concurrently and publish
+	// snapshots out of order.
+	reloadMu sync.Mutex
 
 	mu          sync.Mutex
 	lastApplied time.Time
@@ -91,12 +94,11 @@ func NewWatcher(opts WatchOptions) (*Watcher, error) {
 	}
 
 	return &Watcher{
-		opts:      opts,
-		log:       opts.Logger,
-		fsw:       fsw,
-		triggerCh: make(chan struct{}, 1),
-		stop:      make(chan struct{}),
-		stopped:   make(chan struct{}),
+		opts:    opts,
+		log:     opts.Logger,
+		fsw:     fsw,
+		stop:    make(chan struct{}),
+		stopped: make(chan struct{}),
 	}, nil
 }
 
@@ -178,16 +180,15 @@ func (w *Watcher) run(ctx context.Context) {
 						slog.String("error", err.Error()))
 				}
 			}
-		case <-w.triggerCh:
-			if err := w.reloadOnce(ctx); err != nil {
-				w.log.WarnContext(ctx, "config watch: triggered reload failed",
-					slog.String("error", err.Error()))
-			}
 		}
 	}
 }
 
 func (w *Watcher) reloadOnce(ctx context.Context) error {
+	// Serialise Load+Publish so concurrent reload triggers apply in a
+	// well-defined order (last to run reads the freshest directory state).
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
 	snap, err := w.opts.Load(ctx, LoadOptions{
 		Strict:  w.opts.Strict,
 		Sources: []SourceDir{{Path: w.opts.Dir}},

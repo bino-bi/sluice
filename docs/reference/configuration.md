@@ -45,12 +45,15 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `policies.directory` | `string` | `./policies.d` | `SLUICE_POLICIES__DIRECTORY` |
 | `policies.reload` | `bool` | `true` | `SLUICE_POLICIES__RELOAD` |
 | `audit.file` | `FileSinkConfig?` | _unset_ | `SLUICE_AUDIT__FILE` |
+| `audit.failClosed` | `bool` | `true` | `SLUICE_AUDIT__FAILCLOSED` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |
 | `logging.format` | `string` | `json` | `SLUICE_LOGGING__FORMAT` |
 | `identity.apiKeyPepper` | `string` | `""` | `SLUICE_IDENTITY__APIKEYPEPPER` |
 | `limits.maxRows` | `int64` | `100000` | `SLUICE_LIMITS__MAXROWS` |
+| `limits.maxRowsCeiling` | `int64` | `100000` | `SLUICE_LIMITS__MAXROWSCEILING` |
 | `limits.maxSqlBytes` | `int` | `1048576` | `SLUICE_LIMITS__MAXSQLBYTES` |
 | `limits.queryTimeout` | `Duration` | `30s` | `SLUICE_LIMITS__QUERYTIMEOUT` |
+| `limits.maxQueryTimeout` | `Duration` | `30s` | `SLUICE_LIMITS__MAXQUERYTIMEOUT` |
 | `limits.maxConcurrent` | `int` | `100` | `SLUICE_LIMITS__MAXCONCURRENT` |
 | `limits.disableCrossCatalog` | `bool` | `false` | `SLUICE_LIMITS__DISABLECROSSCATALOG` |
 

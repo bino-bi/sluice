@@ -77,6 +77,7 @@ Map issuer + claim paths onto canonical subject fields.
 | `issuer` | `string` | optional |
 | `audience` | `string` | optional |
 | `jwksUrl` | `string` | optional |
+| `hmacSecretRef` | `string` | optional |
 | `jwksCacheTtl` | `Duration` | optional |
 | `clockSkew` | `Duration` | optional |
 | `claims` | `ClaimPaths` | optional |

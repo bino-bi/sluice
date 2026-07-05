@@ -165,10 +165,11 @@ func (c *lruCache) Get(ctx context.Context, key Key) (*Entry, error) {
 	}
 	c.metrics.miss(key.Catalog)
 
-	// Miss: force a catalog reload. Per-catalog lock dedups concurrent
-	// misses (multiple Gets for different tables in the same catalog
-	// share a single introspection).
-	if err := c.loadCatalogForce(ctx, key.Catalog); err != nil {
+	// Miss: load the catalog. The per-catalog lock plus an under-lock
+	// re-check of the missed key make concurrent misses a true
+	// singleflight — the first loader populates the catalog and the rest
+	// see the key present and skip the redundant introspection.
+	if err := c.loadCatalogForKey(ctx, key); err != nil {
 		return nil, err
 	}
 	if e, ok := c.entries.Get(key); ok {
@@ -254,33 +255,40 @@ func (c *lruCache) Refresh(ctx context.Context, catalogs []string) error {
 	return firstErr
 }
 
-// loadCatalogForce always runs Loader.Load (still dedups concurrent
-// callers via the per-catalog lock). Used by Get misses where we know
-// the caller needs a fresh answer.
-func (c *lruCache) loadCatalogForce(ctx context.Context, catalog string) error {
-	return c.loadCatalog(ctx, catalog, true)
+// loadCatalogForKey loads key.Catalog on a Get miss. Under the per-catalog
+// lock it re-checks whether key is already present — a concurrent miss for
+// the same catalog may have populated it while we waited — and only then
+// runs Loader.Load. This dedups a burst of concurrent misses into a single
+// introspection while still honouring Invalidate: an invalidated key is
+// absent under the lock, so it reloads.
+func (c *lruCache) loadCatalogForKey(ctx context.Context, key Key) error {
+	lock := c.lockForCatalog(key.Catalog)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if c.entries.Contains(key) {
+		return nil
+	}
+	return c.reloadCatalogLocked(ctx, key.Catalog)
 }
 
 // loadCatalogIfStale skips the Load when every entry for catalog is
 // fresher than TTL. Used by Refresh to avoid unnecessary introspection.
 func (c *lruCache) loadCatalogIfStale(ctx context.Context, catalog string) error {
-	return c.loadCatalog(ctx, catalog, false)
-}
-
-// loadCatalog fetches the whole catalog schema and caches every table.
-// Per-catalog serialisation (lockForCatalog) guarantees a single
-// in-flight Load call per catalog; concurrent Gets for different tables
-// in the same catalog share that one introspection. When force is
-// false the Load is skipped if the cache already holds fresh data.
-func (c *lruCache) loadCatalog(ctx context.Context, catalog string, force bool) error {
 	lock := c.lockForCatalog(catalog)
 	lock.Lock()
 	defer lock.Unlock()
 
-	if !force && c.catalogHasEntries(catalog) && !c.catalogIsStale(catalog) {
+	if c.catalogHasEntries(catalog) && !c.catalogIsStale(catalog) {
 		return nil
 	}
+	return c.reloadCatalogLocked(ctx, catalog)
+}
 
+// reloadCatalogLocked fetches the whole catalog schema and repopulates the
+// cache for catalog. The caller must hold the per-catalog lock so a single
+// Load is in flight per catalog.
+func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) error {
 	sch, err := c.opts.Loader.Load(ctx, catalog)
 	if err != nil {
 		c.markCatalogStale(catalog)

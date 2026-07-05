@@ -50,6 +50,9 @@ type ExplainResult struct {
 	Matched   []AppliedPolicy   `json:"matched"`
 	Rejected  []RejectedPolicy  `json:"rejected"`
 	Effective EffectiveDecision `json:"effective"`
+	// Shadow lists policies that matched but ran in Audit / DryRun mode and
+	// therefore did not affect the effective decision.
+	Shadow []AppliedPolicy `json:"shadow,omitempty"`
 }
 
 // AppliedPolicy names a policy whose selector matched.

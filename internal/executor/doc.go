@@ -8,9 +8,9 @@
 // Hardening (applied on every fresh connection, in order): disable
 // external access, forbid community extensions, disable autoload /
 // autoinstall, disallow persistent secrets, apply user tunables
-// (memory_limit, threads, temp_directory), set statement_timeout, then
-// finally lock_configuration to freeze the above for the life of the
-// connection.
+// (memory_limit, threads, temp_directory), then finally lock_configuration
+// to freeze the above for the life of the connection. Per-request timeouts
+// are enforced via the Go context deadline on Execute, not a DuckDB setting.
 //
 // The composition root (cmd/sluice serve) wires the executor together
 // with the datasource.Registry: the registry's AttachHook runs on every

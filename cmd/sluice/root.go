@@ -25,6 +25,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDataSourceCmd())
 	root.AddCommand(newAPIKeyCmd())
 	root.AddCommand(newServeCmd())
+	root.AddCommand(newMCPCmd())
 
 	return root
 }

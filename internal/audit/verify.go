@@ -5,12 +5,9 @@ package audit
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -65,7 +62,7 @@ func Verify(dir, anchor string) (*VerifyReport, error) {
 		}
 		files = append(files, name)
 	}
-	sort.Strings(files)
+	sortAuditNames(files)
 
 	rep := &VerifyReport{Files: len(files)}
 	prior := ""
@@ -126,9 +123,6 @@ func Verify(dir, anchor string) (*VerifyReport, error) {
 		}
 		if scanErr := sc.Err(); scanErr != nil {
 			_ = f.Close()
-			if errors.Is(scanErr, io.EOF) {
-				continue
-			}
 			return nil, fmt.Errorf("audit: scan %s: %w", name, scanErr)
 		}
 		_ = f.Close()

@@ -45,6 +45,13 @@ type Config struct {
 	// values fall back to 30 s / 60 s.
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+
+	// AllowAnonymous relaxes the Streamable HTTP fail-closed default. When
+	// false (the default), every HTTP request must present a credential the
+	// identifier accepts or it is rejected with 401 before reaching a tool;
+	// policy default-deny is then the second line of defence. When true, an
+	// unauthenticated request proceeds as anonymous.
+	AllowAnonymous bool
 }
 
 // Deps wires the server's dependencies. Service is required. Catalogs is
@@ -54,6 +61,11 @@ type Deps struct {
 	Identifier identity.Identifier
 	Catalogs   queryservice.CatalogLister
 	Logger     *slog.Logger
+
+	// PinnedUser is the identity every stdio tool call runs as. The
+	// `sluice mcp` subcommand resolves it once at startup from a static
+	// credential (JWT or API key). Nil means stdio runs anonymous.
+	PinnedUser *identity.UserCtx
 }
 
 // Server wraps sdkmcp.Server and optional HTTP listener.
@@ -71,8 +83,12 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if deps.Service == nil {
 		return nil, errors.New("mcp: Deps.Service is required")
 	}
-	if cfg.Transport == "" {
+	switch cfg.Transport {
+	case "":
 		cfg.Transport = TransportStdio
+	case "http", "streamable-http", "streamablehttp":
+		// Operator-friendly aliases for the canonical value.
+		cfg.Transport = TransportStreamableHTTP
 	}
 	if cfg.SessionIdleMax <= 0 {
 		cfg.SessionIdleMax = 10 * time.Minute
@@ -121,26 +137,42 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) runStdio(ctx context.Context) error {
-	s.lg.InfoContext(ctx, "mcp: starting stdio transport")
+	s.lg.InfoContext(ctx, "mcp: starting stdio transport",
+		"identity", pinnedIdentityLabel(s.deps.PinnedUser))
+	// The pinned identity is injected into the Run context so every stdio
+	// tool call resolves the same UserCtx via userFrom. The SDK preserves
+	// context values down to tool handlers.
+	if s.deps.PinnedUser != nil {
+		ctx = identity.WithUser(ctx, s.deps.PinnedUser)
+	}
 	if err := s.mcp.Run(ctx, &sdkmcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("mcp stdio: %w", err)
 	}
 	return nil
 }
 
+func pinnedIdentityLabel(u *identity.UserCtx) string {
+	if u == nil {
+		return "anonymous"
+	}
+	if u.Subject != "" {
+		return u.Subject
+	}
+	return "authenticated"
+}
+
 func (s *Server) runStreamable(ctx context.Context) error {
 	handler := sdkmcp.NewStreamableHTTPHandler(
-		func(r *http.Request) *sdkmcp.Server {
-			// Bridge the HTTP request into the identity pipeline and stash
-			// the resulting UserCtx on the request context so the tool
-			// handlers can reach it.
-			_ = s.authenticateHTTP(r) // context is mutated inside
-			return s.mcp
-		},
+		func(_ *http.Request) *sdkmcp.Server { return s.mcp },
 		nil,
 	)
 	mux := http.NewServeMux()
-	mux.Handle("/", handler)
+	// Authenticate every HTTP request before it reaches the SDK handler.
+	// This closes the session-pinning gap: a leaked session ID alone does
+	// not grant access because each request must still present a valid
+	// credential, and an expired/revoked token is rejected with 401 rather
+	// than silently downgraded to anonymous.
+	mux.Handle("/", s.authMiddleware(handler))
 
 	s.http = &http.Server{
 		Addr:              s.cfg.HTTPListen,

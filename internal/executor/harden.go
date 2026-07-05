@@ -25,10 +25,6 @@ type HardenConfig struct {
 	// TempDirectory is an absolute path for spilled-to-disk temp files.
 	// Empty keeps DuckDB's default (OS temp).
 	TempDirectory string
-
-	// StatementTimeout is the per-statement wall-clock cap enforced by
-	// DuckDB. 0 disables at this layer (context.Context still applies).
-	StatementTimeoutMs int64
 }
 
 // hardeningStatements returns the ordered slice of SET statements
@@ -56,9 +52,9 @@ func hardeningStatements(cfg HardenConfig) []string {
 	if cfg.TempDirectory != "" {
 		stmts = append(stmts, fmt.Sprintf("SET temp_directory='%s'", escapeSQLLiteral(cfg.TempDirectory)))
 	}
-	// Statement timeout is enforced per-query via SET, not a session
-	// default, because go-duckdb exposes no per-call knob. We leave the
-	// session default at "no timeout" and apply Timeout on Execute.
+	// Per-request timeouts are enforced via the Go context deadline on
+	// Execute (the go-duckdb driver turns deadline expiry into a
+	// duckdb_interrupt); DuckDB has no statement_timeout setting to emit.
 	// Freeze configuration — nothing below this line can change settings
 	// for the rest of the connection lifetime.
 	stmts = append(stmts, "SET lock_configuration=true")

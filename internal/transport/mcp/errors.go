@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,8 +13,11 @@ import (
 )
 
 // toolErrorResult converts an error into an MCP CallToolResult with
-// IsError=true. Every APIError field we keep is safe to expose (the
-// Message has already been scrubbed by pkg/errors).
+// IsError=true. Every APIError field we keep is safe to expose (the Message
+// has already been scrubbed by pkg/errors). The Details map — which policy
+// authors use to attach remediation hints (masked columns, a required
+// group/scope, a suggested narrower query) — is surfaced so the agent can
+// self-correct rather than only learning that it was denied.
 func toolErrorResult(err error) *sdkmcp.CallToolResult {
 	ae := pkgerr.FromError(err)
 	if ae == nil {
@@ -25,6 +29,11 @@ func toolErrorResult(err error) *sdkmcp.CallToolResult {
 	}
 	if ae.QueryID != "" {
 		msg += fmt.Sprintf(" (query_id=%s)", ae.QueryID)
+	}
+	if len(ae.Details) > 0 {
+		if b, jerr := json.Marshal(ae.Details); jerr == nil {
+			msg += "\ndetails: " + string(b)
+		}
 	}
 	return &sdkmcp.CallToolResult{
 		Content: []sdkmcp.Content{

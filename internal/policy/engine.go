@@ -91,8 +91,9 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 		return dec, nil
 	}
 
-	matched := e.selectMatching(snap, in)
-	dec := resolve(matched, in.Tables)
+	act := actionFromInput(in)
+	matched := e.selectMatching(snap, in, act)
+	dec := resolve(matched, in.Tables, in.User, act)
 	dec.Evaluated = len(snap.Policies)
 	dec.Duration = e.clock().Sub(start)
 
@@ -110,19 +111,59 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 // selectMatching returns the compiled policies whose Match selector
 // includes the input and whose Exclude selector does not exclude it.
 // The returned slice preserves snapshot ordering (priority desc, name asc).
-func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input) []*CompiledPolicy {
-	ctx := MatchContext{User: in.User, Tables: in.Tables}
+func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.Action) []*CompiledPolicy {
+	ctx := MatchContext{User: in.User, Tables: in.Tables, Action: act}
 	var out []*CompiledPolicy
 	for _, p := range snap.Policies {
 		if !p.Match.Match(ctx) {
 			continue
 		}
-		if p.Exclude != nil && p.Exclude.Match(ctx) {
+		// Per-table policy kinds (row filter, column mask) evaluate their
+		// Exclude per table in conflict.go so that referencing an excluded
+		// table in a multi-table query does not silently drop the policy's
+		// protection on the *other* tables. Whole-query kinds (access gate,
+		// reject) keep the whole-policy Exclude here.
+		if p.Exclude != nil && wholePolicyExclude(p.Kind) && p.Exclude.Match(ctx) {
 			continue
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// actionFromInput maps the parsed statement kind to the policy Action verb
+// used for resource action scoping. Unknown / unparsed statements yield the
+// empty action, which never satisfies an action-constrained selector.
+func actionFromInput(in Input) apitypes.Action {
+	if in.AST == nil {
+		return ""
+	}
+	switch in.AST.Statement() {
+	case parser.StmtSelect:
+		return apitypes.ActionSelect
+	case parser.StmtInsert:
+		return apitypes.ActionInsert
+	case parser.StmtUpdate:
+		return apitypes.ActionUpdate
+	case parser.StmtDelete:
+		return apitypes.ActionDelete
+	default:
+		return ""
+	}
+}
+
+// wholePolicyExclude reports whether an Exclude selector should drop the
+// entire policy when it matches at query scope. True for whole-query kinds
+// (SqlAccess gate, QueryReject); false for per-table kinds (RowFilter,
+// ColumnMask) whose Exclude is applied per table during conflict
+// resolution so a carve-out on one table cannot lift protection on others.
+func wholePolicyExclude(k apitypes.Kind) bool {
+	switch k {
+	case apitypes.KindRowFilterPolicy, apitypes.KindColumnMaskPolicy:
+		return false
+	default:
+		return true
+	}
 }
 
 // Explain returns an ExplainResult describing which policies match the
@@ -137,6 +178,7 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 		Subject:   subjectLabel(in.User),
 		Resource:  resourceLabel(in.Tables),
 		Matched:   append([]apitypes.AppliedPolicy(nil), dec.Applied...),
+		Shadow:    append([]apitypes.AppliedPolicy(nil), dec.Shadow...),
 		Effective: effectiveDecision(dec),
 	}
 	for _, r := range dec.Rejections {

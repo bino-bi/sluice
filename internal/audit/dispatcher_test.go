@@ -128,6 +128,69 @@ func TestDispatcher_BackpressureAndDrop(t *testing.T) {
 	}
 }
 
+// gateSink blocks in Record until a token is released, and signals on
+// `entered` when the worker begins processing a record. Reporting a
+// non-empty LastHash suppresses the genesis write so every Record call is
+// gated.
+type gateSink struct {
+	mu      sync.Mutex
+	records []*audit.Record
+	entered chan string
+	gate    chan struct{}
+	seed    string
+}
+
+func (g *gateSink) Name() string { return "gate" }
+func (g *gateSink) Record(_ context.Context, r *audit.Record) error {
+	g.entered <- r.QueryID
+	<-g.gate
+	g.mu.Lock()
+	g.records = append(g.records, r)
+	g.mu.Unlock()
+	return nil
+}
+func (g *gateSink) Flush(_ context.Context) error { return nil }
+func (g *gateSink) Close(_ context.Context) error { return nil }
+func (g *gateSink) LastHash() string              { return g.seed }
+
+// TestDispatcher_DropDoesNotAdvanceChain guards the chain-gap fix: a record
+// dropped on a full queue must NOT advance the chain tip, so the next
+// persisted record chains onto the last successfully-queued record.
+func TestDispatcher_DropDoesNotAdvanceChain(t *testing.T) {
+	sink := &gateSink{entered: make(chan string), gate: make(chan struct{}), seed: "seedtip"}
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks:           []audit.Sink{sink},
+		QueueSize:       1,
+		EnqueueDeadline: 20 * time.Millisecond,
+		FlushInterval:   -1,
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	defer func() { close(sink.gate); _ = d.Close(context.Background()) }()
+
+	// r1 is dequeued by the worker, which then blocks in Record.
+	if err := d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: "r1"}); err != nil {
+		t.Fatalf("enqueue r1: %v", err)
+	}
+	<-sink.entered // worker has taken r1; the queue is empty again
+
+	// r2 fills the single queue slot.
+	if err := d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: "r2"}); err != nil {
+		t.Fatalf("enqueue r2: %v", err)
+	}
+	tip := d.LastHash()
+
+	// r3 cannot be queued (slot taken by r2, worker blocked on r1) → drop.
+	err = d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: "r3"})
+	if !errors.Is(err, audit.ErrQueueFull) {
+		t.Fatalf("enqueue r3 err = %v, want ErrQueueFull", err)
+	}
+	if got := d.LastHash(); got != tip {
+		t.Fatalf("chain tip advanced past a dropped record: tip=%q now=%q", tip, got)
+	}
+}
+
 func TestDispatcher_CloseIsIdempotent(t *testing.T) {
 	sink := &memSink{}
 	d, err := audit.NewDispatcher(audit.DispatcherOptions{
