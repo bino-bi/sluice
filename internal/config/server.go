@@ -28,6 +28,7 @@ type ServerConfig struct {
 	Identity    IdentityConfig    `mapstructure:"identity"`
 	Limits      LimitsConfig      `mapstructure:"limits"`
 	Cache       CacheConfig       `mapstructure:"cache"`
+	Approval    ApprovalConfig    `mapstructure:"approval"`
 }
 
 // RESTConfig configures the public REST transport. TLS is MVP-optional.
@@ -124,6 +125,28 @@ type CacheConfig struct {
 	Rewrite RewriteCacheConfig `mapstructure:"rewrite"`
 }
 
+// ApprovalConfig configures the human-approval workflow. The feature
+// activates when at least one ApprovalPolicy is loaded; PublicBaseURL is
+// then required (validated at serve boot).
+type ApprovalConfig struct {
+	PublicBaseURL  string            `mapstructure:"publicBaseUrl"`
+	Webhooks       []ApprovalWebhook `mapstructure:"webhooks"`
+	SyncWait       time.Duration     `mapstructure:"syncWait"`       // in-request wait before ERR_APPROVAL_PENDING
+	RequestTTL     time.Duration     `mapstructure:"requestTtl"`     // pending-request lifetime
+	GrantTTL       time.Duration     `mapstructure:"grantTtl"`       // approved-grant lifetime
+	MaxPending     int               `mapstructure:"maxPending"`     // cap on concurrent pending requests
+	SQLSampleBytes int               `mapstructure:"sqlSampleBytes"` // webhook SQL payload cap
+}
+
+// ApprovalWebhook is one outbound approval target. HeadersRef is a
+// secret:// reference to a JSON object of header name → value (e.g. an
+// Authorization bearer), resolved at boot/reload.
+type ApprovalWebhook struct {
+	URL        string        `mapstructure:"url"`
+	HeadersRef string        `mapstructure:"headersRef"`
+	Timeout    time.Duration `mapstructure:"timeout"`
+}
+
 // RewriteCacheConfig controls the (Decision, RewriteResult) cache. It is
 // disabled by default — a conservative posture for a security proxy, where
 // memoising a decision must never outlive the snapshot it was made under.
@@ -195,6 +218,13 @@ func DefaultServerConfig() ServerConfig {
 				Size:    4096,
 				TTL:     60 * time.Second,
 			},
+		},
+		Approval: ApprovalConfig{
+			SyncWait:       20 * time.Second,
+			RequestTTL:     15 * time.Minute,
+			GrantTTL:       5 * time.Minute,
+			MaxPending:     1000,
+			SQLSampleBytes: 2048,
 		},
 	}
 }
@@ -283,4 +313,11 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("cache.rewrite.enabled", d.Cache.Rewrite.Enabled)
 	v.SetDefault("cache.rewrite.size", d.Cache.Rewrite.Size)
 	v.SetDefault("cache.rewrite.ttl", d.Cache.Rewrite.TTL)
+
+	v.SetDefault("approval.publicBaseUrl", d.Approval.PublicBaseURL)
+	v.SetDefault("approval.syncWait", d.Approval.SyncWait)
+	v.SetDefault("approval.requestTtl", d.Approval.RequestTTL)
+	v.SetDefault("approval.grantTtl", d.Approval.GrantTTL)
+	v.SetDefault("approval.maxPending", d.Approval.MaxPending)
+	v.SetDefault("approval.sqlSampleBytes", d.Approval.SQLSampleBytes)
 }

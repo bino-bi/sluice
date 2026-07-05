@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -62,8 +63,21 @@ type Deps struct {
 	// Nil disables data-source readiness probing (liveness still works).
 	Registry *datasource.Registry
 
+	// Approvals handles the public accept/reject capability endpoints and
+	// the authenticated status poll. Nil disables those routes.
+	Approvals ApprovalGateway
+
 	// Logger receives request/error logs. Nil uses slog.Default.
 	Logger *slog.Logger
+}
+
+// ApprovalGateway is the subset of the approval broker the REST transport
+// needs. Accept/Reject take the capability token; Get is used for the
+// owner-authenticated status poll.
+type ApprovalGateway interface {
+	Accept(id, token, remoteAddr string) (approval.DecisionResult, error)
+	Reject(id, token, remoteAddr string) (approval.DecisionResult, error)
+	Get(id string) (approval.View, bool)
 }
 
 // Server wraps an *http.Server with the chi-like routing and graceful

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/datasource"
@@ -61,6 +62,7 @@ type runtimeDeps struct {
 	service      *queryservice.Service
 	rateLimiter  *ratelimit.Limiter
 	rewriteCache *policycache.Cache
+	approvals    *approval.Broker
 	rest         *rest.Server
 	mcp          *mcp.Server
 	admin        *admin.Server
@@ -233,6 +235,18 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		deps.rewriteCache = policycache.New(scfg.Cache.Rewrite.Size, scfg.Cache.Rewrite.TTL)
 	}
 
+	// 14c. Approval broker (built before the queryservice so it can share
+	// the instance). Active when at least one ApprovalPolicy is loaded or a
+	// public base URL is configured; policies without a base URL fail
+	// startup fail-closed. The sync wait is clamped to fit the REST request
+	// timeout so a hybrid wait returns ERR_APPROVAL_PENDING rather than
+	// being killed by the timeout middleware.
+	approvalSyncClamp(scfg, deps.log)
+	deps.approvals, err = buildApprovalBroker(ctx, scfg, snap, deps.resolver, deps.auditDisp, deps.log)
+	if err != nil {
+		return nil, fmt.Errorf("approval broker: %w", err)
+	}
+
 	qopts := queryservice.Options{
 		Parser:          deps.parser,
 		Policy:          deps.policyEng,
@@ -257,6 +271,10 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if deps.rewriteCache != nil {
 		qopts.Cache = deps.rewriteCache
 	}
+	if deps.approvals != nil {
+		qopts.Approvals = deps.approvals
+		qopts.ApprovalSyncWait = scfg.Approval.SyncWait
+	}
 	deps.service = queryservice.New(qopts)
 
 	// 15. Transports.
@@ -268,6 +286,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Service:    deps.service,
 		Identifier: deps.identifier,
 		Registry:   deps.sourceReg,
+		Approvals:  approvalGateway(deps.approvals),
 		Logger:     deps.log,
 	})
 
@@ -323,6 +342,16 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 				bySub, byIss := buildRateSpecs(cur)
 				deps.rateLimiter.SetSpecs(bySub, byIss)
 			}
+			if deps.rewriteCache != nil {
+				deps.rewriteCache.Purge()
+			}
+			// ApprovalPolicies added on reload without a configured public
+			// base URL cannot be honoured (the broker was not built).
+			// Fail-closed: queries will pend and expire; log loudly.
+			if deps.approvals == nil && len(cur.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+				deps.log.Error("reload added ApprovalPolicies but no approval broker is configured; " +
+					"set approval.publicBaseUrl and restart — matching queries will pend and expire")
+			}
 			deps.schemaCache.InvalidateAll()
 		})
 	}
@@ -333,12 +362,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Listen:  scfg.Admin.Listen,
 			Token:   scfg.Admin.Token,
 		}, admin.Deps{
-			Service:  deps.service,
-			Policies: deps.policyEng,
-			Sources:  deps.sourceReg,
-			Catalogs: registryCatalogLister{r: deps.sourceReg},
-			Logger:   deps.log,
-			Reloader: reloaderFromWatcher(deps.watcher),
+			Service:   deps.service,
+			Approvals: adminPendingLister(deps.approvals),
+			Policies:  deps.policyEng,
+			Sources:   deps.sourceReg,
+			Catalogs:  registryCatalogLister{r: deps.sourceReg},
+			Logger:    deps.log,
+			Reloader:  reloaderFromWatcher(deps.watcher),
 		})
 	}
 

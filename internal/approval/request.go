@@ -44,17 +44,16 @@ type Ticket struct {
 
 // View is a token-free snapshot of a request for status polls and admin.
 type View struct {
-	ID         string    `json:"approval_id"`
-	State      State     `json:"state"`
-	Subject    Subject   `json:"subject"`
-	SQLHash    string    `json:"sql_hash"`
-	SQLSample  string    `json:"sql_sample,omitempty"`
-	Reasons    []string  `json:"reasons,omitempty"`
-	Policies   []string  `json:"policies,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	DecidedAt  time.Time `json:"decided_at,omitempty"`
-	subjectKey string
+	ID        string    `json:"approval_id"`
+	State     State     `json:"state"`
+	Subject   Subject   `json:"subject"`
+	SQLHash   string    `json:"sql_hash"`
+	SQLSample string    `json:"sql_sample,omitempty"`
+	Reasons   []string  `json:"reasons,omitempty"`
+	Policies  []string  `json:"policies,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	DecidedAt time.Time `json:"decided_at,omitempty"`
 }
 
 // DecisionResult is returned by Accept/Reject.
@@ -84,17 +83,16 @@ type request struct {
 
 func (r *request) view() View {
 	return View{
-		ID:         r.id,
-		State:      r.state,
-		Subject:    r.subject,
-		SQLHash:    r.sqlHash,
-		SQLSample:  r.sqlSample,
-		Reasons:    r.reasons,
-		Policies:   r.policies,
-		CreatedAt:  r.createdAt,
-		ExpiresAt:  r.expiresAt,
-		DecidedAt:  r.decidedAt,
-		subjectKey: r.subjectKey,
+		ID:        r.id,
+		State:     r.state,
+		Subject:   r.subject,
+		SQLHash:   r.sqlHash,
+		SQLSample: r.sqlSample,
+		Reasons:   r.reasons,
+		Policies:  r.policies,
+		CreatedAt: r.createdAt,
+		ExpiresAt: r.expiresAt,
+		DecidedAt: r.decidedAt,
 	}
 }
 

@@ -59,6 +59,13 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `cache.rewrite.enabled` | `bool` | `false` | `SLUICE_CACHE__REWRITE__ENABLED` |
 | `cache.rewrite.size` | `int` | `4096` | `SLUICE_CACHE__REWRITE__SIZE` |
 | `cache.rewrite.ttl` | `Duration` | `1m0s` | `SLUICE_CACHE__REWRITE__TTL` |
+| `approval.publicBaseUrl` | `string` | `""` | `SLUICE_APPROVAL__PUBLICBASEURL` |
+| `approval.webhooks` | `[]ApprovalWebhook` | `[]` | `SLUICE_APPROVAL__WEBHOOKS` |
+| `approval.syncWait` | `Duration` | `20s` | `SLUICE_APPROVAL__SYNCWAIT` |
+| `approval.requestTtl` | `Duration` | `15m0s` | `SLUICE_APPROVAL__REQUESTTTL` |
+| `approval.grantTtl` | `Duration` | `5m0s` | `SLUICE_APPROVAL__GRANTTTL` |
+| `approval.maxPending` | `int` | `1000` | `SLUICE_APPROVAL__MAXPENDING` |
+| `approval.sqlSampleBytes` | `int` | `2048` | `SLUICE_APPROVAL__SQLSAMPLEBYTES` |
 
 ## Secrets
 

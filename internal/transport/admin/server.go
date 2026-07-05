@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/policy"
@@ -45,13 +46,20 @@ type Config struct {
 
 // Deps wires the admin server dependencies.
 type Deps struct {
-	Service  *queryservice.Service
-	Policies *policy.Engine
-	Sources  *datasource.Registry
-	Audit    AuditTailer
-	Catalogs queryservice.CatalogLister
-	Logger   *slog.Logger
-	Reloader Reloader
+	Service   *queryservice.Service
+	Policies  *policy.Engine
+	Sources   *datasource.Registry
+	Audit     AuditTailer
+	Catalogs  queryservice.CatalogLister
+	Logger    *slog.Logger
+	Reloader  Reloader
+	Approvals PendingLister
+}
+
+// PendingLister returns the currently-pending approval requests. A nil
+// value makes /admin/approvals respond 501.
+type PendingLister interface {
+	Pending() []approval.View
 }
 
 // Reloader triggers a config reload. Implementations live alongside the

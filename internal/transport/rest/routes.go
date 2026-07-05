@@ -31,6 +31,19 @@ func (s *Server) routes() http.Handler {
 	})
 	mux.Handle("POST /v1/query", authMW(http.HandlerFunc(s.handleQuery)))
 
+	// Approval capability endpoints. Accept/reject are PUBLIC — the
+	// capability token in the request IS the authorisation, so no identity
+	// middleware. The status poll is authenticated: only the requesting
+	// subject may read a request's state (the requester never holds the
+	// capability tokens).
+	if s.deps.Approvals != nil {
+		mux.HandleFunc("GET /v1/approvals/{id}/accept", s.handleApprovalDecision(true))
+		mux.HandleFunc("POST /v1/approvals/{id}/accept", s.handleApprovalDecision(true))
+		mux.HandleFunc("GET /v1/approvals/{id}/reject", s.handleApprovalDecision(false))
+		mux.HandleFunc("POST /v1/approvals/{id}/reject", s.handleApprovalDecision(false))
+		mux.Handle("GET /v1/approvals/{id}", authMW(http.HandlerFunc(s.handleApprovalStatus)))
+	}
+
 	// Outermost wrapping: request-id → body-cap → timeout → panic recovery
 	// → metric tagging (placeholder until telemetry.HTTPMiddleware lands).
 	var h http.Handler = mux

@@ -107,6 +107,13 @@ Signals:
 				})
 			}
 
+			if deps.approvals != nil {
+				g.Go(func() error {
+					deps.approvals.Run(gctx) // janitor; returns on ctx cancel
+					return nil
+				})
+			}
+
 			// Block on the first signal or the first transport error.
 			err = g.Wait()
 			if err != nil && !errors.Is(err, context.Canceled) {

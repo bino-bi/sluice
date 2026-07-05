@@ -21,6 +21,13 @@ import (
 // called. On deny / reject / error, it emits the audit record inline
 // and returns an APIError.
 func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, error) {
+	return s.execute(ctx, req, false)
+}
+
+// execute is the pipeline body. resumed is true on the second pass after
+// an approval was granted: it consumes the grant instead of parking again,
+// which bounds recursion to one level.
+func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (*QueryResult, error) {
 	start := s.opts.Clock()
 	qid := pkgerr.NewQueryID()
 
@@ -145,6 +152,40 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 		s.emit(ctx, rec, start)
 		releaseSlot()
 		return nil, parseErrToAPI(parseErr, qid)
+	}
+
+	// 3b. Approval gate. A decision carrying an approval requirement holds
+	// the query until a human decides. On a consumed grant we proceed and
+	// note the approval id; otherwise we park (releasing the admission slot
+	// first) and either resolve inline or return ERR_APPROVAL_PENDING.
+	if dec.Approval != nil {
+		if s.opts.Approvals == nil {
+			// Policy requires approval but no broker is wired — fail closed.
+			rec.Decision = audit.DecisionError
+			rec.ErrorCode = string(pkgerr.CodeInternal)
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid).
+				WithMessage("approval required but no approval broker configured")
+		}
+		sqlHash := sqlHashHex(req.SQL)
+		subjectKey := subjectKeyOf(req.User)
+		if apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash); ok {
+			if rec.Extras == nil {
+				rec.Extras = map[string]any{}
+			}
+			rec.Extras["approval_id"] = apprID
+			// Fall through to rewrite + execute with the grant consumed.
+		} else if resumed {
+			// Resumed pass but the grant vanished (expired/raced). Do not
+			// re-park — that would recurse. Surface pending.
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
+		} else {
+			releaseSlot() // never hold the admission slot while parked
+			return s.awaitApproval(ctx, req, dec, rec, qid, start, sqlHash, subjectKey)
+		}
 	}
 
 	// 4. Rewrite (skipped on a cache hit, which already carries the result).

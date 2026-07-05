@@ -319,8 +319,9 @@ func (b *Broker) Run(ctx context.Context) {
 	}
 }
 
-// SubjectKeyOf returns a View's owning subject key (for status-poll authz).
-func SubjectKeyOf(v View) string { return v.subjectKey }
+// SubjectKeyOf returns a View's owning subject key (for status-poll authz),
+// derived from the public Subject fields to match the queryservice key.
+func SubjectKeyOf(v View) string { return v.Subject.Issuer + "\x00" + v.Subject.ID }
 
 // --- lock-held helpers ---
 

@@ -18,6 +18,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /admin/subjects/explain", s.adminAuth(http.HandlerFunc(s.handleExplain)))
 	mux.Handle("POST /admin/reload", s.adminAuth(http.HandlerFunc(s.handleReload)))
 	mux.Handle("GET /admin/audit/tail", s.adminAuth(http.HandlerFunc(s.handleAuditTail)))
+	mux.Handle("GET /admin/approvals", s.adminAuth(http.HandlerFunc(s.handleApprovals)))
 	mux.Handle("GET /admin/healthz", s.adminAuth(http.HandlerFunc(s.handleHealthz)))
 	mux.Handle("GET /admin/version", s.adminAuth(http.HandlerFunc(s.handleVersion)))
 

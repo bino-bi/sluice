@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
@@ -58,6 +59,14 @@ type Options struct {
 	// under the active snapshot. Nil disables caching (the default). Rate
 	// limiting, budgets, approval, and audit still run per request.
 	Cache rewriteCache
+
+	// Approvals gates queries that policy marked as requiring human
+	// approval. Nil means no ApprovalPolicy can be honoured — a decision
+	// carrying an approval requirement then fails closed with an internal
+	// error. ApprovalSyncWait bounds the in-request wait before returning
+	// ERR_APPROVAL_PENDING.
+	Approvals        approvalBroker
+	ApprovalSyncWait time.Duration
 }
 
 // Limits controls request-level bounds the service enforces before it
@@ -205,6 +214,14 @@ type snapshotInfoer interface {
 type rewriteCache interface {
 	Get(k policycache.Key) (*policycache.Entry, bool)
 	Put(k policycache.Key, e *policycache.Entry)
+}
+
+// approvalBroker is the subset of *approval.Broker the service consumes.
+type approvalBroker interface {
+	Require(ctx context.Context, in approval.RequireInput) (approval.Ticket, bool, error)
+	Wait(ctx context.Context, id string, maxWait time.Duration) (approval.State, error)
+	ConsumeGrant(subjectKey, sqlHash string) (string, bool)
+	Get(id string) (approval.View, bool)
 }
 
 // rewriterRewrite wraps the subset of *rewriter.Rewriter we need.

@@ -6,9 +6,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -66,6 +68,71 @@ func (s *Server) registerTools() {
 		},
 		s.toolListAccessibleTables,
 	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "check_approval",
+			Description: "Check the state of an approval request returned by execute_sql (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql to execute.",
+		},
+		s.toolCheckApproval,
+	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "await_approval",
+			Description: "Block up to timeout_seconds waiting for an approval request to be decided, then return its state. Prefer this over polling check_approval in a loop.",
+		},
+		s.toolAwaitApproval,
+	)
+}
+
+// ApprovalArgs identifies an approval request.
+type ApprovalArgs struct {
+	ApprovalID     string `json:"approval_id" jsonschema:"the approval id from ERR_APPROVAL_PENDING"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"await_approval only: seconds to block (capped)"`
+}
+
+// ApprovalStatusOutput reports an approval's state.
+type ApprovalStatusOutput struct {
+	ApprovalID string `json:"approval_id"`
+	State      string `json:"state"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+}
+
+func (s *Server) toolCheckApproval(ctx context.Context, _ *sdkmcp.CallToolRequest, in ApprovalArgs) (*sdkmcp.CallToolResult, ApprovalStatusOutput, error) {
+	user, _ := userFrom(ctx)
+	v, err := s.deps.Service.ApprovalStatus(ctx, user, in.ApprovalID)
+	if err != nil {
+		return toolErrorResult(err), ApprovalStatusOutput{}, nil
+	}
+	return approvalResult(v), approvalOutput(v), nil
+}
+
+func (s *Server) toolAwaitApproval(ctx context.Context, _ *sdkmcp.CallToolRequest, in ApprovalArgs) (*sdkmcp.CallToolResult, ApprovalStatusOutput, error) {
+	user, _ := userFrom(ctx)
+	secs := in.TimeoutSeconds
+	if secs <= 0 || secs > 55 {
+		secs = 55
+	}
+	v, err := s.deps.Service.AwaitApproval(ctx, user, in.ApprovalID, time.Duration(secs)*time.Second)
+	if err != nil {
+		return toolErrorResult(err), ApprovalStatusOutput{}, nil
+	}
+	return approvalResult(v), approvalOutput(v), nil
+}
+
+func approvalOutput(v approval.View) ApprovalStatusOutput {
+	return ApprovalStatusOutput{
+		ApprovalID: v.ID,
+		State:      string(v.State),
+		ExpiresAt:  v.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func approvalResult(v approval.View) *sdkmcp.CallToolResult {
+	return &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{
+			Text: fmt.Sprintf("approval %s: state=%s", v.ID, v.State),
+		}},
+	}
 }
 
 // WhoAmIArgs takes no parameters.

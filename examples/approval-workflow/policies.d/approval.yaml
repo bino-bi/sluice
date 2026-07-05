@@ -1,0 +1,22 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata: { name: allow-analysts, priority: 0 }
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: [analysts] }
+        resources: { tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata: { name: approve-pii-reads, priority: 100 }
+spec:
+  match:
+    any:
+      - resources: { tables: [people] }
+  when:
+    columnsAccessed: ["ssn", "salary*"]
+    predicates:
+      - { column: "country", op: "=", value: "de" }
+  reason: "PII columns on people require a data-steward sign-off"
