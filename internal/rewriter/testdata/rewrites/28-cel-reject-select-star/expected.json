@@ -1,0 +1,13 @@
+{
+  "outcome": "reject",
+  "changed": false,
+  "deny_policy": "no-star-join",
+  "rejections": [
+    "no-star-join/star-with-join"
+  ],
+  "error_code": "ACL_REJECTED",
+  "applied_policies": [
+    "QueryRejectPolicy/no-star-join",
+    "SqlAccessPolicy/allow-all"
+  ]
+}

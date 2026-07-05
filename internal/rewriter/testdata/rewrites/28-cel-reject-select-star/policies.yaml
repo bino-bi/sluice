@@ -1,0 +1,28 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: no-star-join
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+  reject:
+    rules:
+      - name: star-with-join
+        expression: 'query.has_select_star && query.joins > 0'
+        message: "SELECT * across joins is not allowed"
+        code: ACL_REJECTED

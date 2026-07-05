@@ -35,6 +35,9 @@ type CompiledPolicy struct {
 	Match       CompiledSelector
 	Exclude     *CompiledSelector
 	Enforcement apitypes.EnforcementMode
+	// Conditions gate whether the policy applies at all: every condition
+	// must evaluate true, else the policy is skipped for this request.
+	Conditions []CompiledCondition
 
 	// Kind-specific payloads (one of).
 	Access       *CompiledAccess
@@ -70,12 +73,14 @@ type CompiledReject struct {
 	Rules []CompiledRejectRule
 }
 
-// CompiledRejectRule is a single rule; MVP only emits predeclared rules
-// (stored as Name+Message+Code, no evaluator).
+// CompiledRejectRule is a single rule. When Prog is non-nil the rule only
+// fires if the CEL expression evaluates true; a nil Prog fires
+// unconditionally (the rule matched by selector alone).
 type CompiledRejectRule struct {
 	Name    string
 	Message string
 	Code    string
+	Prog    celProgram
 }
 
 // CompiledRewrite is the runtime form of QueryRewritePolicy. Every value
@@ -143,10 +148,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 
 	switch p := obj.(type) {
 	case *apitypes.SQLAccessPolicy:
-		if err := rejectConditions(p.Spec.Conditions); err != nil {
-			return nil, err
-		}
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
 			return nil, err
 		}
 		if p.Spec.Effect != apitypes.EffectAllow && p.Spec.Effect != apitypes.EffectDeny {
@@ -160,34 +162,38 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.RowFilterPolicy:
-		if err := rejectConditions(p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
 			return nil, err
-		}
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
-			return nil, err
-		}
-		if p.Spec.Filter.Expression != "" {
-			return nil, fmt.Errorf("spec.filter.expression: CEL row filters not supported in MVP")
-		}
-		if p.Spec.Filter.Predicate == nil {
-			return nil, fmt.Errorf("spec.filter.predicate: required")
-		}
-		pred, err := compilePredicate(p.Spec.Filter.Predicate)
-		if err != nil {
-			return nil, fmt.Errorf("spec.filter.predicate: %w", err)
 		}
 		combine := p.Spec.Combine
 		if combine == "" {
 			combine = apitypes.CombineRestrictive
 		}
+		if p.Spec.Filter.Expression != "" && p.Spec.Filter.Predicate != nil {
+			return nil, fmt.Errorf("spec.filter: set exactly one of predicate or expression")
+		}
+		var pred *CompiledPredicate
+		switch {
+		case p.Spec.Filter.Expression != "":
+			var err error
+			pred, err = compileFilterExpression(p.Spec.Filter.Expression)
+			if err != nil {
+				return nil, fmt.Errorf("spec.filter.expression: %w", err)
+			}
+		case p.Spec.Filter.Predicate != nil:
+			var err error
+			pred, err = compilePredicate(p.Spec.Filter.Predicate)
+			if err != nil {
+				return nil, fmt.Errorf("spec.filter.predicate: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("spec.filter: predicate or expression required")
+		}
 		base.RowFilter = &CompiledRowFilter{Predicate: pred, Combine: combine}
 		return base, nil
 
 	case *apitypes.ColumnMaskPolicy:
-		if err := rejectConditions(p.Spec.Conditions); err != nil {
-			return nil, err
-		}
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
 			return nil, err
 		}
 		args, err := compileMaskArgs(p.Spec.Mask)
@@ -202,31 +208,30 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.QueryRejectPolicy:
-		if err := rejectConditions(p.Spec.Conditions); err != nil {
-			return nil, err
-		}
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
 			return nil, err
 		}
 		cr := &CompiledReject{}
 		for _, r := range p.Spec.Reject.Rules {
+			rule := CompiledRejectRule{Name: r.Name, Message: r.Message, Code: r.Code}
 			if r.Expression != "" {
-				return nil, fmt.Errorf("%w: rule %q", ErrRejectExprUnsupported, r.Name)
+				e, err := env()
+				if err != nil {
+					return nil, fmt.Errorf("cel env: %w", err)
+				}
+				prog, err := compileBoolProgram(e, r.Expression)
+				if err != nil {
+					return nil, fmt.Errorf("reject rule %q: %w", r.Name, err)
+				}
+				rule.Prog = prog
 			}
-			cr.Rules = append(cr.Rules, CompiledRejectRule{
-				Name:    r.Name,
-				Message: r.Message,
-				Code:    r.Code,
-			})
+			cr.Rules = append(cr.Rules, rule)
 		}
 		base.Reject = cr
 		return base, nil
 
 	case *apitypes.QueryRewritePolicy:
-		if err := rejectConditions(p.Spec.Conditions); err != nil {
-			return nil, err
-		}
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
 			return nil, err
 		}
 		cr, err := compileRewrite(p.Spec.Rewrite)
@@ -241,7 +246,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 	return nil, nil
 }
 
-func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.Selector, enf apitypes.EnforcementMode) error {
+func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.Selector, enf apitypes.EnforcementMode, conditions []apitypes.Condition) error {
 	m, err := compileSelector(match)
 	if err != nil {
 		return fmt.Errorf("spec.match: %w", err)
@@ -254,6 +259,11 @@ func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.
 		}
 		cp.Exclude = &ex
 	}
+	conds, err := compileConditions(conditions)
+	if err != nil {
+		return fmt.Errorf("spec.conditions: %w", err)
+	}
+	cp.Conditions = conds
 	cp.Enforcement = enf
 	if cp.Enforcement == "" {
 		cp.Enforcement = apitypes.EnforcementEnforce
@@ -307,19 +317,6 @@ func compileRewrite(spec apitypes.RewriteSpec) (*CompiledRewrite, error) {
 		return nil, fmt.Errorf("spec.rewrite: at least one of limit, sample, or timeout is required")
 	}
 	return out, nil
-}
-
-// rejectConditions fails compilation if any CEL condition is declared.
-// Replaces the CEL evaluator in the MVP; the YAML surface is unchanged so
-// policy files written for v1 still parse in MVP when conditions are
-// omitted.
-func rejectConditions(cs []apitypes.Condition) error {
-	for _, c := range cs {
-		if c.Expression != "" {
-			return fmt.Errorf("%w: condition %q", ErrConditionUnsupported, c.Name)
-		}
-	}
-	return nil
 }
 
 // compileMaskArgs validates and mirrors apitypes.MaskArgs into pkgmask.Args.

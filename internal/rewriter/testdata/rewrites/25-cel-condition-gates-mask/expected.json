@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, NULL AS salary FROM pg.hr.employees",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-untrusted",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "ae9b3e9951ff4b86",
+  "masks": [
+    "pg.hr.employees.salary=null"
+  ]
+}

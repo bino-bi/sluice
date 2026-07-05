@@ -4,6 +4,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -92,8 +93,38 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 	}
 
 	act := actionFromInput(in)
-	matched := e.selectMatching(snap, in, act)
-	dec := resolve(matched, in.Tables, in.User, act)
+	acts := activation(in)
+	matched, condErr := e.selectMatching(snap, in, act, acts)
+	if condErr != nil {
+		// A condition that errors at runtime cannot be safely treated as
+		// true or false, so the whole request is denied.
+		dec := &Decision{
+			Outcome: OutcomeDeny,
+			DenyReason: &DenyReason{
+				Message: "policy condition evaluation failed: " + condErr.Error(),
+				Code:    "ACL_DENIED",
+			},
+		}
+		dec.Duration = e.clock().Sub(start)
+		globalMetrics.evaluated(OutcomeDeny)
+		globalMetrics.observe(dec.Duration.Seconds())
+		return dec, nil
+	}
+	fired, rejErr := firedRejectRules(matched, acts)
+	if rejErr != nil {
+		dec := &Decision{
+			Outcome: OutcomeDeny,
+			DenyReason: &DenyReason{
+				Message: "reject rule evaluation failed: " + rejErr.Error(),
+				Code:    "ACL_DENIED",
+			},
+		}
+		dec.Duration = e.clock().Sub(start)
+		globalMetrics.evaluated(OutcomeDeny)
+		globalMetrics.observe(dec.Duration.Seconds())
+		return dec, nil
+	}
+	dec := resolve(matched, in.Tables, in.User, act, fired)
 	dec.Evaluated = len(snap.Policies)
 	dec.Duration = e.clock().Sub(start)
 
@@ -111,7 +142,7 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 // selectMatching returns the compiled policies whose Match selector
 // includes the input and whose Exclude selector does not exclude it.
 // The returned slice preserves snapshot ordering (priority desc, name asc).
-func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.Action) []*CompiledPolicy {
+func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.Action, acts map[string]any) ([]*CompiledPolicy, error) {
 	ctx := MatchContext{User: in.User, Tables: in.Tables, Action: act}
 	var out []*CompiledPolicy
 	for _, p := range snap.Policies {
@@ -126,9 +157,65 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 		if p.Exclude != nil && wholePolicyExclude(p.Kind) && p.Exclude.Match(ctx) {
 			continue
 		}
+		// Conditions gate whether the policy applies. All must be true;
+		// an evaluation error denies the whole request (caller handles it).
+		ok, err := conditionsPass(p.Conditions, acts)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
 		out = append(out, p)
 	}
-	return out
+	return out, nil
+}
+
+// conditionsPass reports whether every condition evaluates true.
+func conditionsPass(conds []CompiledCondition, acts map[string]any) (bool, error) {
+	for _, c := range conds {
+		ok, err := evalBool(c.Prog, acts)
+		if err != nil {
+			return false, fmt.Errorf("condition %q: %w", c.Name, err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// firedRejectRules returns, per policy, the reject rules that fire —
+// rules with no expression always fire; expression rules fire only when
+// their program evaluates true. An evaluation error is surfaced so the
+// caller can deny the request.
+func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (map[*CompiledPolicy][]CompiledRejectRule, error) {
+	var out map[*CompiledPolicy][]CompiledRejectRule
+	for _, p := range matched {
+		if p.Kind != apitypes.KindQueryRejectPolicy || p.Reject == nil {
+			continue
+		}
+		var fired []CompiledRejectRule
+		for _, r := range p.Reject.Rules {
+			if r.Prog != nil {
+				ok, err := evalBool(r.Prog, acts)
+				if err != nil {
+					return nil, fmt.Errorf("reject rule %q: %w", r.Name, err)
+				}
+				if !ok {
+					continue
+				}
+			}
+			fired = append(fired, r)
+		}
+		if len(fired) > 0 {
+			if out == nil {
+				out = map[*CompiledPolicy][]CompiledRejectRule{}
+			}
+			out[p] = fired
+		}
+	}
+	return out, nil
 }
 
 // actionFromInput maps the parsed statement kind to the policy Action verb

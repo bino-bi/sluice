@@ -21,7 +21,7 @@ import (
 //     mode; restrictive policies AND together, permissive ones OR.
 //  4. Masks per column follow priority desc, specificity desc, name asc.
 //  5. Reject rules are appended verbatim (one per firing rule).
-func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action) *Decision {
+func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, firedRejects map[*CompiledPolicy][]CompiledRejectRule) *Decision {
 	dec := &Decision{
 		Outcome:     OutcomeAllow,
 		RowFilters:  map[string]*CompiledFilter{},
@@ -56,12 +56,17 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	// Step 4b: query rewrites (limit / sample / timeout).
 	collectRewrites(enforced, dec)
 
-	// Step 5: reject rules.
+	// Step 5: reject rules that actually fired (expression-gated rules are
+	// pre-filtered by the engine; only enforced policies count).
 	for _, p := range enforced {
 		if p.Kind != apitypes.KindQueryRejectPolicy || p.Reject == nil {
 			continue
 		}
-		for _, r := range p.Reject.Rules {
+		rules, ok := firedRejects[p]
+		if !ok {
+			continue
+		}
+		for _, r := range rules {
 			code := r.Code
 			if code == "" {
 				code = "ACL_REJECTED"

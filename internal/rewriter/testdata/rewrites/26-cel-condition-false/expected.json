@@ -1,0 +1,9 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, salary FROM pg.hr.employees",
+  "changed": false,
+  "applied_policies": [
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "6b433151a6ef2fa0"
+}

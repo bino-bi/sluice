@@ -15,11 +15,12 @@ var (
 	// ErrSnapshotInvalid indicates ApplySnapshot refused the incoming
 	// snapshot — the previous one stays live.
 	ErrSnapshotInvalid = errors.New("policy: snapshot invalid")
-	// ErrConditionUnsupported marks a CEL condition in MVP. The engine
-	// accepts empty Conditions only; non-empty fails at compile time.
-	ErrConditionUnsupported = errors.New("policy: CEL conditions not supported in MVP")
-	// ErrRejectExprUnsupported marks a reject-rule expression in MVP.
-	ErrRejectExprUnsupported = errors.New("policy: reject rule expressions not supported in MVP")
+	// ErrConditionInvalid marks a CEL condition or reject expression that
+	// fails to parse, type-check as bool, or plan.
+	ErrConditionInvalid = errors.New("policy: condition expression invalid")
+	// ErrFilterExprInvalid marks a CEL row-filter expression outside the
+	// SQL-translatable subset.
+	ErrFilterExprInvalid = errors.New("policy: row-filter expression invalid")
 	// ErrTemplateInvalid marks a template string that does not parse.
 	ErrTemplateInvalid = errors.New("policy: template invalid")
 	// ErrTemplateVarMissing is returned at render time when a referenced

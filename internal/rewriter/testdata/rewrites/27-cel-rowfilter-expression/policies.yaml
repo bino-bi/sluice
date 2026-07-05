@@ -1,0 +1,24 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: tenant-cel
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["orders"]
+  filter:
+    expression: 'row.tenant_id == subject.claims.tenant_id && row.region in ["eu", "eea"]'
