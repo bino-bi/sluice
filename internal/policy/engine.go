@@ -138,6 +138,11 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 		return dec, nil
 	}
 	dec := resolve(matched, in.Tables, in.User, act, fired)
+	// Approval gates an otherwise-allowed request; it runs after resolve so
+	// deny and reject take precedence.
+	if dec.Outcome == OutcomeAllow {
+		evaluateApproval(matched, in, dec)
+	}
 	dec.Evaluated = len(snap.Policies)
 	dec.Duration = e.clock().Sub(start)
 
@@ -280,6 +285,9 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 		Matched:   append([]apitypes.AppliedPolicy(nil), dec.Applied...),
 		Shadow:    append([]apitypes.AppliedPolicy(nil), dec.Shadow...),
 		Effective: effectiveDecision(dec),
+	}
+	if dec.Approval != nil {
+		out.ApprovalRequired = append([]apitypes.AppliedPolicy(nil), dec.Approval.Policies...)
 	}
 	for _, r := range dec.Rejections {
 		out.Rejected = append(out.Rejected, apitypes.RejectedPolicy{

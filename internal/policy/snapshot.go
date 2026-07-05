@@ -54,6 +54,22 @@ type CompiledPolicy struct {
 	ColumnMask   *CompiledColumnMask
 	Reject       *CompiledReject
 	QueryRewrite *CompiledRewrite
+	Approval     *CompiledApproval
+}
+
+// CompiledApproval is the runtime form of ApprovalPolicy. An empty
+// Columns + Predicates means the selector match alone triggers.
+type CompiledApproval struct {
+	Columns    []apitypes.Matcher
+	Predicates []compiledTrigger
+	Reason     string
+}
+
+// compiledTrigger is a compiled PredicateTrigger.
+type compiledTrigger struct {
+	Column apitypes.Matcher
+	Op     string // "" or "*" = any
+	Value  string // "" = any
 }
 
 // CompiledAccess is the runtime form of SqlAccessPolicy.
@@ -310,6 +326,17 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		}
 		base.QueryRewrite = cr
 		return base, nil
+
+	case *apitypes.ApprovalPolicy:
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+			return nil, err
+		}
+		ca, err := compileApproval(p.Spec)
+		if err != nil {
+			return nil, err
+		}
+		base.Approval = ca
+		return base, nil
 	}
 
 	// DataSource / SubjectBinding / AuditSink: not policies.
@@ -346,6 +373,32 @@ func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.
 		return fmt.Errorf("spec.enforcementMode: %q invalid (use Enforce, Audit, or DryRun)", cp.Enforcement)
 	}
 	return nil
+}
+
+// compileApproval validates an ApprovalSpec into its runtime form.
+func compileApproval(spec apitypes.ApprovalSpec) (*CompiledApproval, error) {
+	out := &CompiledApproval{Reason: spec.Reason}
+	if spec.When == nil {
+		return out, nil
+	}
+	for _, pat := range spec.When.ColumnsAccessed {
+		m, err := apitypes.CompileWildcard(pat)
+		if err != nil {
+			return nil, fmt.Errorf("spec.when.columnsAccessed %q: %w", pat, err)
+		}
+		out.Columns = append(out.Columns, m)
+	}
+	for i, tr := range spec.When.Predicates {
+		if tr.Column == "" {
+			return nil, fmt.Errorf("spec.when.predicates[%d]: column is required", i)
+		}
+		m, err := apitypes.CompileWildcard(tr.Column)
+		if err != nil {
+			return nil, fmt.Errorf("spec.when.predicates[%d].column %q: %w", i, tr.Column, err)
+		}
+		out.Predicates = append(out.Predicates, compiledTrigger{Column: m, Op: tr.Op, Value: tr.Value})
+	}
+	return out, nil
 }
 
 // compileRewrite validates a RewriteSpec into its runtime form. Hints are

@@ -52,4 +52,27 @@ type QueryShape struct {
 	Joins          int
 	Catalogs       []string
 	IsRecursiveCTE bool
+
+	// AccessedColumns lists every column referenced anywhere in the query
+	// — target list, WHERE, HAVING, GROUP BY, ORDER BY, and JOIN quals,
+	// recursing into subqueries, CTEs, and set-operation arms. Used by
+	// ApprovalPolicy triggers; a deep walk means a column buried in a
+	// subquery still triggers approval (fail-closed, more matches never
+	// fewer). Names are dotted as written ("email" or "u.email").
+	AccessedColumns []string
+	// Comparisons lists (column, op, literal) facts from WHERE/HAVING/JOIN
+	// quals, same deep walk. Used by ApprovalPolicy "field compared to a
+	// value" triggers.
+	Comparisons []Comparison
+}
+
+// Comparison is a (column, operator, literal-value) fact extracted from a
+// predicate. Op is normalised ("=", "!=", "<", "<=", ">", ">=", "like",
+// "ilike", "in", "isnull"); operand order is normalised so the column is
+// on the left. Value is the literal rendered as a string ("42", "de",
+// "true"); it is "" for the "isnull" op.
+type Comparison struct {
+	Column string
+	Op     string
+	Value  string
 }

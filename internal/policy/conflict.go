@@ -32,6 +32,11 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	// decision; Audit / DryRun policies are recorded as shadow outcomes.
 	enforced := make([]*CompiledPolicy, 0, len(matched))
 	for _, p := range matched {
+		// ApprovalPolicy attribution is owned by evaluateApproval, which
+		// only marks a policy Applied when it actually triggers.
+		if p.Kind == apitypes.KindApprovalPolicy {
+			continue
+		}
 		ap := apitypes.AppliedPolicy{Kind: p.Kind, Name: p.Name, Priority: p.Priority}
 		if p.Enforcement == apitypes.EnforcementAudit || p.Enforcement == apitypes.EnforcementDryRun {
 			dec.Shadow = append(dec.Shadow, ap)

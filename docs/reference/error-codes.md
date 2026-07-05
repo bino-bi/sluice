@@ -29,6 +29,9 @@ codes. Codes never change silently; additions require a CHANGELOG entry.
 | `ERR_PAYLOAD_TOO_LARGE`         | 413   | payload too large                                                          |
 | `ERR_RESULT_TRUNCATED`          | 200   | result truncated                                                           |
 | `ERR_AUDIT_UNAVAILABLE`         | 503   | audit log unavailable; request refused (fail-closed)                       |
+| `ERR_APPROVAL_PENDING`          | 202   | query requires human approval; awaiting decision                           |
+| `ERR_APPROVAL_REJECTED`         | 403   | query rejected by an approver                                              |
+| `ERR_APPROVAL_EXPIRED`          | 410   | approval request expired before a decision was made                        |
 | `ERR_INTERNAL`                  | 500   | internal error                                                             |
 
 

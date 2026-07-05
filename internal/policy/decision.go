@@ -32,10 +32,24 @@ type Decision struct {
 	// Shadow lists policies that matched but ran in Audit / DryRun mode:
 	// they did not affect this decision but are recorded so operators can
 	// see what a not-yet-enforced policy would have done.
-	Shadow    []apitypes.AppliedPolicy
-	Rewrite   *RewriteEffect
-	Evaluated int
-	Duration  time.Duration
+	Shadow  []apitypes.AppliedPolicy
+	Rewrite *RewriteEffect
+	// Approval, when non-nil, gates an otherwise-allowed request on human
+	// approval. The queryservice holds the query and fires a webhook.
+	Approval *ApprovalRequirement
+	// ApprovalShadow lists ApprovalPolicies matched in Audit/DryRun mode:
+	// they would have required approval but did not gate this request.
+	ApprovalShadow []apitypes.AppliedPolicy
+	Evaluated      int
+	Duration       time.Duration
+}
+
+// ApprovalRequirement aggregates every enforcing ApprovalPolicy that
+// triggered into a single requirement. The queryservice folds these into
+// one broker request; the broker dedupes re-submissions.
+type ApprovalRequirement struct {
+	Policies []apitypes.AppliedPolicy
+	Reasons  []string
 }
 
 // RewriteEffect is the folded QueryRewritePolicy outcome: the most

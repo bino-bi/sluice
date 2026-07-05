@@ -25,6 +25,7 @@ var kindSchemas = map[apitypes.Kind]reflect.Type{
 	apitypes.KindColumnMaskPolicy:   reflect.TypeFor[apitypes.ColumnMaskPolicy](),
 	apitypes.KindQueryRejectPolicy:  reflect.TypeFor[apitypes.QueryRejectPolicy](),
 	apitypes.KindQueryRewritePolicy: reflect.TypeFor[apitypes.QueryRewritePolicy](),
+	apitypes.KindApprovalPolicy:     reflect.TypeFor[apitypes.ApprovalPolicy](),
 	apitypes.KindDataSource:         reflect.TypeFor[apitypes.DataSource](),
 	apitypes.KindSubjectBinding:     reflect.TypeFor[apitypes.SubjectBinding](),
 	apitypes.KindAuditSink:          reflect.TypeFor[apitypes.AuditSink](),

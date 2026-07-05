@@ -41,6 +41,7 @@ Fields under `spec` are Kind-specific; the tables below list them.
 | `ColumnMaskPolicy` | Replace column values through a mask provider. |
 | `QueryRejectPolicy` | Reject queries matching a static rule or CEL expression. |
 | `QueryRewritePolicy` | Apply a LIMIT, sample, or timeout transformation. |
+| `ApprovalPolicy` | Require human approval (via webhook) before a matching query runs. |
 | `AuditSink` | Forward audit records to file / S3 / Postgres / syslog. |
 
 ### DataSource
@@ -216,6 +217,25 @@ Apply a LIMIT, sample, or timeout transformation.
 | `rewrite.sample.method` | `SampleMode` | optional |
 | `rewrite.timeout` | `Duration` | optional |
 | `rewrite.hint` | `[]HintEntry` | optional, list |
+
+### ApprovalPolicy
+
+Require human approval (via webhook) before a matching query runs.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `enforcementMode` | `EnforcementMode` | optional |
+| `match` | `Selector` | required |
+| `match.any` | `[]Clause` | optional, list |
+| `match.all` | `[]Clause` | optional, list |
+| `exclude` | `Selector?` | optional |
+| `exclude.any` | `[]Clause` | optional, list |
+| `exclude.all` | `[]Clause` | optional, list |
+| `conditions` | `[]Condition` | optional, list |
+| `when` | `ApprovalWhen?` | optional |
+| `when.columnsAccessed` | `[]string` | optional, list |
+| `when.predicates` | `[]PredicateTrigger` | optional, list |
+| `reason` | `string` | optional |
 
 ### AuditSink
 

@@ -42,6 +42,7 @@ func DefaultRegistry() TypeRegistry {
 	alpha(KindColumnMaskPolicy, func() Object { return &ColumnMaskPolicy{} })
 	alpha(KindQueryRejectPolicy, func() Object { return &QueryRejectPolicy{} })
 	alpha(KindQueryRewritePolicy, func() Object { return &QueryRewritePolicy{} })
+	alpha(KindApprovalPolicy, func() Object { return &ApprovalPolicy{} })
 	alpha(KindDataSource, func() Object { return &DataSource{} })
 	alpha(KindSubjectBinding, func() Object { return &SubjectBinding{} })
 	alpha(KindAuditSink, func() Object { return &AuditSink{} })
@@ -243,6 +244,8 @@ func validate(obj Object) error {
 		return validateQueryReject(x)
 	case *QueryRewritePolicy:
 		return nil
+	case *ApprovalPolicy:
+		return validateApproval(x)
 	case *DataSource:
 		return validateDataSource(x)
 	case *SubjectBinding:
@@ -316,6 +319,38 @@ func validateColumnMask(p *ColumnMaskPolicy) error {
 		return &ValidationError{
 			Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.mask.type",
 			Reason: fmt.Sprintf("unknown mask type %q", m.Type),
+		}
+	}
+	return nil
+}
+
+// approvalTriggerOps is the set of operators a PredicateTrigger may use
+// (plus "" / "*" for any). Kept in lockstep with parser.Comparison ops.
+var approvalTriggerOps = map[string]struct{}{
+	"": {}, "*": {}, "=": {}, "!=": {}, "<": {}, "<=": {}, ">": {}, ">=": {},
+	"like": {}, "ilike": {}, "in": {}, "isnull": {},
+}
+
+func validateApproval(p *ApprovalPolicy) error {
+	if err := validateSelector(p.GetKind(), p.Metadata.Name, "spec.match", &p.Spec.Match); err != nil {
+		return err
+	}
+	if p.Spec.When != nil {
+		for i, tr := range p.Spec.When.Predicates {
+			if tr.Column == "" {
+				return &ValidationError{
+					Kind: p.GetKind(), Name: p.Metadata.Name,
+					Field:  fmt.Sprintf("spec.when.predicates[%d].column", i),
+					Reason: "column is required",
+				}
+			}
+			if _, ok := approvalTriggerOps[tr.Op]; !ok {
+				return &ValidationError{
+					Kind: p.GetKind(), Name: p.Metadata.Name,
+					Field:  fmt.Sprintf("spec.when.predicates[%d].op", i),
+					Reason: fmt.Sprintf("unknown op %q", tr.Op),
+				}
+			}
 		}
 	}
 	return nil

@@ -43,6 +43,11 @@ const (
 	// Audit
 	CodeAuditUnavailable Code = "ERR_AUDIT_UNAVAILABLE"
 
+	// Approval workflow
+	CodeApprovalPending  Code = "ERR_APPROVAL_PENDING"
+	CodeApprovalRejected Code = "ERR_APPROVAL_REJECTED"
+	CodeApprovalExpired  Code = "ERR_APPROVAL_EXPIRED"
+
 	// Catch-all
 	CodeInternal Code = "ERR_INTERNAL"
 )
@@ -76,6 +81,9 @@ var httpStatusByCode = map[Code]int{
 	CodePayloadTooLarge:       http.StatusRequestEntityTooLarge,
 	CodeResultTruncated:       http.StatusOK,
 	CodeAuditUnavailable:      http.StatusServiceUnavailable,
+	CodeApprovalPending:       http.StatusAccepted,
+	CodeApprovalRejected:      http.StatusForbidden,
+	CodeApprovalExpired:       http.StatusGone,
 	CodeInternal:              http.StatusInternalServerError,
 }
 
@@ -103,6 +111,9 @@ var defaultMessage = map[Code]string{
 	CodePayloadTooLarge:       "payload too large",
 	CodeResultTruncated:       "result truncated",
 	CodeAuditUnavailable:      "audit log unavailable; request refused (fail-closed)",
+	CodeApprovalPending:       "query requires human approval; awaiting decision",
+	CodeApprovalRejected:      "query rejected by an approver",
+	CodeApprovalExpired:       "approval request expired before a decision was made",
 	CodeInternal:              "internal error",
 }
 
@@ -147,6 +158,9 @@ func AllCodes() []Code {
 		CodePayloadTooLarge,
 		CodeResultTruncated,
 		CodeAuditUnavailable,
+		CodeApprovalPending,
+		CodeApprovalRejected,
+		CodeApprovalExpired,
 		CodeInternal,
 	}
 }

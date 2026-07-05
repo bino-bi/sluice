@@ -23,6 +23,7 @@ const (
 	KindColumnMaskPolicy   Kind = "ColumnMaskPolicy"
 	KindQueryRejectPolicy  Kind = "QueryRejectPolicy"
 	KindQueryRewritePolicy Kind = "QueryRewritePolicy"
+	KindApprovalPolicy     Kind = "ApprovalPolicy"
 	KindDataSource         Kind = "DataSource"
 	KindSubjectBinding     Kind = "SubjectBinding"
 	KindAuditSink          Kind = "AuditSink"

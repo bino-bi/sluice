@@ -53,6 +53,9 @@ type ExplainResult struct {
 	// Shadow lists policies that matched but ran in Audit / DryRun mode and
 	// therefore did not affect the effective decision.
 	Shadow []AppliedPolicy `json:"shadow,omitempty"`
+	// ApprovalRequired lists ApprovalPolicies that would gate this request
+	// on human approval before it runs.
+	ApprovalRequired []AppliedPolicy `json:"approval_required,omitempty"`
 }
 
 // AppliedPolicy names a policy whose selector matched.

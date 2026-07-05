@@ -83,6 +83,7 @@ var kindSpecs = []struct {
 	{apitypes.KindColumnMaskPolicy, "Replace column values through a mask provider.", reflect.TypeFor[apitypes.ColumnMaskSpec]()},
 	{apitypes.KindQueryRejectPolicy, "Reject queries matching a static rule or CEL expression.", reflect.TypeFor[apitypes.QueryRejectSpec]()},
 	{apitypes.KindQueryRewritePolicy, "Apply a LIMIT, sample, or timeout transformation.", reflect.TypeFor[apitypes.QueryRewriteSpec]()},
+	{apitypes.KindApprovalPolicy, "Require human approval (via webhook) before a matching query runs.", reflect.TypeFor[apitypes.ApprovalSpec]()},
 	{apitypes.KindAuditSink, "Forward audit records to file / S3 / Postgres / syslog.", reflect.TypeFor[apitypes.AuditSinkSpec]()},
 }
 
