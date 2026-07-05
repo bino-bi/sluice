@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/opaengine"
 	"github.com/bino-bi/sluice/internal/policy"
 )
 
@@ -21,22 +22,33 @@ func buildPolicyEngine(scfg *config.ServerConfig, log *slog.Logger) (*policy.Eng
 	case "", "yaml":
 		return yamlEng, yamlEng, nil
 
+	case "opa":
+		opa, err := opaengine.New(opaengine.Options{
+			ModuleDir: scfg.Policies.OPA.ModuleDir,
+			Query:     scfg.Policies.OPA.Query,
+			Logger:    log,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return yamlEng, opa, nil
+
 	case "composite":
-		members, err := buildCompositeMembers(scfg, yamlEng)
+		members, err := buildCompositeMembers(scfg, yamlEng, log)
 		if err != nil {
 			return nil, nil, err
 		}
 		return yamlEng, policy.NewComposite(policy.Options{Logger: log}, members...), nil
 
 	default:
-		return nil, nil, fmt.Errorf("unknown policies.engine %q (use yaml or composite)", scfg.Policies.Engine)
+		return nil, nil, fmt.Errorf("unknown policies.engine %q (use yaml, opa, or composite)", scfg.Policies.Engine)
 	}
 }
 
 // buildCompositeMembers resolves the configured member names into engines.
 // Only the YAML engine is available today; OPA and ReBAC members land with
 // their respective engines.
-func buildCompositeMembers(scfg *config.ServerConfig, yamlEng *policy.Engine) ([]policy.PolicyEngine, error) {
+func buildCompositeMembers(scfg *config.ServerConfig, yamlEng *policy.Engine, log *slog.Logger) ([]policy.PolicyEngine, error) {
 	names := scfg.Policies.Composite.Members
 	if len(names) == 0 {
 		names = []string{"yaml"}
@@ -46,8 +58,18 @@ func buildCompositeMembers(scfg *config.ServerConfig, yamlEng *policy.Engine) ([
 		switch name {
 		case "yaml":
 			members = append(members, yamlEng)
+		case "opa":
+			opa, err := opaengine.New(opaengine.Options{
+				ModuleDir: scfg.Policies.OPA.ModuleDir,
+				Query:     scfg.Policies.OPA.Query,
+				Logger:    log,
+			})
+			if err != nil {
+				return nil, err
+			}
+			members = append(members, opa)
 		default:
-			return nil, fmt.Errorf("unknown composite member %q (only yaml is available)", name)
+			return nil, fmt.Errorf("unknown composite member %q (use yaml or opa)", name)
 		}
 	}
 	return members, nil
