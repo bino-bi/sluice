@@ -1,0 +1,39 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-analysts
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: [analysts] }
+        resources: { tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: tenant-isolation
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { tables: ["orders"] }
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenant_id }}"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { tables: ["customers"], columns: [email] }
+  mask:
+    type: partial
+    args: { showFirst: 1, showLast: 0 }

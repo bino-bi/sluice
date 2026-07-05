@@ -166,9 +166,11 @@ func collectFiles(sources []SourceDir) ([]string, error) {
 				return err
 			}
 			if d.IsDir() {
-				// Skip hidden directories (.git, .hidden) and common editor noise.
+				// Skip hidden directories (.git, .hidden), editor noise, and
+				// a `tests` subdirectory, which by convention holds policy
+				// test suites (policytest), not policy manifests.
 				name := d.Name()
-				if path != src.Path && (strings.HasPrefix(name, ".") || name == "testdata") {
+				if path != src.Path && (strings.HasPrefix(name, ".") || name == "testdata" || name == "tests") {
 					return fs.SkipDir
 				}
 				return nil

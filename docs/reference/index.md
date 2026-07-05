@@ -10,6 +10,8 @@ under this section.
 - [**CLI**](cli.md) — every subcommand, every flag, every exit code.
 - [**Policy schema**](policy-schema.md) — JSON Schema 2020-12 for the
   eight Kinds.
+- [**Policy testing**](policy-testing.md) — declarative test suites for
+  `sluice policy test`.
 - [**REST API**](rest-api.md) — endpoints + OpenAPI document.
 - [**MCP tools**](mcp.md) — the four tools exposed via stdio +
   Streamable HTTP.

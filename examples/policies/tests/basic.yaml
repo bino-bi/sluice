@@ -1,0 +1,23 @@
+cases:
+  - name: analyst reads orders with tenant filter
+    identity: { subject: alice, groups: [analysts], claims: { tenant_id: acme } }
+    sql: "SELECT id FROM pg.public.orders"
+    expect:
+      outcome: allow
+      filters: ["pg.public.orders"]
+      applied: ["RowFilterPolicy/tenant-isolation", "SqlAccessPolicy/allow-analysts"]
+      rewrittenSqlContains: ["tenant_id = $1"]
+
+  - name: non-analyst is denied by default
+    identity: { subject: mallory, groups: [guests] }
+    sql: "SELECT id FROM pg.public.orders"
+    expect:
+      outcome: deny
+
+  - name: email is partially masked
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id, email FROM pg.public.customers"
+    expect:
+      outcome: allow
+      masks: ["pg.public.customers.email=partial"]
+      rewrittenSqlContains: ["substr(email"]

@@ -13,6 +13,7 @@ subcommands landing in `v0.1`.
 | `sluice config validate` | Validate a server config + policy directory.                   |
 | `sluice policy validate` | Structural validation of a policy directory.                   |
 | `sluice policy explain`  | Show the decision for a synthetic user + table.                |
+| `sluice policy test`     | Run declarative policy test suites against a policy directory.  |
 | `sluice datasource check` | Resolve every DataSource.spec.type to a registered factory.   |
 | `sluice schema export`   | Emit JSON Schema 2020-12 for one or all Kinds.                 |
 | `sluice audit verify`    | Walk an audit directory and verify the hash chain.             |
