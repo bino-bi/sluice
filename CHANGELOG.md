@@ -9,6 +9,15 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Added
 
+- **QueryRewritePolicy runtime** — `limit` (AST-level LIMIT injection/clamp), `sample` (DuckDB `USING SAMPLE` wrap), and `timeout` (executor override) are now enforced.
+- **Column-mask providers** — SQL-expression masks `partial`, `hash` (sha256), `regex`, `truncate`; post-query masks `fpe` (FF1), `jitter`, `fake`, and `hash` (hmac_sha256). New error code `ERR_MASK_UNSUPPORTED_CONTEXT` when a post-query-masked column is used in a predicate/expression.
+- **CEL** — policy `conditions`, CEL row-filter `expression`s (lowered to parameterised SQL), and CEL reject-rule `expression`s are evaluated (google/cel-go).
+- **Rewrite/decision cache** (`internal/policycache`) — opt-in, keyed on raw SQL + identity + snapshot; disabled by default (`cache.rewrite.enabled`).
+- **`sluice policy test`** — declarative YAML policy test suites (`internal/policytest`).
+- **Human-approval workflow** — `ApprovalPolicy` kind, in-memory broker with webhook callbacks (accept/reject capability URLs), hybrid wait-then-pending flow (`ERR_APPROVAL_PENDING`/`REJECTED`/`EXPIRED`), single-use grants, MCP `check_approval`/`await_approval` tools, `GET /admin/approvals`, and the `[approval]` config section.
+- **PolicyEngine plurality** — `policies.engine: yaml|opa|composite`; embedded OPA engine (`internal/opaengine`), ReBAC engine (`internal/rebac`) with an OpenFGA check client and the `RelationshipPolicy` kind.
+- **Tag-driven policy** — `DataClassification` kind assigns tags; `ResourceSelector.tags` are expanded at compile time.
+- **Per-subject daily budgets** — `internal/budget` (SQLite-backed) enforces `SubjectBinding.spec.budget` (CPU-seconds + rows) → `ERR_BUDGET_EXCEEDED`; `[budget]` config section and `sluice budget show` CLI.
 - `SECURITY.md` with vulnerability disclosure process, response SLA, and operator hardening checklist.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
 - `GOVERNANCE.md`, `ROADMAP.md`, `LICENSE-CC-BY`, `THREAT_MODEL.md`.
@@ -18,7 +27,9 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
-- _n/a_
+- **QueryRewritePolicy `hint` entries and out-of-subset CEL expressions now fail at policy load** (previously inert/rejected-as-unsupported).
+- FPE ships **FF1**, not the roadmap's FF3-1 (FF3 was broken in 2017; FF1 is NIST-preferred and dependency-free).
+- Embedded OPA adds ~17 MB to the binary; it is isolated behind the `PolicyEngine` interface.
 
 ### Fixed
 
