@@ -26,6 +26,12 @@ const (
 	EventAdminAction    EventType = "admin-action"
 	EventDatasourceConn EventType = "datasource-connect"
 	EventGenesis        EventType = "genesis"
+	// Approval-workflow lifecycle events (additive; best-effort emits —
+	// the data-serving record is still the fail-closed access record).
+	EventApprovalRequested EventType = "approval-requested"
+	EventApprovalApproved  EventType = "approval-approved"
+	EventApprovalRejected  EventType = "approval-rejected"
+	EventApprovalExpired   EventType = "approval-expired"
 )
 
 // Decision labels used in Record.Decision. They mirror policy.Outcome plus

@@ -20,6 +20,15 @@ directly on the prometheus client rather than via `telemetry.Define*`.
 
 ## Source-derived catalogue
 
+### approval
+
+| Metric | Type | Labels | Help |
+| ------ | ---- | ------ | ---- |
+| `sluice_approval_decisions_total` | counter | `outcome` | Approval decisions by outcome. |
+| `sluice_approval_pending` | gauge | — | Approval requests currently awaiting a decision. |
+| `sluice_approval_wait_seconds` | histogram | — | Time a request waited before being decided or timing out. |
+| `sluice_approval_webhook_deliveries_total` | counter | `status` | Approval webhook delivery attempts by status. |
+
 ### audit
 
 | Metric | Type | Labels | Help |
