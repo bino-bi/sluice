@@ -46,11 +46,8 @@ func DefaultRegistry() TypeRegistry {
 	alpha(KindDataSource, func() Object { return &DataSource{} })
 	alpha(KindSubjectBinding, func() Object { return &SubjectBinding{} })
 	alpha(KindAuditSink, func() Object { return &AuditSink{} })
-	// v1-beta kinds are not yet defined as structs; they land with their
-	// runtime packages. The registrations are present-but-unused so the
-	// GroupVersionBeta1 constant has call sites. Remove the beta registrations
-	// once the concrete types exist.
-	_ = beta
+	// v1-beta kinds resolved by their own runtime packages.
+	beta(KindRelationshipPolicy, func() Object { return &RelationshipPolicy{} })
 	return r
 }
 
@@ -246,6 +243,8 @@ func validate(obj Object) error {
 		return nil
 	case *ApprovalPolicy:
 		return validateApproval(x)
+	case *RelationshipPolicy:
+		return validateRelationship(x)
 	case *DataSource:
 		return validateDataSource(x)
 	case *SubjectBinding:
@@ -351,6 +350,30 @@ func validateApproval(p *ApprovalPolicy) error {
 					Reason: fmt.Sprintf("unknown op %q", tr.Op),
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func validateRelationship(p *RelationshipPolicy) error {
+	if err := validateSelector(p.GetKind(), p.Metadata.Name, "spec.match", &p.Spec.Match); err != nil {
+		return err
+	}
+	if p.Spec.Backend.Endpoint == "" {
+		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.backend.endpoint", Reason: "required"}
+	}
+	if p.Spec.Backend.StoreID == "" {
+		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.backend.storeId", Reason: "required"}
+	}
+	if len(p.Spec.Checks) == 0 {
+		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.checks", Reason: "at least one check is required"}
+	}
+	for i, c := range p.Spec.Checks {
+		if c.ObjectTemplate == "" {
+			return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.checks[%d].objectTemplate", i), Reason: "required"}
+		}
+		if c.Relation == "" {
+			return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.checks[%d].relation", i), Reason: "required"}
 		}
 	}
 	return nil

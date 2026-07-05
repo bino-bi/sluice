@@ -42,6 +42,7 @@ Fields under `spec` are Kind-specific; the tables below list them.
 | `QueryRejectPolicy` | Reject queries matching a static rule or CEL expression. |
 | `QueryRewritePolicy` | Apply a LIMIT, sample, or timeout transformation. |
 | `ApprovalPolicy` | Require human approval (via webhook) before a matching query runs. |
+| `RelationshipPolicy` | Gate access via a ReBAC backend (OpenFGA) relationship check. |
 | `AuditSink` | Forward audit records to file / S3 / Postgres / syslog. |
 
 ### DataSource
@@ -236,6 +237,29 @@ Require human approval (via webhook) before a matching query runs.
 | `when.columnsAccessed` | `[]string` | optional, list |
 | `when.predicates` | `[]PredicateTrigger` | optional, list |
 | `reason` | `string` | optional |
+
+### RelationshipPolicy
+
+Gate access via a ReBAC backend (OpenFGA) relationship check.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `enforcementMode` | `EnforcementMode` | optional |
+| `match` | `Selector` | required |
+| `match.any` | `[]Clause` | optional, list |
+| `match.all` | `[]Clause` | optional, list |
+| `exclude` | `Selector?` | optional |
+| `exclude.any` | `[]Clause` | optional, list |
+| `exclude.all` | `[]Clause` | optional, list |
+| `backend` | `RelationshipBackend` | required |
+| `backend.type` | `string` | required |
+| `backend.endpoint` | `string` | required |
+| `backend.storeId` | `string` | required |
+| `backend.authorizationModelId` | `string` | optional |
+| `backend.tokenRef` | `string` | optional |
+| `backend.timeout` | `Duration` | optional |
+| `backend.cacheTtl` | `Duration` | optional |
+| `checks` | `[]RelationCheck` | required, list |
 
 ### AuditSink
 

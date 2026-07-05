@@ -168,7 +168,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	// 10. Policy engine(s) + snapshot apply. The YAML engine always exists
 	// (admin snapshot introspection + composite member); the engine passed
 	// to the queryservice may be a composite.
-	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.log)
+	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.resolver, deps.log)
 	if err != nil {
 		return nil, fmt.Errorf("policy engine: %w", err)
 	}

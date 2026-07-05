@@ -84,6 +84,7 @@ var kindSpecs = []struct {
 	{apitypes.KindQueryRejectPolicy, "Reject queries matching a static rule or CEL expression.", reflect.TypeFor[apitypes.QueryRejectSpec]()},
 	{apitypes.KindQueryRewritePolicy, "Apply a LIMIT, sample, or timeout transformation.", reflect.TypeFor[apitypes.QueryRewriteSpec]()},
 	{apitypes.KindApprovalPolicy, "Require human approval (via webhook) before a matching query runs.", reflect.TypeFor[apitypes.ApprovalSpec]()},
+	{apitypes.KindRelationshipPolicy, "Gate access via a ReBAC backend (OpenFGA) relationship check.", reflect.TypeFor[apitypes.RelationshipSpec]()},
 	{apitypes.KindAuditSink, "Forward audit records to file / S3 / Postgres / syslog.", reflect.TypeFor[apitypes.AuditSinkSpec]()},
 }
 
