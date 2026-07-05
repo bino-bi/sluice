@@ -94,7 +94,8 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 	snap := e.snapshot.Load()
 	if snap == nil {
 		dec := &Decision{
-			Outcome: OutcomeDeny,
+			Outcome:   OutcomeDeny,
+			Abstained: true,
 			DenyReason: &DenyReason{
 				Message: "no policy snapshot active (default-deny)",
 				Code:    "ACL_DENIED",

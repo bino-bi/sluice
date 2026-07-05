@@ -47,8 +47,11 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	}
 
 	// Step 1 + 2: access gate.
-	if denyOrAllow(enforced, dec); dec.Outcome == OutcomeDeny {
-		// Deny short-circuits — downstream steps do not run.
+	if denyOrAllow(enforced, dec); dec.Outcome == OutcomeDeny && !dec.Abstained {
+		// An EXPLICIT deny short-circuits — downstream steps do not run.
+		// An abstained deny (no allow matched) falls through so a composite
+		// member's filters/masks can still merge; standalone the outcome
+		// stays deny because the reject flip below is guarded on allow.
 		return dec
 	}
 
@@ -84,7 +87,9 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 			})
 		}
 	}
-	if len(dec.Rejections) > 0 {
+	// Only flip to reject from an allow — an abstained default-deny stays
+	// a deny so standalone behaviour is unchanged.
+	if len(dec.Rejections) > 0 && dec.Outcome == OutcomeAllow {
 		dec.Outcome = OutcomeReject
 	}
 
@@ -129,6 +134,7 @@ func denyOrAllow(matched []*CompiledPolicy, dec *Decision) {
 	}
 	if len(allows) == 0 {
 		dec.Outcome = OutcomeDeny
+		dec.Abstained = true // no-opinion deny (composite-mergeable)
 		dec.DenyReason = &DenyReason{
 			PolicyName: "",
 			Message:    "no SqlAccessPolicy matched (default-deny)",

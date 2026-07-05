@@ -44,6 +44,12 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `datasources.reload` | `bool` | `false` | `SLUICE_DATASOURCES__RELOAD` |
 | `policies.directory` | `string` | `./policies.d` | `SLUICE_POLICIES__DIRECTORY` |
 | `policies.reload` | `bool` | `true` | `SLUICE_POLICIES__RELOAD` |
+| `policies.engine` | `string` | `yaml` | `SLUICE_POLICIES__ENGINE` |
+| `policies.composite.members` | `[]string` | `[yaml]` | `SLUICE_POLICIES__COMPOSITE__MEMBERS` |
+| `policies.opa.moduleDir` | `string` | `""` | `SLUICE_POLICIES__OPA__MODULEDIR` |
+| `policies.opa.query` | `string` | `data.sluice.main` | `SLUICE_POLICIES__OPA__QUERY` |
+| `policies.rebac.cacheTtl` | `Duration` | `10s` | `SLUICE_POLICIES__REBAC__CACHETTL` |
+| `policies.rebac.cacheSize` | `int` | `10000` | `SLUICE_POLICIES__REBAC__CACHESIZE` |
 | `audit.file` | `FileSinkConfig?` | _unset_ | `SLUICE_AUDIT__FILE` |
 | `audit.failClosed` | `bool` | `true` | `SLUICE_AUDIT__FAILCLOSED` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |

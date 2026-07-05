@@ -77,6 +77,29 @@ type DataSourcesConfig struct {
 type PoliciesConfig struct {
 	Directory string `mapstructure:"directory"`
 	Reload    bool   `mapstructure:"reload"`
+	// Engine selects the policy-decision engine: "yaml" (default), "opa",
+	// or "composite". Composite fans out across Composite.Members.
+	Engine    string          `mapstructure:"engine"`
+	Composite CompositeConfig `mapstructure:"composite"`
+	OPA       OPAConfig       `mapstructure:"opa"`
+	Rebac     RebacConfig     `mapstructure:"rebac"`
+}
+
+// CompositeConfig lists the ordered engine members for engine=composite.
+type CompositeConfig struct {
+	Members []string `mapstructure:"members"`
+}
+
+// OPAConfig configures the embedded OPA engine.
+type OPAConfig struct {
+	ModuleDir string `mapstructure:"moduleDir"`
+	Query     string `mapstructure:"query"`
+}
+
+// RebacConfig configures the ReBAC engine's check cache.
+type RebacConfig struct {
+	CacheTTL  time.Duration `mapstructure:"cacheTtl"`
+	CacheSize int           `mapstructure:"cacheSize"`
 }
 
 // AuditConfig selects audit sinks. MVP ships file only; richer sinks land in v1.
@@ -196,6 +219,10 @@ func DefaultServerConfig() ServerConfig {
 		Policies: PoliciesConfig{
 			Directory: "./policies.d",
 			Reload:    true,
+			Engine:    "yaml",
+			Composite: CompositeConfig{Members: []string{"yaml"}},
+			OPA:       OPAConfig{Query: "data.sluice.main"},
+			Rebac:     RebacConfig{CacheTTL: 10 * time.Second, CacheSize: 10000},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -297,6 +324,12 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 
 	v.SetDefault("policies.directory", d.Policies.Directory)
 	v.SetDefault("policies.reload", d.Policies.Reload)
+	v.SetDefault("policies.engine", d.Policies.Engine)
+	v.SetDefault("policies.composite.members", d.Policies.Composite.Members)
+	v.SetDefault("policies.opa.moduleDir", d.Policies.OPA.ModuleDir)
+	v.SetDefault("policies.opa.query", d.Policies.OPA.Query)
+	v.SetDefault("policies.rebac.cacheTtl", d.Policies.Rebac.CacheTTL)
+	v.SetDefault("policies.rebac.cacheSize", d.Policies.Rebac.CacheSize)
 
 	v.SetDefault("logging.level", d.Logging.Level)
 	v.SetDefault("logging.format", d.Logging.Format)

@@ -53,7 +53,8 @@ type runtimeDeps struct {
 	sourceReg    *datasource.Registry
 	exec         *executor.Executor
 	schemaCache  schema.Cache
-	policyEng    *policy.Engine
+	policyEng    *policy.Engine      // YAML engine; also the admin snapshot source
+	policyEngine policy.PolicyEngine // engine passed to queryservice (yaml or composite)
 	rewrite      *rewriter.Rewriter
 	auditDisp    *audit.Dispatcher
 	auditSinks   []audit.Sink
@@ -164,9 +165,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Logger: deps.log,
 	})
 
-	// 10. Policy engine + snapshot apply.
-	deps.policyEng = policy.New(policy.Options{Logger: deps.log})
-	if err := deps.policyEng.ApplySnapshot(ctx, snap); err != nil {
+	// 10. Policy engine(s) + snapshot apply. The YAML engine always exists
+	// (admin snapshot introspection + composite member); the engine passed
+	// to the queryservice may be a composite.
+	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.log)
+	if err != nil {
+		return nil, fmt.Errorf("policy engine: %w", err)
+	}
+	if err := deps.policyEngine.ApplySnapshot(ctx, snap); err != nil {
 		return nil, fmt.Errorf("policy snapshot: %w", err)
 	}
 
@@ -249,7 +255,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	qopts := queryservice.Options{
 		Parser:          deps.parser,
-		Policy:          deps.policyEng,
+		Policy:          deps.policyEngine,
 		Rewriter:        deps.rewrite,
 		Executor:        deps.exec,
 		Audit:           deps.auditDisp,
@@ -322,7 +328,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			if cur == nil {
 				return
 			}
-			if err := deps.policyEng.ApplySnapshot(ctx, cur); err != nil {
+			if err := deps.policyEngine.ApplySnapshot(ctx, cur); err != nil {
 				deps.log.Warn("reload: policy engine rejected snapshot",
 					slog.String("error", err.Error()))
 			}

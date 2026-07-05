@@ -34,6 +34,11 @@ type Decision struct {
 	// see what a not-yet-enforced policy would have done.
 	Shadow  []apitypes.AppliedPolicy
 	Rewrite *RewriteEffect
+	// Abstained distinguishes a no-opinion default-deny (no SqlAccessPolicy
+	// matched) from an explicit deny. Composite engines treat an abstained
+	// deny as "no opinion" so another engine's filters/masks can merge;
+	// standalone the outcome is still deny.
+	Abstained bool
 	// Approval, when non-nil, gates an otherwise-allowed request on human
 	// approval. The queryservice holds the query and fires a webhook.
 	Approval *ApprovalRequirement
