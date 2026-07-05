@@ -33,8 +33,20 @@ type Decision struct {
 	// they did not affect this decision but are recorded so operators can
 	// see what a not-yet-enforced policy would have done.
 	Shadow    []apitypes.AppliedPolicy
+	Rewrite   *RewriteEffect
 	Evaluated int
 	Duration  time.Duration
+}
+
+// RewriteEffect is the folded QueryRewritePolicy outcome: the most
+// restrictive limit and timeout across every matched policy, plus the
+// winning sample instruction. The rewriter injects the LIMIT / sample
+// into the SQL; queryservice clamps the executor's row cap and timeout.
+type RewriteEffect struct {
+	LimitMax int64 // 0 = none
+	Sample   *CompiledSample
+	Timeout  time.Duration // 0 = none
+	Policies []string
 }
 
 // DenyReason carries the policy that produced a deny outcome.

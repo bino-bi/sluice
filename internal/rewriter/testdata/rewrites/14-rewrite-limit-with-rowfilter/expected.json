@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders LIMIT 500",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "QueryRewritePolicy/cap-rows",
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "6b9bde81594bf253",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

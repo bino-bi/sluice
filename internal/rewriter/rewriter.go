@@ -170,6 +170,9 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	if err := state.applySubstituteMask(clone); err != nil {
 		return nil, err
 	}
+	if err := state.applyRewrite(clone); err != nil {
+		return nil, err
+	}
 
 	// Step 5: deparse.
 	sql, err := pg.Deparse(clone)
@@ -183,6 +186,20 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		fp = req.AST.Fingerprint()
 	}
 	_ = raw // kept so the compiler retains the type assertion in early slices
+
+	// Step 6: sampling wraps the deparsed text — pg_query cannot express
+	// DuckDB's USING SAMPLE, so the wrap happens after deparse and the
+	// fingerprint above is intentionally computed on the inner SQL (the
+	// wrapped form no longer parses under the PG grammar).
+	if eff := req.Decision.Rewrite; eff != nil && eff.Sample != nil {
+		if req.AST.Statement() == parser.StmtSelect {
+			var note string
+			sql, note = sampleWrap(sql, eff.Sample)
+			state.rewrites = append(state.rewrites, note)
+		} else {
+			state.rewrites = append(state.rewrites, "sample-skipped:"+string(req.AST.Statement()))
+		}
+	}
 
 	return &RewriteResult{
 		SQL:         sql,
@@ -207,12 +224,13 @@ type state struct {
 
 // needsMutation reports whether the decision requires any AST change.
 // Allow outcome with no row filters, masks, rewrites, or rejections
-// means the SQL can be served verbatim.
+// means the SQL can be served verbatim. A timeout-only RewriteEffect is
+// enforced by queryservice and keeps the pass-through fast path.
 func needsMutation(d *policy.Decision) bool {
 	if len(d.RowFilters) > 0 || len(d.ColumnMasks) > 0 {
 		return true
 	}
-	return false
+	return d.Rewrite != nil && (d.Rewrite.LimitMax > 0 || d.Rewrite.Sample != nil)
 }
 
 // validateStatementKind rejects statements that must never reach the

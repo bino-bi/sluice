@@ -134,6 +134,27 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 	}
 	rec.RewrittenFingerprint = rewriteResp.Fingerprint
 
+	// 4b. QueryRewritePolicy effects that live outside the SQL: the
+	// timeout override and the belt-and-braces row cap. Both only ever
+	// tighten — the ceilings clamped in step 0 still hold.
+	if eff := dec.Rewrite; eff != nil {
+		if eff.Timeout > 0 && eff.Timeout < req.Timeout {
+			req.Timeout = eff.Timeout
+		}
+		if eff.LimitMax > 0 && eff.LimitMax < req.MaxRows {
+			req.MaxRows = eff.LimitMax
+		}
+		if rec.Extras == nil {
+			rec.Extras = map[string]any{}
+		}
+		rec.Extras["rewrite"] = map[string]any{
+			"limit":      eff.LimitMax,
+			"timeout_ms": eff.Timeout.Milliseconds(),
+			"sample":     eff.Sample != nil,
+			"policies":   eff.Policies,
+		}
+	}
+
 	// 5. Execute.
 	execReq := executor.Request{
 		QueryID: qid,

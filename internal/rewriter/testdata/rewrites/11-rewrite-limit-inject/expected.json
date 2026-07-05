@@ -1,0 +1,10 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM pg.public.orders LIMIT 1000",
+  "changed": true,
+  "applied_policies": [
+    "QueryRewritePolicy/cap-rows",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "ac650be85c28bc89"
+}

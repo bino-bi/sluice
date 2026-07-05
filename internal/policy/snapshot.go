@@ -5,7 +5,9 @@ package policy
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
+	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/pkg/apitypes"
@@ -35,13 +37,11 @@ type CompiledPolicy struct {
 	Enforcement apitypes.EnforcementMode
 
 	// Kind-specific payloads (one of).
-	Access     *CompiledAccess
-	RowFilter  *CompiledRowFilter
-	ColumnMask *CompiledColumnMask
-	Reject     *CompiledReject
-	// QueryRewritePolicy is declared-only in MVP. The raw spec is retained
-	// so v1 can wire runtime behaviour without reshaping the compiler.
-	QueryRewrite *apitypes.RewriteSpec
+	Access       *CompiledAccess
+	RowFilter    *CompiledRowFilter
+	ColumnMask   *CompiledColumnMask
+	Reject       *CompiledReject
+	QueryRewrite *CompiledRewrite
 }
 
 // CompiledAccess is the runtime form of SqlAccessPolicy.
@@ -76,6 +76,21 @@ type CompiledRejectRule struct {
 	Name    string
 	Message string
 	Code    string
+}
+
+// CompiledRewrite is the runtime form of QueryRewritePolicy. Every value
+// is validated at Compile so the rewriter and queryservice can apply it
+// without re-checking.
+type CompiledRewrite struct {
+	LimitMax int64 // 0 = no limit rewrite; else in [1, math.MaxInt32]
+	Sample   *CompiledSample
+	Timeout  time.Duration // 0 = no timeout override
+}
+
+// CompiledSample is a validated sampling instruction.
+type CompiledSample struct {
+	Rate   float64 // in (0, 1]
+	Method apitypes.SampleMode
 }
 
 // Compile lowers a config.Snapshot into a CompiledSnapshot. The returned
@@ -214,8 +229,11 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode); err != nil {
 			return nil, err
 		}
-		spec := p.Spec.Rewrite
-		base.QueryRewrite = &spec
+		cr, err := compileRewrite(p.Spec.Rewrite)
+		if err != nil {
+			return nil, err
+		}
+		base.QueryRewrite = cr
 		return base, nil
 	}
 
@@ -248,6 +266,47 @@ func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.
 		return fmt.Errorf("spec.enforcementMode: %q invalid (use Enforce, Audit, or DryRun)", cp.Enforcement)
 	}
 	return nil
+}
+
+// compileRewrite validates a RewriteSpec into its runtime form. Hints are
+// rejected: nothing consumes them, and silently accepting an inert rewrite
+// instruction would misrepresent the enforced posture.
+func compileRewrite(spec apitypes.RewriteSpec) (*CompiledRewrite, error) {
+	if len(spec.Hints) > 0 {
+		return nil, fmt.Errorf("spec.rewrite.hint: hints are not supported")
+	}
+	out := &CompiledRewrite{}
+	if spec.Limit != nil {
+		if spec.Limit.Max < 1 || spec.Limit.Max > math.MaxInt32 {
+			return nil, fmt.Errorf("spec.rewrite.limit.max: must be in [1, %d], got %d", math.MaxInt32, spec.Limit.Max)
+		}
+		out.LimitMax = spec.Limit.Max
+	}
+	if spec.Sample != nil {
+		if spec.Sample.Rate <= 0 || spec.Sample.Rate > 1 {
+			return nil, fmt.Errorf("spec.rewrite.sample.rate: must be in (0, 1], got %v", spec.Sample.Rate)
+		}
+		method := spec.Sample.Method
+		if method == "" {
+			method = apitypes.SampleReservoir
+		}
+		switch method {
+		case apitypes.SampleReservoir, apitypes.SampleBernoulli, apitypes.SampleSystem:
+		default:
+			return nil, fmt.Errorf("spec.rewrite.sample.method: %q invalid (use reservoir, bernoulli, or system)", method)
+		}
+		out.Sample = &CompiledSample{Rate: spec.Sample.Rate, Method: method}
+	}
+	if d := time.Duration(spec.Timeout); d != 0 {
+		if d < 0 {
+			return nil, fmt.Errorf("spec.rewrite.timeout: must be positive, got %v", d)
+		}
+		out.Timeout = d
+	}
+	if out.LimitMax == 0 && out.Sample == nil && out.Timeout == 0 {
+		return nil, fmt.Errorf("spec.rewrite: at least one of limit, sample, or timeout is required")
+	}
+	return out, nil
 }
 
 // rejectConditions fails compilation if any CEL condition is declared.

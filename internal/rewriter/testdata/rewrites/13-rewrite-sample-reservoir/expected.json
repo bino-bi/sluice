@@ -1,0 +1,10 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT * FROM (SELECT id, amount FROM pg.public.orders) AS sluice_sample USING SAMPLE 10% (reservoir)",
+  "changed": true,
+  "applied_policies": [
+    "QueryRewritePolicy/cap-rows",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "535449a8b693ea4f"
+}

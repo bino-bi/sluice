@@ -53,6 +53,9 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	// Step 4: column masks per column.
 	collectColumnMasks(enforced, tables, user, action, dec)
 
+	// Step 4b: query rewrites (limit / sample / timeout).
+	collectRewrites(enforced, dec)
+
 	// Step 5: reject rules.
 	for _, p := range enforced {
 		if p.Kind != apitypes.KindQueryRejectPolicy || p.Reject == nil {
@@ -240,6 +243,32 @@ func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, use
 				Priority: c.policy.Priority,
 			}
 		}
+	}
+}
+
+// collectRewrites folds every matched QueryRewritePolicy into a single
+// RewriteEffect. Limits and timeouts combine in the restrictive direction
+// (minimum wins); the sample instruction comes from the first matched
+// policy carrying one (matched is priority desc, name asc).
+func collectRewrites(matched []*CompiledPolicy, dec *Decision) {
+	for _, p := range matched {
+		if p.Kind != apitypes.KindQueryRewritePolicy || p.QueryRewrite == nil {
+			continue
+		}
+		if dec.Rewrite == nil {
+			dec.Rewrite = &RewriteEffect{}
+		}
+		eff, r := dec.Rewrite, p.QueryRewrite
+		if r.LimitMax > 0 && (eff.LimitMax == 0 || r.LimitMax < eff.LimitMax) {
+			eff.LimitMax = r.LimitMax
+		}
+		if r.Timeout > 0 && (eff.Timeout == 0 || r.Timeout < eff.Timeout) {
+			eff.Timeout = r.Timeout
+		}
+		if r.Sample != nil && eff.Sample == nil {
+			eff.Sample = r.Sample
+		}
+		eff.Policies = append(eff.Policies, p.Name)
 	}
 }
 
