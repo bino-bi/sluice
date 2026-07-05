@@ -104,14 +104,16 @@ func (r *fakeRewriter) Rewrite(_ context.Context, req rewriter.RewriteRequest) (
 // ---- fake executor ----
 
 type fakeExecutor struct {
-	columns []executor.ColumnInfo
-	rows    [][]any
-	err     error
-	lastReq executor.Request
+	columns   []executor.ColumnInfo
+	rows      [][]any
+	err       error
+	lastReq   executor.Request
+	execCount int
 }
 
 func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*executor.Response, error) {
 	e.lastReq = req
+	e.execCount++
 	if e.err != nil {
 		return nil, e.err
 	}

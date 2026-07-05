@@ -22,6 +22,15 @@ type CompiledSnapshot struct {
 	Policies []*CompiledPolicy
 	Bindings []*apitypes.SubjectBinding
 	Warnings []string
+	// CacheKeyHeaders lists the request header names any policy template
+	// references. The rewrite cache includes only these header values in
+	// its identity hash so unbounded headers (correlation IDs) don't wreck
+	// the hit rate.
+	CacheKeyHeaders []string
+	// CacheAllHeaders is set when a CEL condition or reject expression is
+	// present: those can reference any header opaquely, so the cache must
+	// key on the full header set to stay correct.
+	CacheAllHeaders bool
 }
 
 // CompiledPolicy is the compiled form of an apitypes policy object. Only
@@ -131,7 +140,68 @@ func Compile(_ context.Context, src *config.Snapshot) (*CompiledSnapshot, error)
 		}
 		return out.Policies[i].Name < out.Policies[j].Name
 	})
+	out.CacheKeyHeaders, out.CacheAllHeaders = collectCacheHeaders(out.Policies)
 	return out, nil
+}
+
+// collectCacheHeaders gathers the request header names referenced by
+// policy templates and reports whether any CEL condition/reject makes the
+// header set opaque (forcing a full-header cache key).
+func collectCacheHeaders(policies []*CompiledPolicy) ([]string, bool) {
+	seen := map[string]struct{}{}
+	allHeaders := false
+	addFromPredicate := func(p *CompiledPredicate) {
+		if p == nil {
+			return
+		}
+		for _, tmpl := range predicateHeaderTemplates(p) {
+			seen[tmpl] = struct{}{}
+		}
+	}
+	for _, p := range policies {
+		if len(p.Conditions) > 0 {
+			allHeaders = true
+		}
+		if p.RowFilter != nil {
+			addFromPredicate(p.RowFilter.Predicate)
+		}
+		if p.Reject != nil {
+			for _, r := range p.Reject.Rules {
+				if r.Prog != nil {
+					allHeaders = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for h := range seen {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out, allHeaders
+}
+
+// predicateHeaderTemplates returns the header names referenced by
+// request.headers.<name> templates anywhere in the predicate tree.
+func predicateHeaderTemplates(p *CompiledPredicate) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, c := range p.All {
+		out = append(out, predicateHeaderTemplates(c)...)
+	}
+	for _, c := range p.Any {
+		out = append(out, predicateHeaderTemplates(c)...)
+	}
+	out = append(out, predicateHeaderTemplates(p.Not)...)
+	for _, v := range p.Values {
+		if v.Template != nil && len(v.Template.Path) == 3 &&
+			v.Template.Path[0] == "request" && v.Template.Path[1] == "headers" {
+			out = append(out, v.Template.Path[2])
+		}
+	}
+	return out
 }
 
 // compilePolicy dispatches on Kind. Non-policy kinds (DataSource,

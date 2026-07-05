@@ -53,6 +53,19 @@ func (e *Engine) Snapshot() *CompiledSnapshot {
 	return e.snapshot.Load()
 }
 
+// SnapshotInfo returns the active snapshot's version, digest, and the
+// request headers that participate in cache-key identity. It is consumed
+// by internal/policycache to build a sound cache key. When no snapshot is
+// active the zero values are returned (version 0), which the cache treats
+// as uncacheable.
+func (e *Engine) SnapshotInfo() (version int64, digest string, keyHeaders []string, allHeaders bool) {
+	snap := e.snapshot.Load()
+	if snap == nil {
+		return 0, "", nil, false
+	}
+	return snap.Version, snap.Digest, snap.CacheKeyHeaders, snap.CacheAllHeaders
+}
+
 // ApplySnapshot compiles src and swaps it into place. On failure the
 // previous snapshot stays live and the error is returned.
 func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {

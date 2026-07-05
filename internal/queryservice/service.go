@@ -12,6 +12,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
@@ -52,6 +53,11 @@ type Options struct {
 	Masks *pkgmask.Registry
 	Keys  pkgmask.KeyStore
 	Salts pkgmask.SaltStore
+
+	// Cache memoises (Decision, RewriteResult) per SQL text + identity
+	// under the active snapshot. Nil disables caching (the default). Rate
+	// limiting, budgets, approval, and audit still run per request.
+	Cache rewriteCache
 }
 
 // Limits controls request-level bounds the service enforces before it
@@ -186,6 +192,19 @@ type QueryResult struct {
 type policyEvaluator interface {
 	Evaluate(ctx context.Context, in policy.Input) (*policy.Decision, error)
 	Explain(ctx context.Context, in policy.Input) (*pkgapi.ExplainResult, error)
+}
+
+// snapshotInfoer is implemented by *policy.Engine and lets the cache build
+// a sound key. A policyEvaluator that does not implement it (e.g. a test
+// fake) simply disables caching.
+type snapshotInfoer interface {
+	SnapshotInfo() (version int64, digest string, keyHeaders []string, allHeaders bool)
+}
+
+// rewriteCache is the subset of *policycache.Cache the service consumes.
+type rewriteCache interface {
+	Get(k policycache.Key) (*policycache.Entry, bool)
+	Put(k policycache.Key, e *policycache.Entry)
 }
 
 // rewriterRewrite wraps the subset of *rewriter.Rewriter we need.

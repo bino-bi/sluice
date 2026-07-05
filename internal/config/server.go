@@ -27,6 +27,7 @@ type ServerConfig struct {
 	Logging     LoggingConfig     `mapstructure:"logging"`
 	Identity    IdentityConfig    `mapstructure:"identity"`
 	Limits      LimitsConfig      `mapstructure:"limits"`
+	Cache       CacheConfig       `mapstructure:"cache"`
 }
 
 // RESTConfig configures the public REST transport. TLS is MVP-optional.
@@ -118,6 +119,20 @@ type LimitsConfig struct {
 	DisableCrossCatalog bool          `mapstructure:"disableCrossCatalog"`
 }
 
+// CacheConfig configures the optional rewrite/decision cache.
+type CacheConfig struct {
+	Rewrite RewriteCacheConfig `mapstructure:"rewrite"`
+}
+
+// RewriteCacheConfig controls the (Decision, RewriteResult) cache. It is
+// disabled by default — a conservative posture for a security proxy, where
+// memoising a decision must never outlive the snapshot it was made under.
+type RewriteCacheConfig struct {
+	Enabled bool          `mapstructure:"enabled"`
+	Size    int           `mapstructure:"size"`
+	TTL     time.Duration `mapstructure:"ttl"`
+}
+
 // TLSConfig holds server TLS material. Client-auth (mTLS) is v1.
 type TLSConfig struct {
 	CertFile   string `mapstructure:"certFile"`
@@ -173,6 +188,13 @@ func DefaultServerConfig() ServerConfig {
 			QueryTimeout:    30 * time.Second,
 			MaxQueryTimeout: 30 * time.Second,
 			MaxConcurrent:   100,
+		},
+		Cache: CacheConfig{
+			Rewrite: RewriteCacheConfig{
+				Enabled: false,
+				Size:    4096,
+				TTL:     60 * time.Second,
+			},
 		},
 	}
 }
@@ -257,4 +279,8 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("limits.maxQueryTimeout", d.Limits.MaxQueryTimeout)
 	v.SetDefault("limits.maxConcurrent", d.Limits.MaxConcurrent)
 	v.SetDefault("limits.disableCrossCatalog", d.Limits.DisableCrossCatalog)
+
+	v.SetDefault("cache.rewrite.enabled", d.Cache.Rewrite.Enabled)
+	v.SetDefault("cache.rewrite.size", d.Cache.Rewrite.Size)
+	v.SetDefault("cache.rewrite.ttl", d.Cache.Rewrite.TTL)
 }

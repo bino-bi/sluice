@@ -56,6 +56,9 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `limits.maxQueryTimeout` | `Duration` | `30s` | `SLUICE_LIMITS__MAXQUERYTIMEOUT` |
 | `limits.maxConcurrent` | `int` | `100` | `SLUICE_LIMITS__MAXCONCURRENT` |
 | `limits.disableCrossCatalog` | `bool` | `false` | `SLUICE_LIMITS__DISABLECROSSCATALOG` |
+| `cache.rewrite.enabled` | `bool` | `false` | `SLUICE_CACHE__REWRITE__ENABLED` |
+| `cache.rewrite.size` | `int` | `4096` | `SLUICE_CACHE__REWRITE__SIZE` |
+| `cache.rewrite.ttl` | `Duration` | `1m0s` | `SLUICE_CACHE__REWRITE__TTL` |
 
 ## Secrets
 

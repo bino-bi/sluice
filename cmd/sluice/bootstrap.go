@@ -24,6 +24,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/internal/rewriter"
@@ -42,28 +43,29 @@ import (
 // starts and shuts down. Each field is owned by the bootstrap and freed by
 // the returned Close function (reverse order of construction).
 type runtimeDeps struct {
-	log         *slog.Logger
-	server      *config.ServerConfig
-	snapshot    *config.Snapshot
-	registry    *config.Registry
-	resolver    *secrets.Resolver
-	parser      parser.Parser
-	sourceReg   *datasource.Registry
-	exec        *executor.Executor
-	schemaCache schema.Cache
-	policyEng   *policy.Engine
-	rewrite     *rewriter.Rewriter
-	auditDisp   *audit.Dispatcher
-	auditSinks  []audit.Sink
-	identifier  identity.Identifier
-	apikey      *identity.APIKeyIdentifier
-	service     *queryservice.Service
-	rateLimiter *ratelimit.Limiter
-	rest        *rest.Server
-	mcp         *mcp.Server
-	admin       *admin.Server
-	watcher     *config.Watcher
-	telShutdown func(context.Context) error
+	log          *slog.Logger
+	server       *config.ServerConfig
+	snapshot     *config.Snapshot
+	registry     *config.Registry
+	resolver     *secrets.Resolver
+	parser       parser.Parser
+	sourceReg    *datasource.Registry
+	exec         *executor.Executor
+	schemaCache  schema.Cache
+	policyEng    *policy.Engine
+	rewrite      *rewriter.Rewriter
+	auditDisp    *audit.Dispatcher
+	auditSinks   []audit.Sink
+	identifier   identity.Identifier
+	apikey       *identity.APIKeyIdentifier
+	service      *queryservice.Service
+	rateLimiter  *ratelimit.Limiter
+	rewriteCache *policycache.Cache
+	rest         *rest.Server
+	mcp          *mcp.Server
+	admin        *admin.Server
+	watcher      *config.Watcher
+	telShutdown  func(context.Context) error
 }
 
 // buildRuntime wires every layer in the correct order. The returned deps
@@ -225,8 +227,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		deps.rateLimiter.SetSpecs(bySub, byIss)
 	}
 
-	// 14b. Queryservice.
-	deps.service = queryservice.New(queryservice.Options{
+	// 14b. Rewrite cache (opt-in). Built before the queryservice so the
+	// reload subscriber can Purge it on every snapshot publish.
+	if scfg.Cache.Rewrite.Enabled {
+		deps.rewriteCache = policycache.New(scfg.Cache.Rewrite.Size, scfg.Cache.Rewrite.TTL)
+	}
+
+	qopts := queryservice.Options{
 		Parser:          deps.parser,
 		Policy:          deps.policyEng,
 		Rewriter:        deps.rewrite,
@@ -246,7 +253,11 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			MaxSQLBytes:    scfg.Limits.MaxSQLBytes,
 			MaxConcurrent:  scfg.Limits.MaxConcurrent,
 		},
-	})
+	}
+	if deps.rewriteCache != nil {
+		qopts.Cache = deps.rewriteCache
+	}
+	deps.service = queryservice.New(qopts)
 
 	// 15. Transports.
 	deps.rest = rest.New(rest.Config{

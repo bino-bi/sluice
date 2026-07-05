@@ -11,6 +11,7 @@ import (
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -81,19 +82,37 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 		rec.SQLFingerprint = ast.Fingerprint()
 	}
 
-	// 2. Policy evaluation (on regex fallback, AST is nil but we still
-	// evaluate against the extracted table list — default-deny kicks in
-	// when policies scope the tables).
-	dec, polErr := s.opts.Policy.Evaluate(ctx, policy.Input{
-		User: req.User, AST: ast, Shape: shape, Tables: tables,
-		Request: req.Facts, Now: start,
-	})
-	if polErr != nil {
-		setErrorCode(rec, polErr)
-		rec.Decision = audit.DecisionError
-		s.emit(ctx, rec, start)
-		releaseSlot()
-		return nil, toAPIError(polErr, qid)
+	// 2. Policy evaluation + rewrite, memoised when the cache is enabled.
+	// The key binds the raw SQL text and full identity to the active
+	// snapshot; a hit skips both Evaluate and Rewrite. Everything else
+	// (rate limit, budget, deny/reject short-circuit, clamps, post-masks,
+	// audit) still runs per request. Only a clean parse is cacheable.
+	cacheKey, cacheable := s.cacheKey(req, parseErr)
+	var (
+		dec         *policy.Decision
+		rewriteResp *rewriter.RewriteResult
+		fromCache   bool
+	)
+	if cacheable {
+		if entry, ok := s.opts.Cache.Get(cacheKey); ok {
+			dec = entry.Decision
+			rewriteResp = entry.Rewrite
+			fromCache = true
+		}
+	}
+	if dec == nil {
+		var polErr error
+		dec, polErr = s.opts.Policy.Evaluate(ctx, policy.Input{
+			User: req.User, AST: ast, Shape: shape, Tables: tables,
+			Request: req.Facts, Now: start,
+		})
+		if polErr != nil {
+			setErrorCode(rec, polErr)
+			rec.Decision = audit.DecisionError
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, toAPIError(polErr, qid)
+		}
 	}
 	applyDecisionToAudit(rec, dec)
 
@@ -101,18 +120,25 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 	// request. If policy denies or rejects, the deny/reject takes
 	// precedence.
 	if dec.Outcome == policy.OutcomeDeny {
+		if cacheable && !fromCache {
+			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
+		}
 		s.emit(ctx, rec, start)
 		releaseSlot()
 		return nil, denyToAPIError(dec, qid)
 	}
 	if dec.Outcome == policy.OutcomeReject {
+		if cacheable && !fromCache {
+			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
+		}
 		s.emit(ctx, rec, start)
 		releaseSlot()
 		return nil, rejectToAPIError(dec, qid)
 	}
 
 	// Parse errors after the policy decision — a successful Allow still
-	// requires a parseable query to proceed.
+	// requires a parseable query to proceed. (Unreachable on a cache hit:
+	// caching requires a clean parse.)
 	if parseErr != nil {
 		setErrorCode(rec, parseErr)
 		rec.Decision = audit.DecisionError
@@ -121,16 +147,23 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 		return nil, parseErrToAPI(parseErr, qid)
 	}
 
-	// 4. Rewrite.
-	rewriteResp, reErr := s.opts.Rewriter.Rewrite(ctx, rewriter.RewriteRequest{
-		AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
-	})
-	if reErr != nil {
-		setErrorCode(rec, reErr)
-		rec.Decision = audit.DecisionError
-		s.emit(ctx, rec, start)
-		releaseSlot()
-		return nil, toAPIError(reErr, qid)
+	// 4. Rewrite (skipped on a cache hit, which already carries the result).
+	if rewriteResp == nil {
+		var reErr error
+		rewriteResp, reErr = s.opts.Rewriter.Rewrite(ctx, rewriter.RewriteRequest{
+			AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
+		})
+		if reErr != nil {
+			// Never cache error paths.
+			setErrorCode(rec, reErr)
+			rec.Decision = audit.DecisionError
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, toAPIError(reErr, qid)
+		}
+		if cacheable {
+			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec, Rewrite: rewriteResp})
+		}
 	}
 	rec.RewrittenFingerprint = rewriteResp.Fingerprint
 
