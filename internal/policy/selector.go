@@ -58,6 +58,11 @@ type compiledResource struct {
 	tables   []apitypes.Matcher
 	columns  []apitypes.Matcher
 	actions  map[apitypes.Action]struct{}
+	// tagRules holds the DataClassification rules referenced by
+	// ResourceSelector.Tags, resolved at compile time. A table matches only
+	// if at least one tag rule also matches it (tags OR within the list,
+	// ANDed with the name constraints).
+	tagRules []*compiledResource
 	// specificity = sum of non-wildcard segments; used as a tiebreaker
 	// in conflict resolution (higher = more specific).
 	specificity int
@@ -77,16 +82,23 @@ type MatchContext struct {
 // compileSelector lowers an apitypes.Selector into a CompiledSelector. A
 // nil selector is allowed and compiles to the zero value (no clauses).
 func compileSelector(sel apitypes.Selector) (CompiledSelector, error) {
+	return compileSelectorWithTags(sel, nil)
+}
+
+// compileSelectorWithTags compiles a selector, resolving ResourceSelector
+// tags against tagIndex. A nil index means no classifications are loaded;
+// a selector that references a tag then fails to compile.
+func compileSelectorWithTags(sel apitypes.Selector, tagIndex map[string][]*compiledResource) (CompiledSelector, error) {
 	out := CompiledSelector{}
 	for _, c := range sel.Any {
-		cc, err := compileClause(c)
+		cc, err := compileClause(c, tagIndex)
 		if err != nil {
 			return CompiledSelector{}, err
 		}
 		out.Any = append(out.Any, cc)
 	}
 	for _, c := range sel.All {
-		cc, err := compileClause(c)
+		cc, err := compileClause(c, tagIndex)
 		if err != nil {
 			return CompiledSelector{}, err
 		}
@@ -95,7 +107,7 @@ func compileSelector(sel apitypes.Selector) (CompiledSelector, error) {
 	return out, nil
 }
 
-func compileClause(c apitypes.Clause) (CompiledClause, error) {
+func compileClause(c apitypes.Clause, tagIndex map[string][]*compiledResource) (CompiledClause, error) {
 	out := CompiledClause{}
 	if c.Subjects != nil {
 		s, err := compileSubjectSelector(*c.Subjects)
@@ -105,7 +117,7 @@ func compileClause(c apitypes.Clause) (CompiledClause, error) {
 		out.Subject = s
 	}
 	if c.Resources != nil {
-		r, err := compileResourceSelector(*c.Resources)
+		r, err := compileResourceSelector(*c.Resources, tagIndex)
 		if err != nil {
 			return CompiledClause{}, err
 		}
@@ -158,7 +170,7 @@ func compileClaimCheck(cc apitypes.ClaimCheck) (compiledClaimCheck, error) {
 	return out, nil
 }
 
-func compileResourceSelector(r apitypes.ResourceSelector) (*compiledResource, error) {
+func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]*compiledResource) (*compiledResource, error) {
 	out := &compiledResource{}
 	var err error
 	if out.catalogs, err = compileMatchers(r.Catalogs, "catalogs"); err != nil {
@@ -179,10 +191,20 @@ func compileResourceSelector(r apitypes.ResourceSelector) (*compiledResource, er
 			out.actions[a] = struct{}{}
 		}
 	}
+	// Resolve tag references against the classification index. An unknown
+	// tag is a compile error — a typo'd tag would silently protect nothing.
+	for _, tag := range r.Tags {
+		rules, ok := tagIndex[tag]
+		if !ok {
+			return nil, fmt.Errorf("resource.tags: unknown tag %q (no DataClassification defines it)", tag)
+		}
+		out.tagRules = append(out.tagRules, rules...)
+	}
 	out.specificity = countStatic(r.Catalogs) + countStatic(r.Schemas) +
-		countStatic(r.Tables) + countStatic(r.Columns)
+		countStatic(r.Tables) + countStatic(r.Columns) + len(r.Tags)
 	out.empty = len(out.catalogs) == 0 && len(out.schemas) == 0 &&
-		len(out.tables) == 0 && len(out.columns) == 0 && len(out.actions) == 0
+		len(out.tables) == 0 && len(out.columns) == 0 && len(out.actions) == 0 &&
+		len(out.tagRules) == 0
 	return out, nil
 }
 
@@ -482,9 +504,41 @@ func (r *compiledResource) matches(t parser.TableRef) bool {
 	if len(r.tables) > 0 && !matchAny(r.tables, t.Table) {
 		return false
 	}
+	// Tag references: at least one referenced classification rule must also
+	// match this table (tags OR'd, ANDed with the name constraints).
+	if len(r.tagRules) > 0 {
+		hit := false
+		for _, tr := range r.tagRules {
+			if tr.matches(t) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
 	// Columns and actions are evaluated above the selector in the engine;
 	// at this level they do not constrain table matching.
 	return true
+}
+
+// tagColumnPatterns returns the column patterns contributed by tag rules
+// whose table part matches t (for tag-driven column masks).
+func (r *compiledResource) tagColumnPatterns(t parser.TableRef) []string {
+	if r == nil {
+		return nil
+	}
+	var out []string
+	for _, tr := range r.tagRules {
+		if !tr.matches(t) {
+			continue
+		}
+		for _, m := range tr.columns {
+			out = append(out, m.Pattern())
+		}
+	}
+	return out
 }
 
 func matchAny(ms []apitypes.Matcher, s string) bool {

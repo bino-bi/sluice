@@ -43,6 +43,7 @@ Fields under `spec` are Kind-specific; the tables below list them.
 | `QueryRewritePolicy` | Apply a LIMIT, sample, or timeout transformation. |
 | `ApprovalPolicy` | Require human approval (via webhook) before a matching query runs. |
 | `RelationshipPolicy` | Gate access via a ReBAC backend (OpenFGA) relationship check. |
+| `DataClassification` | Assign tags to resources so policies can match on tags instead of names. |
 | `AuditSink` | Forward audit records to file / S3 / Postgres / syslog. |
 
 ### DataSource
@@ -260,6 +261,14 @@ Gate access via a ReBAC backend (OpenFGA) relationship check.
 | `backend.timeout` | `Duration` | optional |
 | `backend.cacheTtl` | `Duration` | optional |
 | `checks` | `[]RelationCheck` | required, list |
+
+### DataClassification
+
+Assign tags to resources so policies can match on tags instead of names.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `rules` | `[]ClassificationRule` | required, list |
 
 ### AuditSink
 

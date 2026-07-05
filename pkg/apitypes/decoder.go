@@ -48,6 +48,7 @@ func DefaultRegistry() TypeRegistry {
 	alpha(KindAuditSink, func() Object { return &AuditSink{} })
 	// v1-beta kinds resolved by their own runtime packages.
 	beta(KindRelationshipPolicy, func() Object { return &RelationshipPolicy{} })
+	beta(KindDataClassification, func() Object { return &DataClassification{} })
 	return r
 }
 
@@ -245,6 +246,8 @@ func validate(obj Object) error {
 		return validateApproval(x)
 	case *RelationshipPolicy:
 		return validateRelationship(x)
+	case *DataClassification:
+		return validateDataClassification(x)
 	case *DataSource:
 		return validateDataSource(x)
 	case *SubjectBinding:
@@ -350,6 +353,31 @@ func validateApproval(p *ApprovalPolicy) error {
 					Reason: fmt.Sprintf("unknown op %q", tr.Op),
 				}
 			}
+		}
+	}
+	return nil
+}
+
+var tagPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`)
+
+func validateDataClassification(p *DataClassification) error {
+	if len(p.Spec.Rules) == 0 {
+		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.rules", Reason: "at least one rule is required"}
+	}
+	for i, r := range p.Spec.Rules {
+		if len(r.Tags) == 0 {
+			return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.rules[%d].tags", i), Reason: "at least one tag is required"}
+		}
+		for _, tag := range r.Tags {
+			if !tagPattern.MatchString(tag) {
+				return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.rules[%d].tags", i), Reason: fmt.Sprintf("tag %q invalid (use [a-z0-9._-])", tag)}
+			}
+		}
+		if len(r.Resources.Tags) > 0 {
+			return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.rules[%d].resources.tags", i), Reason: "a classification rule may not reference tags (no recursion)"}
+		}
+		if len(r.Resources.Actions) > 0 {
+			return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: fmt.Sprintf("spec.rules[%d].resources.actions", i), Reason: "actions are not allowed in a classification rule"}
 		}
 	}
 	return nil

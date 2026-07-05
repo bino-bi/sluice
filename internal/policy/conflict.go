@@ -241,9 +241,10 @@ func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, use
 			// Without a schema cache we cannot enumerate every column; the
 			// rewriter performs final resolution (including wildcard
 			// expansion) and the engine records the selector pattern for
-			// audit. Use the selector's column patterns verbatim so the
-			// rewriter can resolve them against the actual columns.
-			cols = rawColumns(c.policy)
+			// audit. Use the selector's column patterns verbatim (plus any
+			// tag-derived columns for this table) so the rewriter can
+			// resolve them against the actual columns.
+			cols = rawColumns(c.policy, c.table)
 		}
 		for _, col := range cols {
 			key := c.tableKey + "." + col
@@ -293,24 +294,31 @@ func collectRewrites(matched []*CompiledPolicy, dec *Decision) {
 // rewriter layer); return nil so the rawColumns fallback takes over.
 func knownColumns(_ parser.TableRef) []string { return nil }
 
-// rawColumns returns the non-wildcard column identifiers declared on the
-// policy's Match.resources.columns. Wildcard patterns are returned
-// verbatim so the rewriter can expand them against the schema cache.
-func rawColumns(p *CompiledPolicy) []string {
+// rawColumns returns the column patterns the policy masks on table t: the
+// explicit resources.columns patterns plus, for tag-referencing selectors,
+// the column patterns of classification rules whose table part matches t.
+// Wildcard patterns are returned verbatim so the rewriter can expand them
+// against the schema cache.
+func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
 	seen := map[string]struct{}{}
 	var out []string
+	add := func(pat string) {
+		if _, dup := seen[pat]; dup {
+			return
+		}
+		seen[pat] = struct{}{}
+		out = append(out, pat)
+	}
 	collect := func(clauses []CompiledClause) {
 		for _, c := range clauses {
 			if c.Resource == nil {
 				continue
 			}
 			for _, m := range c.Resource.columns {
-				pat := m.Pattern()
-				if _, dup := seen[pat]; dup {
-					continue
-				}
-				seen[pat] = struct{}{}
-				out = append(out, pat)
+				add(m.Pattern())
+			}
+			for _, pat := range c.Resource.tagColumnPatterns(t) {
+				add(pat)
 			}
 		}
 	}

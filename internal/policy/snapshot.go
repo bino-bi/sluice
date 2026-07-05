@@ -139,8 +139,12 @@ func Compile(_ context.Context, src *config.Snapshot) (*CompiledSnapshot, error)
 		Digest:   src.Digest,
 		Bindings: append([]*apitypes.SubjectBinding(nil), src.SubjectBindings...),
 	}
+	tagIndex, err := buildTagIndex(src)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSnapshotInvalid, err)
+	}
 	for _, obj := range src.Policies {
-		cp, err := compilePolicy(obj)
+		cp, err := compilePolicy(obj, tagIndex)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s/%s: %w",
 				ErrSnapshotInvalid, obj.GetKind(), obj.GetObjectMeta().Name, err)
@@ -158,6 +162,35 @@ func Compile(_ context.Context, src *config.Snapshot) (*CompiledSnapshot, error)
 	})
 	out.CacheKeyHeaders, out.CacheAllHeaders = collectCacheHeaders(out.Policies)
 	return out, nil
+}
+
+// buildTagIndex compiles every DataClassification rule into a tag →
+// classification-resource index used to expand ResourceSelector.Tags at
+// compile time.
+func buildTagIndex(src *config.Snapshot) (map[string][]*compiledResource, error) {
+	objs := src.ByKind[apitypes.KindDataClassification]
+	if len(objs) == 0 {
+		return nil, nil
+	}
+	index := map[string][]*compiledResource{}
+	for _, obj := range objs {
+		dc, ok := obj.(*apitypes.DataClassification)
+		if !ok {
+			continue
+		}
+		for i, rule := range dc.Spec.Rules {
+			// Classification rules cannot themselves reference tags (nil
+			// index) — validated in apitypes, belt-and-braces here.
+			cr, err := compileResourceSelector(rule.Resources, nil)
+			if err != nil {
+				return nil, fmt.Errorf("DataClassification %s: rule %d: %w", dc.Metadata.Name, i, err)
+			}
+			for _, tag := range rule.Tags {
+				index[tag] = append(index[tag], cr)
+			}
+		}
+	}
+	return index, nil
 }
 
 // collectCacheHeaders gathers the request header names referenced by
@@ -223,7 +256,7 @@ func predicateHeaderTemplates(p *CompiledPredicate) []string {
 // compilePolicy dispatches on Kind. Non-policy kinds (DataSource,
 // SubjectBinding, AuditSink) produce (nil, nil) — the caller filters them
 // out.
-func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
+func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource) (*CompiledPolicy, error) {
 	meta := obj.GetObjectMeta()
 	base := &CompiledPolicy{
 		Kind:      obj.GetKind(),
@@ -234,7 +267,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 
 	switch p := obj.(type) {
 	case *apitypes.SQLAccessPolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		if p.Spec.Effect != apitypes.EffectAllow && p.Spec.Effect != apitypes.EffectDeny {
@@ -248,7 +281,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.RowFilterPolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		combine := p.Spec.Combine
@@ -279,7 +312,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.ColumnMaskPolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		args, err := compileMaskArgs(p.Spec.Mask)
@@ -294,7 +327,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.QueryRejectPolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		cr := &CompiledReject{}
@@ -317,7 +350,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.QueryRewritePolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		cr, err := compileRewrite(p.Spec.Rewrite)
@@ -328,7 +361,7 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 		return base, nil
 
 	case *apitypes.ApprovalPolicy:
-		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions); err != nil {
+		if err := compileBase(base, p.Spec.Match, p.Spec.Exclude, p.Spec.EnforcementMode, p.Spec.Conditions, tagIndex); err != nil {
 			return nil, err
 		}
 		ca, err := compileApproval(p.Spec)
@@ -343,14 +376,14 @@ func compilePolicy(obj apitypes.Object) (*CompiledPolicy, error) {
 	return nil, nil
 }
 
-func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.Selector, enf apitypes.EnforcementMode, conditions []apitypes.Condition) error {
-	m, err := compileSelector(match)
+func compileBase(cp *CompiledPolicy, match apitypes.Selector, exclude *apitypes.Selector, enf apitypes.EnforcementMode, conditions []apitypes.Condition, tagIndex map[string][]*compiledResource) error {
+	m, err := compileSelectorWithTags(match, tagIndex)
 	if err != nil {
 		return fmt.Errorf("spec.match: %w", err)
 	}
 	cp.Match = m
 	if exclude != nil {
-		ex, err := compileSelector(*exclude)
+		ex, err := compileSelectorWithTags(*exclude, tagIndex)
 		if err != nil {
 			return fmt.Errorf("spec.exclude: %w", err)
 		}
