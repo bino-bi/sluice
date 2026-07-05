@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, regexp_replace(email::varchar, $1, $2, 'g') AS email FROM pg.hr.employees",
+  "changed": true,
+  "params": [
+    "[^@]",
+    "*"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "5bc25ee381c28365",
+  "masks": [
+    "pg.hr.employees.email=regex"
+  ]
+}

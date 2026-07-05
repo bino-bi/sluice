@@ -356,13 +356,23 @@ func compileMaskArgs(spec apitypes.MaskSpec) (pkgmask.Args, error) {
 		if src.Value == nil {
 			return pkgmask.Args{}, fmt.Errorf("mask constant: value required")
 		}
+	case apitypes.MaskJitter, apitypes.MaskFPE, apitypes.MaskFake,
+		apitypes.MaskCustom, apitypes.MaskExternal:
+		// Post-query and external mask types are declared-only until
+		// their providers land in pkg/mask.
+		return pkgmask.Args{}, fmt.Errorf("mask %q: provider not enabled", spec.Type)
 	case apitypes.MaskPartial, apitypes.MaskHash,
-		apitypes.MaskRegex, apitypes.MaskTruncate,
-		apitypes.MaskJitter, apitypes.MaskFPE,
-		apitypes.MaskFake, apitypes.MaskCustom, apitypes.MaskExternal:
-		// MVP providers are null + constant; other mask types are
-		// declared-only until their providers land in pkg/mask.
-		return pkgmask.Args{}, fmt.Errorf("mask %q: provider not enabled in MVP", spec.Type)
+		apitypes.MaskRegex, apitypes.MaskTruncate:
+		// Registry-driven validation: the provider that renders the SQL
+		// at rewrite time is the same one that vets the args at load
+		// time, so `policy validate` and the runtime can never disagree.
+		provider, ok := pkgmask.Default().Lookup(string(spec.Type))
+		if !ok {
+			return pkgmask.Args{}, fmt.Errorf("mask %q: provider not registered", spec.Type)
+		}
+		if err := provider.ValidateArgs(out); err != nil {
+			return pkgmask.Args{}, fmt.Errorf("mask %q: %w", spec.Type, err)
+		}
 	default:
 		return pkgmask.Args{}, fmt.Errorf("mask type %q: unknown", spec.Type)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
 // applySubstituteMask walks every target-list ColumnRef, WHERE/HAVING
@@ -236,7 +237,7 @@ func (s *state) maybeSubstituteColumnRef(n *pg.Node, aliases aliasMap) (*pg.Node
 	if !ok {
 		return nil, "", nil
 	}
-	expr, err := buildMaskExpr(mask)
+	expr, err := s.buildMaskExpr(mask, tableKey, column, n)
 	if err != nil {
 		return nil, "", fmt.Errorf("column %s.%s: %w", tableKey, column, err)
 	}
@@ -365,16 +366,50 @@ func splitColumnRef(cr *pg.ColumnRef) (string, string) {
 }
 
 // buildMaskExpr returns the AST node that replaces the masked ColumnRef.
-// MVP: null and constant providers produce a literal. Other mask types
-// error — v1 wires the pkg/mask.Provider.MaskSQL call path.
-func buildMaskExpr(m *policy.CompiledMask) (*pg.Node, error) {
+// null and constant keep their literal fast paths (byte-identical output
+// to the MVP); every other type goes through the provider's MaskSQL
+// snippet, parsed and spliced around a clone of the original reference.
+func (s *state) buildMaskExpr(m *policy.CompiledMask, tableKey, column string, orig *pg.Node) (*pg.Node, error) {
 	switch m.Type {
 	case apitypes.MaskNull:
 		return &pg.Node{Node: &pg.Node_AConst{AConst: &pg.A_Const{Isnull: true}}}, nil
 	case apitypes.MaskConstant:
 		return constExpr(m.Args.Value)
 	}
-	return nil, fmt.Errorf("%w: %q", ErrMaskUnsupported, m.Type)
+	reg := s.masks
+	if reg == nil {
+		reg = pkgmask.Default()
+	}
+	provider, ok := reg.Lookup(string(m.Type))
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrMaskUnsupported, m.Type)
+	}
+	catalog, schemaName, table := splitTableKey(tableKey)
+	snippet, params, err := provider.MaskSQL(pkgmask.MaskContext{
+		Ctx:       s.ctx,
+		Column:    pkgmask.ColumnRef{Catalog: catalog, Schema: schemaName, Table: table, Column: column},
+		Args:      m.Args,
+		Identity:  maskIdentity{s.user},
+		SaltStore: s.salts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mask %s: %w", m.Type, err)
+	}
+	return s.renderMaskSnippet(snippet, params, orig)
+}
+
+// splitTableKey splits "catalog.schema.table" into its parts. Missing
+// segments stay empty — the key format is produced by the policy engine.
+func splitTableKey(key string) (catalog, schemaName, table string) {
+	parts := strings.SplitN(key, ".", 3)
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		return "", parts[0], parts[1]
+	default:
+		return "", "", key
+	}
 }
 
 // constExpr turns a Go value into an A_Const protobuf node. Supported

@@ -1,0 +1,28 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-hr
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-notes
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["employees"]
+          columns: ["notes"]
+  mask:
+    type: truncate
+    args:
+      length: 4
+      suffix: "..."

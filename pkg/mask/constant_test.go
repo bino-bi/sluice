@@ -17,8 +17,8 @@ func TestConstantProviderMaskSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaskSQL: %v", err)
 	}
-	if sql != "?" {
-		t.Errorf("MaskSQL sql = %q, want ?", sql)
+	if sql != "$1" {
+		t.Errorf("MaskSQL sql = %q, want $1", sql)
 	}
 	if len(params) != 1 || params[0].Value != "[REDACTED]" {
 		t.Errorf("MaskSQL params = %v, want [{constant [REDACTED]}]", params)

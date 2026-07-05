@@ -16,7 +16,7 @@ func (constantProvider) Type() string { return "constant" }
 // MaskSQL returns a single positional placeholder and binds Args.Value to
 // it. Callers merge the returned param into the overall query param list.
 func (constantProvider) MaskSQL(ctx MaskContext) (string, []Param, error) {
-	return "?", []Param{{Name: "constant", Value: ctx.Args.Value}}, nil
+	return "$1", []Param{{Name: "constant", Value: ctx.Args.Value}}, nil
 }
 
 // MaskArrow is not supported by this provider.

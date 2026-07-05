@@ -12,9 +12,14 @@ type Provider interface {
 	// string must match the apitypes.MaskType constant.
 	Type() string
 
-	// MaskSQL returns a DuckDB SQL expression that replaces the column
-	// reference. Params are positional `$N` placeholders appended to the
-	// overall query params by the rewriter.
+	// MaskSQL returns a single DuckDB SQL scalar expression that replaces
+	// the column reference. The literal identifier __col__ marks where the
+	// rewriter splices the original (qualified) column reference back in,
+	// and $1..$n are provider-local positional placeholders whose values
+	// are returned in params (params[k-1] binds $k; a placeholder may
+	// repeat). The rewriter renumbers them into the overall query
+	// parameter list. Args values must never be interpolated into the
+	// snippet text — everything user-influencable binds as a param.
 	MaskSQL(ctx MaskContext) (sql string, params []Param, err error)
 
 	// MaskArrow rewrites an Arrow column after query execution. Providers

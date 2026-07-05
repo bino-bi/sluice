@@ -171,6 +171,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Parser: deps.parser,
 		Schema: deps.schemaCache,
 		Logger: deps.log,
+		Salts:  secrets.NewSaltStore(deps.resolver),
 	})
 
 	// 12. Audit dispatcher — file sink only in MVP.

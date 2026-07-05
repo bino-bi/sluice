@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, CASE WHEN notes IS NULL THEN NULL WHEN length(notes::varchar) \u003e $1 THEN concat(substr(notes::varchar, 1, $1), $2) ELSE notes::varchar END AS notes FROM pg.hr.employees",
+  "changed": true,
+  "params": [
+    4,
+    "..."
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-notes",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "b98a08a235d0f397",
+  "masks": [
+    "pg.hr.employees.notes=truncate"
+  ]
+}

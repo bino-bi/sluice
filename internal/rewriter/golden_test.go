@@ -145,6 +145,7 @@ func runGoldenFixture(t *testing.T, dir string) {
 	rw := rewriter.New(rewriter.Options{
 		Parser:         p,
 		DefaultCatalog: "pg",
+		Salts:          goldenSaltStore{},
 	})
 
 	req := rewriter.RewriteRequest{
@@ -318,4 +319,12 @@ func mustReadFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// goldenSaltStore resolves every salt reference to a fixed value so
+// salted-mask fixtures stay deterministic.
+type goldenSaltStore struct{}
+
+func (goldenSaltStore) Get(_ context.Context, _ string) ([]byte, error) {
+	return []byte("golden-salt"), nil
 }

@@ -81,12 +81,14 @@ func Default() *Registry {
 	return defaultReg
 }
 
-// builtins returns the set of providers registered by Default(). MVP
-// ships null + constant; partial + hash land with the DuckDB integration
-// test harness in a later slice.
+// builtins returns the set of providers registered by Default().
 func builtins() []Provider {
 	return []Provider{
 		newNullProvider(),
 		newConstantProvider(),
+		newPartialProvider(),
+		newHashProvider(),
+		newRegexProvider(),
+		newTruncateProvider(),
 	}
 }

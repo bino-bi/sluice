@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
 // Options configures a new Rewriter.
@@ -24,6 +25,11 @@ type Options struct {
 	Logger         *slog.Logger
 	Clock          func() time.Time
 	DefaultCatalog string
+	// Masks resolves mask types beyond the null/constant fast paths.
+	// Nil falls back to mask.Default().
+	Masks *pkgmask.Registry
+	// Salts resolves secret:// salt references for salted hash masks.
+	Salts pkgmask.SaltStore
 }
 
 // Rewriter is the sole public surface of the package. It is safe for
@@ -154,11 +160,14 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	}
 
 	state := &state{
+		ctx:            ctx,
 		decision:       req.Decision,
 		user:           req.User,
 		facts:          req.Facts,
 		schema:         r.opts.Schema,
 		defaultCatalog: r.opts.DefaultCatalog,
+		masks:          r.opts.Masks,
+		salts:          r.opts.Salts,
 	}
 
 	if err := state.applyExpandStar(clone); err != nil {
@@ -212,11 +221,14 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 
 // state carries the per-Rewrite mutable bookkeeping.
 type state struct {
+	ctx            context.Context
 	decision       *policy.Decision
 	user           *identity.UserCtx
 	facts          *policy.RequestFacts
 	schema         schema.Cache
 	defaultCatalog string
+	masks          *pkgmask.Registry
+	salts          pkgmask.SaltStore
 
 	params   []any
 	rewrites []string

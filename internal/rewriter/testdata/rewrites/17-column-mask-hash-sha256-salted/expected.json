@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, sha256(concat($1, email::varchar)) AS email FROM pg.hr.employees",
+  "changed": true,
+  "params": [
+    "golden-salt"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "d7601619fca3f014",
+  "masks": [
+    "pg.hr.employees.email=hash"
+  ]
+}
