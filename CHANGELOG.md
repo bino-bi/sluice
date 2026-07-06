@@ -24,16 +24,19 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - `Dockerfile` — multi-stage, distroless `nonroot`, CGO-on for pg_query.
 - `examples/hello-sluice/` — end-to-end demo (SQLite catalog, row filter, column mask, JWT).
 - CI workflows: `security.yaml` (govulncheck + gosec + trivy) and `codeql.yaml` (weekly).
+- **Prometheus endpoint** — `GET /metrics` is now mounted on the admin listener behind the admin bearer token (the handler existed but was never wired to a route).
 
 ### Changed
 
 - **QueryRewritePolicy `hint` entries and out-of-subset CEL expressions now fail at policy load** (previously inert/rejected-as-unsupported).
 - FPE ships **FF1**, not the roadmap's FF3-1 (FF3 was broken in 2017; FF1 is NIST-preferred and dependency-free).
 - Embedded OPA adds ~17 MB to the binary; it is isolated behind the `PolicyEngine` interface.
+- **Documentation overhaul** — README rewritten; `docs/` restructured around a new Architecture chapter (`docs/architecture/`) and a per-kind Policies chapter (`docs/policies/`, replacing `docs/concepts/`); narrative pages now use the real `sluice.bino.bi/v1alpha1` policy dialect and cover query rewrites, the full mask catalog, CEL, approvals, OPA, ReBAC, classification tags, budgets, and rate limits; new `reference/admin-api.md` and `operations/server-config.md`; `reference/policy-testing.md` moved to `policies/testing.md` (and into the nav).
 
 ### Fixed
 
-- _n/a_
+- `examples/multi-tenant/policies.d/filter-tenant.yaml` used a schema shape that never loaded (`predicate:` directly under `spec:`, lowercase `op: equals`); corrected to `spec.filter.predicate` with `op: Equals`.
+- Stale example READMEs (mask providers "landing in v0.2" that are shipped, four MCP tools instead of nine).
 
 ## [0.1.0] — _unreleased_
 

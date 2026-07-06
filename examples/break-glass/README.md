@@ -31,7 +31,7 @@ break-glass/
 ├── seed.sql
 ├── policies.d/
 │   ├── datasource-shop.yaml
-│   ├── bindings.yaml           — two API keys: `analyst` and `sre`
+│   ├── bindings.yaml           — two API keys: `sl_demo_analyst` and `sl_demo_sre`
 │   ├── allow-analytics.yaml    — SqlAccessPolicy (shared)
 │   └── mask-email.yaml         — ColumnMaskPolicy + exclude: sre
 └── data/
@@ -66,7 +66,8 @@ curl -s -H "X-Api-Key: sl_demo_sre.rotatedtoken" \
 
 ```bash
 ./bin/sluice audit verify data/audit
-# chain OK (1 file(s), 3 record(s), last_hash=...)
+# chain OK (1 file(s), 5 record(s), last_hash=...)
+# genesis + (query + query-result) for each of the two queries above
 
 # Grep for elevated subjects:
 jq 'select(.subject.groups | index("sre"))' data/audit/audit-*.jsonl
@@ -95,5 +96,6 @@ reviewable event:
 Real break-glass deployments pair this mechanism with
 just-in-time group issuance (e.g. a short-lived OIDC token from your
 IdP) so the SRE key itself doesn't carry the elevated group at rest.
-The example uses long-lived API keys for readability; v0.3 will ship
-the OIDC bindings needed to reproduce the flow with JWTs.
+The example uses long-lived API keys for readability; a JWT
+`SubjectBinding` (issuer, JWKS URL, groups claim) reproduces the same
+flow with short-lived IdP tokens instead.

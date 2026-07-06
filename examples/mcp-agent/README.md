@@ -3,9 +3,11 @@
 
 Expose Sluice as an MCP server to a local agent (Claude Desktop,
 @modelcontextprotocol/inspector, or any SDK client). The agent sees
-four tools — `execute_sql`, `list_catalogs`, `list_tables`,
-`describe_table` — and every call runs through the same parse →
-policy → rewrite → audit pipeline as the REST transport.
+nine tools — `execute_sql`, `list_catalogs`, `list_tables`,
+`describe_table`, `whoami`, `explain_access`,
+`list_accessible_tables`, `check_approval`, `await_approval` — and
+every call runs through the same parse → policy → rewrite → audit
+pipeline as the REST transport.
 
 ## What this demonstrates
 
@@ -36,6 +38,10 @@ mcp-agent/
 
 ## Prepare the catalog
 
+Run everything below from this directory (`examples/mcp-agent`) —
+`server.yaml` and the datasource use relative paths (`./data/shop.db`,
+`./data/audit`) that resolve against the process working directory.
+
 ```bash
 sqlite3 data/shop.db < seed.sql
 ```
@@ -43,17 +49,19 @@ sqlite3 data/shop.db < seed.sql
 ## Use with @modelcontextprotocol/inspector
 
 ```bash
+# from examples/mcp-agent, after `make build` at the repo root
 npx @modelcontextprotocol/inspector \
-  ./bin/sluice serve \
-  --config examples/mcp-agent/server.yaml \
-  --policies-dir examples/mcp-agent/policies.d
+  ../../bin/sluice serve \
+  --config server.yaml \
+  --policies-dir policies.d
 ```
 
-The inspector UI lists four tools. Try in order:
+The inspector UI lists nine tools. Try in order:
 
 1. `list_catalogs` — returns `[{name: "shop", ...}]`.
-2. `list_tables { catalog: "shop" }` — returns `[products]`.
-3. `describe_table { catalog: "shop", schema: "main", table: "products" }`
+2. `list_tables { catalog: "shop" }` — returns
+   `{"tables": ["shop.main.products"]}` (names are fully qualified).
+3. `describe_table { table: "shop.main.products" }`
    — returns columns + types.
 4. `execute_sql { sql: "SELECT name, price_cents FROM shop.main.products ORDER BY price_cents DESC" }`
    — returns rows.
@@ -69,14 +77,14 @@ an `MCP Servers > sluice` entry appears in the settings panel.
 ## Verify the audit trail
 
 ```bash
-./bin/sluice audit verify examples/mcp-agent/data/audit
+# still from examples/mcp-agent
+../../bin/sluice audit verify data/audit
 # chain OK (1 file(s), N record(s), last_hash=...)
 ```
 
-Every MCP tool call produces an audit record tagged with the
-synthesised subject (`subject_id: "mcp-agent"`, `auth_method: "mcp"`)
-so a post-hoc review of "what did the agent do" is the same jq
-exercise as for any other transport.
+Every MCP tool call produces an audit record with `origin: "mcp"` and
+the calling subject, so a post-hoc review of "what did the agent do"
+is the same jq exercise as for any other transport.
 
 ## Not for production
 

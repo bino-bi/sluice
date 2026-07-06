@@ -8,9 +8,9 @@ supplies the access-control layer on top.
 
 ## What this demonstrates
 
-- **Cross-catalog joins work by default.** Sluice does not impose a
-  `no-cross-catalog-join` rule in the MVP (this is a documented
-  choice).
+- **Cross-catalog joins work by default.** Sluice allows them unless
+  you opt out with `limits.disableCrossCatalog: true` in
+  `server.yaml`.
 - **Per-table access control.** Granting `pg.public.orders` does not
   grant `ref.main.countries` — both tables must appear in the
   `SqlAccessPolicy` or the whole query is denied. This keeps joins
@@ -41,7 +41,7 @@ cross-source-join/
 
 ```bash
 docker compose up --build
-# wait for "seeded ref-data/countries.parquet" and "server started"
+# wait for "seeded ref-data/countries.parquet" and "sluice: starting"
 ```
 
 ## Run a join query
@@ -79,7 +79,7 @@ curl -s -H "X-Api-Key: sl_demo_analyst.supersecret" \
      -H "Content-Type: application/json" \
      -d '{"sql":"SELECT * FROM pg.public.pg_stat_activity"}' \
      http://localhost:8080/v1/query | jq .
-# {"error":{"code":"ACL_DENIED","message":"access denied by policy",...}}
+# {"code":"ACL_DENIED","message":"no SqlAccessPolicy matched (default-deny)",...}
 ```
 
 ## Not for production

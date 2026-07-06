@@ -15,6 +15,12 @@ spec:
       - subjects:
           groups: ["analytics"]
         resources:
-          tables:
-            - "pg.public.orders"
-            - "ref.main.countries"
+          catalogs: ["pg"]
+          schemas: ["public"]
+          tables: ["orders"]
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          catalogs: ["ref"]
+          schemas: ["main"]
+          tables: ["countries"]

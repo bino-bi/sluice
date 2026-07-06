@@ -2,46 +2,150 @@
 
 # REST API
 
-The REST data plane listens on a single port (default `:8080`) and
-exposes five endpoints.
+The REST data plane listens on `rest.listen` (default `:8080`). Every request
+passes through request-ID tagging (`X-Request-Id`), a body cap
+(`rest.maxBodyBytes`, default 1 MiB), a request timeout
+(`rest.requestTimeout`, default 30 s), and panic recovery.
 
-| Method | Path              | Purpose                                            |
-| ------ | ----------------- | -------------------------------------------------- |
-| `POST` | `/v1/query`       | Execute a SQL statement through the policy engine. |
-| `GET`  | `/v1/health`      | Liveness — 200 as soon as the listener is up.      |
-| `GET`  | `/v1/ready`       | Readiness — 200 when every dependency is wired.    |
-| `GET`  | `/v1/version`     | The same JSON as `sluice version --json`.          |
-| `GET`  | `/openapi.json`   | Machine-readable OpenAPI 3.1 document.             |
+## POST /v1/query
 
-## `POST /v1/query`
+Executes one SQL statement through the full pipeline — parse, policy
+evaluation, rewrite, DuckDB execution, audit — and streams the result.
 
-Request body:
+**Authentication** (one of):
+
+| Scheme | Header |
+|---|---|
+| JWT bearer | `Authorization: Bearer <jwt>` |
+| API key | `X-Api-Key: <id>.<material>` |
+| API key (alt) | `Authorization: ApiKey <id>.<material>` |
+
+A missing or invalid credential yields `401` with
+`{"code":"ERR_UNAUTHORIZED", ...}` and a `WWW-Authenticate: Bearer` header.
+
+**Request body** (unknown fields are rejected):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sql` | string | The statement to execute (required) |
+| `params` | array | Positional query parameters |
+| `max_rows` | int | Row cap for this query (default `limits.maxRows`, clamped to `limits.maxRowsCeiling`) |
+| `timeout_ms` | int | Query timeout in milliseconds (clamped to `limits.maxQueryTimeout`) |
+| `format` | string | `json` (default), `csv`, or `arrow` (rejected — see below) |
+| `meta` | object | String map attached to the request |
+
+When `format` is absent, the `Accept` header is consulted:
+`application/json` (or `*/*`) selects JSON, `text/csv` selects CSV.
+
+**JSON response** — streamed as a single object, rows emitted one at a time:
 
 ```json
 {
-  "sql":    "SELECT id, amount FROM orders WHERE region = 'eu'",
-  "format": "json"
+  "query_id": "01H…",
+  "columns": ["id", "name"],
+  "rows": [[1, "a"], [2, "b"]],
+  "row_count": 2,
+  "truncated": false
 }
 ```
 
-Headers:
+**CSV variant** — `Content-Type: text/csv` with a header row. Row count and
+truncation are meant to ride on the `X-Sluice-Row-Count` and
+`X-Sluice-Truncated` headers instead of the body.
 
-- `Authorization: Bearer <JWT>` or `Authorization: ApiKey <id>.<material>`
-- `Content-Type: application/json`
-- `Accept: application/json` (default), `text/csv`, or
-  `application/vnd.apache.arrow.stream` (rejected in MVP).
+!!! warning "Known issue: CSV metadata headers are not emitted"
+    The renderer currently sets `X-Sluice-Row-Count` and
+    `X-Sluice-Truncated` after the response body has been committed, so
+    HTTP clients never receive them. Use `format: json` when you need the
+    row count or the truncation flag.
 
-Response headers (always):
+**Response headers**: `X-Query-Id` always carries the query ID (also present
+on errors that have one); `X-Sluice-Applied-Policies` lists the names of
+applied policies, comma-separated, when any policy applied.
 
-- `X-Query-Id` — the ULID that ties the response to the audit record.
-- `X-Sluice-Row-Count`, `X-Sluice-Truncated` — on CSV responses.
+!!! warning "Not yet implemented: Arrow output"
+    `format: arrow` (and `Accept: application/vnd.apache.arrow.stream`) is
+    declared in the API but rejected at runtime with
+    `ERR_UNSUPPORTED_SYNTAX` ("arrow output not yet supported").
 
-Errors use `pkg/errors.APIError` JSON with a canonical HTTP status
-(400, 401, 403, 408, 413, 500). The `code` field carries the machine
-identifier; see [Error codes](error-codes.md).
+```console
+$ curl -s http://localhost:8080/v1/query \
+    -H "X-Api-Key: ci-bot.$KEY" -H "Content-Type: application/json" \
+    -d '{"sql": "SELECT id, name FROM shop.main.customers", "max_rows": 100}'
+```
 
-## Streaming
+## Approval endpoints
 
-JSON responses flush every 100 rows so long result sets reach clients
-progressively. CSV is RFC 4180 and streams row-by-row. Arrow streaming
-lands once the executor's Arrow iterator ships (tracked for v0.2).
+Registered only when the approval workflow is configured — see
+[Approvals](../policies/approvals.md).
+
+### GET|POST /v1/approvals/{id}/accept and /reject
+
+Capability endpoints for human approvers. The token — `?token=` query
+parameter or `X-Approval-Token` header — is the sole authorization; no other
+authentication applies.
+
+- Unknown ID and bad token return an **identical 404**, so the endpoint
+  cannot be used as an existence or token oracle.
+- Repeating the same verb is idempotent (`200` with `"note": "already
+  decided"`); a conflicting verb after a decision returns `409`.
+- **Prefetch-safe**: `HEAD` requests and requests carrying
+  `Purpose`/`Sec-Purpose`/`X-Moz: prefetch|preview` headers get `204` and
+  never mutate state, so chat clients unfurling the link cannot decide an
+  approval.
+
+```console
+$ curl -s -X POST "http://localhost:8080/v1/approvals/$ID/accept?token=$TOKEN"
+{"approval_id":"…","state":"approved","note":"recorded"}
+```
+
+### GET /v1/approvals/{id}
+
+Authenticated status poll for the **requesting subject only** — any other
+subject (or an unknown ID) gets `404`. Returns
+`{"approval_id": "…", "state": "pending", "expires_at": "…"}`.
+
+## Meta endpoints
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /v1/health` | Liveness: always `200` with `{"status":"ok","version":"…"}` |
+| `GET /v1/ready` | Readiness: `200` when every datasource is healthy; `503` with `"status":"degraded"` otherwise. Lists each datasource as `{name, type, healthy, error}` |
+| `GET /v1/version` | Build identity: `{version, commit, build_time, go, parser_version}` |
+| `GET /openapi.json` | OpenAPI document (see below) |
+
+!!! warning "OpenAPI document is a stub"
+    `/openapi.json` currently returns a minimal OpenAPI 3.1 skeleton that
+    lists the paths with no schemas. It exists so clients can
+    feature-detect; a generated spec is planned.
+
+## Error envelope
+
+Every 4xx/5xx response from the query and meta endpoints is a JSON
+`APIError` (the approval capability endpoints use the simpler shapes shown
+above):
+
+```json
+{
+  "code": "ACL_DENIED",
+  "message": "access denied",
+  "query_id": "01H…",
+  "policy": "deny-finance",
+  "details": {}
+}
+```
+
+`query_id`, `policy`, and `details` are optional. HTTP status is derived
+from the code — highlights:
+
+| Status | Codes |
+|---|---|
+| 202 | `ERR_APPROVAL_PENDING` (query parked, awaiting a human decision) |
+| 401 | `ERR_UNAUTHORIZED` |
+| 403 | `ACL_DENIED`, `ACL_REJECTED`, `ERR_FORBIDDEN`, `ERR_INSUFFICIENT_SCOPE`, `ERR_APPROVAL_REJECTED` |
+| 410 | `ERR_APPROVAL_EXPIRED` |
+| 413 | `ERR_PAYLOAD_TOO_LARGE` |
+| 429 | `ERR_RATE_LIMITED`, `ERR_BUDGET_EXCEEDED` |
+
+The full 24-code catalogue with canonical messages lives in
+[Error codes](error-codes.md).

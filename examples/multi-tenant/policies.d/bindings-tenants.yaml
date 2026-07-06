@@ -1,26 +1,37 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Two API keys bound to two distinct tenants. The claim layout is the
-# same for both — only the literal tenantId differs, so a single
-# RowFilterPolicy template captures both subjects.
+# Two API keys bound to two distinct tenants — one SubjectBinding per
+# tenant, because for API-key callers the spec-level `claims` values are
+# stamped literally onto the authenticated session. Only the literal
+# tenantId differs, so a single RowFilterPolicy template captures both
+# subjects.
+#
+# The presented header "X-Api-Key: sl_demo_acme.supersecret" splits on
+# the last "." — everything before it is the keyID, so `id` must match
+# the full prefix.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SubjectBinding
 metadata:
-  name: tenants
+  name: tenant-acme
 spec:
   claims:
-    subjectId: "subjectId"
-    tenantId: "tenantId"
-    groups: "groups"
+    subjectId: "acme-analyst"
+    tenantId: "acme"
   apiKeys:
-    - id: "acme"
+    - id: "sl_demo_acme"
+      # hex(HMAC-SHA256(pepper, "sl_demo_acme:supersecret"))
       hashRef: "secret://env/SLUICE_APIKEY_ACME_HASH"
       groups: ["analytics"]
-      claims:
-        subjectId: "acme-analyst"
-        tenantId: "acme"
-    - id: "beta"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: tenant-beta
+spec:
+  claims:
+    subjectId: "beta-analyst"
+    tenantId: "beta"
+  apiKeys:
+    - id: "sl_demo_beta"
+      # hex(HMAC-SHA256(pepper, "sl_demo_beta:supersecret"))
       hashRef: "secret://env/SLUICE_APIKEY_BETA_HASH"
       groups: ["analytics"]
-      claims:
-        subjectId: "beta-analyst"
-        tenantId: "beta"

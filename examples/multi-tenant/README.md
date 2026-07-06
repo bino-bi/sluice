@@ -14,9 +14,12 @@ one `RowFilterPolicy`, not by separate databases.
 - **Default-deny still applies.** A third tenant (`gamma`) has rows in
   the table but no API key in `policies.d/` — no caller can reach that
   data.
-- **Audit carries the subject.** Each record names the caller and the
-  (public, template-rendered) tenantId, so "who read what" is a single
-  `jq` away.
+- **Audit carries the subject.** Each record names the caller — subject
+  id, groups, issuer — and lists the applied `RowFilterPolicy` in
+  `policies_applied`, so "who read what, under which filter" is a
+  single `jq` away. The rendered tenant value itself is not recorded;
+  the scoping is visible through the applied policy and the
+  rewritten-query fingerprint.
 
 ## Layout
 
@@ -25,10 +28,10 @@ multi-tenant/
 ├── README.md                — this file
 ├── docker-compose.yaml      — single-service Sluice stack
 ├── server.yaml              — ServerConfig
-├── seed.sql                 — 3 tenants × 5 customers × 5 orders
+├── seed.sql                 — 5 customers + 5 orders spread over 3 tenants
 ├── policies.d/
 │   ├── datasource-shop.yaml  — sqlite @ /data/shop.db
-│   ├── bindings-tenants.yaml — API keys `acme` and `beta`
+│   ├── bindings-tenants.yaml — API keys `sl_demo_acme` and `sl_demo_beta`
 │   ├── allow-analytics.yaml  — SqlAccessPolicy (customers + orders)
 │   └── filter-tenant.yaml    — RowFilterPolicy ({{ subject.tenantId }})
 └── data/                    — shop.db + audit log (populated at runtime)
@@ -66,12 +69,14 @@ The rewriter wraps every FROM-reference to the matched tables in a
 subquery with `WHERE tenant_id = $1` and binds `$1` to the rendered
 template value. The underlying SQL engine never sees a literal tenant
 string — parameter binding is handled by DuckDB, so injection via the
-tenantId claim is impossible. You can watch the rewrite by setting
-`SLUICE_LOG_LEVEL=debug` and reading the `policy.rewritten` log line.
+tenantId claim is impossible. The rewritten SQL is never logged; to
+inspect it, write a policy test with a `rewrittenSqlContains`
+expectation and run `./bin/sluice policy test policies.d`, or use
+`./bin/sluice policy explain`.
 
 ## Not for production
 
 The API-key hashes in `docker-compose.yaml` are example literals. For a
 real deployment, use `./bin/sluice apikey hash --pepper $(vault read
--field=pepper secret/sluice) --material <key-material>` (v0.2) and
-store the results in a secret manager.
+-field=pepper secret/sluice) --id <key-id> --material <key-material>`
+and store the results in a secret manager.

@@ -27,12 +27,8 @@ const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 Policy objects are authored as YAML and validated against a JSON Schema
 Draft 2020-12 document generated from ` + "`pkg/apitypes`" + `. The schema is
-available in two places:
-
-- Bundled in the binary — ` + "`sluice schema export`" + ` emits a oneOf union
-  of all registered Kinds; ` + "`--kind`" + ` narrows to one Kind.
-- Served at runtime — ` + "`GET /admin/policies/schema`" + ` returns the same
-  document on the admin port (v0.2+).
+bundled in the binary — ` + "`sluice schema export`" + ` emits a oneOf union
+of all registered Kinds; ` + "`--kind`" + ` narrows to one Kind.
 
 ## Shared envelope
 

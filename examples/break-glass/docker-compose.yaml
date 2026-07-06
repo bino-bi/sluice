@@ -12,8 +12,12 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "break-glass-demo-pepper"
       SLUICE_AUDIT_GENESIS: "break-glass-demo-genesis"
-      SLUICE_APIKEY_ANALYST_HASH: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-      SLUICE_APIKEY_SRE_HASH:     "f1e2d3c4b5a69788776655443322110099aabbccddeeff00112233445566778899"
+      # hex(HMAC-SHA256(pepper, "<id>:<material>")) — same values printed by
+      #   sluice apikey hash --pepper break-glass-demo-pepper \
+      #                      --id sl_demo_analyst --material supersecret
+      # (and --id sl_demo_sre --material rotatedtoken for the SRE key).
+      SLUICE_APIKEY_ANALYST_HASH: "dced9bb29254120456acf83a91a38f5fe6109ca8f02c9a5f0547086956f797f0"
+      SLUICE_APIKEY_SRE_HASH:     "6b20dbd5b12867e621979127a95f18ccaccc5e5ef5af042c07c2f611dd966b09"
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro

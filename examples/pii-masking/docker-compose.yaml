@@ -12,7 +12,10 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "pii-masking-demo-pepper"
       SLUICE_AUDIT_GENESIS: "pii-masking-demo-genesis"
-      SLUICE_APIKEY_ANALYST_HASH: "4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f"
+      # hex(HMAC-SHA256(pepper, "sl_demo_analyst:supersecret")) — same value printed by
+      #   sluice apikey hash --pepper pii-masking-demo-pepper \
+      #                      --id sl_demo_analyst --material supersecret
+      SLUICE_APIKEY_ANALYST_HASH: "7b332af8ff84e684eb77932ce891de24f60a84f07c3ea0c78ff336f433f70d46"
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro

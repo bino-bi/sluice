@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+
+	"github.com/bino-bi/sluice/internal/telemetry"
 )
 
 // routes composes the admin router. Every protected handler lives behind
@@ -21,6 +23,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /admin/approvals", s.adminAuth(http.HandlerFunc(s.handleApprovals)))
 	mux.Handle("GET /admin/healthz", s.adminAuth(http.HandlerFunc(s.handleHealthz)))
 	mux.Handle("GET /admin/version", s.adminAuth(http.HandlerFunc(s.handleVersion)))
+	mux.Handle("GET /metrics", s.adminAuth(telemetry.MetricsHandler()))
 
 	var h http.Handler = mux
 	h = s.bodyCap(h)

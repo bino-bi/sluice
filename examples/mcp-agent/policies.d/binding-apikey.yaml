@@ -8,11 +8,8 @@ metadata:
   name: mcp-local
 spec:
   claims:
-    subjectId: "subjectId"
-    groups: "groups"
+    subjectId: "mcp-agent"
   apiKeys:
     - id: "mcp"
       hashRef: "secret://env/SLUICE_APIKEY_MCP_HASH"
       groups: ["agents"]
-      claims:
-        subjectId: "mcp-agent"

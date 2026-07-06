@@ -2,46 +2,15 @@
 
 # Install
 
-## Binary releases
-
-Pre-built, cosign-signed binaries for Linux (amd64/arm64), macOS
-(amd64/arm64), and Windows (amd64) are published on every
-[GitHub release](https://github.com/bino-bi/sluice/releases).
-
-```bash
-# Linux amd64 example
-curl -sSL -o sluice.tar.gz \
-  "https://github.com/bino-bi/sluice/releases/download/v0.1.0/sluice_0.1.0_linux_amd64.tar.gz"
-tar -xzf sluice.tar.gz
-./sluice version
-```
-
-Verify with cosign:
-
-```bash
-cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/bino-bi/sluice/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  checksums.txt
-```
-
-## Docker
-
-Multi-arch images are published to `ghcr.io/bino-bi/sluice`:
-
-```bash
-docker pull ghcr.io/bino-bi/sluice:latest
-docker run --rm ghcr.io/bino-bi/sluice:latest version
-```
-
-Images are distroless (non-root, uid 65532) and cosign-signed.
+!!! warning "No published releases yet"
+    Sluice is alpha, pre-`v0.1.0`. There are **no release binaries, no published container images, and no Helm chart** yet. The two supported paths are building from source and building the Docker image yourself via the example compose file.
 
 ## Build from source
 
-Requires Go 1.25 or later and a C toolchain (pg_query_go and go-duckdb
-are both cgo).
+Requirements:
+
+- Go 1.25 or later.
+- A C toolchain. Sluice links two cgo libraries — pg_query (the PostgreSQL parser) and DuckDB — so it cannot be built with `CGO_ENABLED=0`.
 
 ```bash
 git clone https://github.com/bino-bi/sluice.git
@@ -50,15 +19,38 @@ make build
 ./bin/sluice version
 ```
 
-Run `make all` to go through format → vet → lint → test → build in one
-shot.
+`make build` produces `./bin/sluice` with version information stamped via ldflags; `sluice version` prints the tag, commit, build time, and parser backend. Run `make all` for the full fmt → vet → lint → test → build pipeline.
 
-## Platform support
+The first build compiles pg_query's vendored C sources and links DuckDB's prebuilt static library, so expect it to take several minutes; subsequent builds are cached.
 
-| Platform       | Tier | Notes                                                 |
-| -------------- | ---- | ----------------------------------------------------- |
-| Linux amd64    | 1    | Primary target; nightly integration lane.             |
-| Linux arm64    | 1    | Multi-arch Docker image + standalone binary.          |
-| macOS amd64    | 1    | Developer workstation.                                |
-| macOS arm64    | 1    | Apple silicon.                                        |
-| Windows amd64  | 2    | Build-verified in CI; integration tests skipped.      |
+## Docker
+
+The repository root `Dockerfile` is a multi-stage build (Go builder → distroless `cc` runtime, non-root). The easiest way to use it is the `hello-sluice` example, whose compose file builds the image and mounts config, policies, and data:
+
+```bash
+cd examples/hello-sluice
+sqlite3 data/shop.db < seed.sql
+docker compose up --build
+```
+
+This starts Sluice with REST on `:8080` and the admin listener on `:9091`. The [Quickstart](quickstart.md) walks through what is inside.
+
+To build a standalone image without compose:
+
+```bash
+docker build -t sluice:dev .
+```
+
+## Directory conventions
+
+A Sluice deployment is two things on disk:
+
+- **`sluice.yaml`** — the server configuration (listeners, DuckDB limits, audit sink, identity pepper, request limits). Passed with `sluice serve --config sluice.yaml`. A missing config file is fine — defaults apply; a malformed one is fatal. Any setting can also come from the environment with the `SLUICE_` prefix (`.` becomes `__`, e.g. `SLUICE_REST__LISTEN`). See the [configuration reference](../reference/configuration.md).
+- **`policies.d/`** — one directory holding every declarative object: policies, `DataSource`, `SubjectBinding`, `AuditSink`. Loaded recursively (`*.yaml` / `*.yml`; dot-directories, `testdata`, and `tests` are skipped) and hot-reloaded on change. Point at it with `policies.directory` in `sluice.yaml` or `--policies-dir`.
+
+!!! note "Empty means deny"
+    An empty `policies.d/` is a valid configuration: it means *deny everything*. Access exists only where a policy grants it.
+
+## Next
+
+Continue with the [Quickstart](quickstart.md) to run the `hello-sluice` example end to end.

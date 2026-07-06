@@ -272,6 +272,35 @@ func TestHandleVersion_OK(t *testing.T) {
 	}
 }
 
+func TestHandleMetrics_AuthRequired(t *testing.T) {
+	t.Parallel()
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true, Token: "secret"}, admin.Deps{})
+	r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d want 401", w.Code)
+	}
+}
+
+func TestHandleMetrics_PrometheusText(t *testing.T) {
+	t.Parallel()
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true, Token: "secret"}, admin.Deps{})
+	r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("Content-Type: got %q want text/plain prefix", ct)
+	}
+	if !strings.Contains(w.Body.String(), "go_goroutines") {
+		t.Fatalf("body missing default runtime metrics: %.200s", w.Body.String())
+	}
+}
+
 func TestRequestIDHeaderAlwaysSet(t *testing.T) {
 	t.Parallel()
 	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{})

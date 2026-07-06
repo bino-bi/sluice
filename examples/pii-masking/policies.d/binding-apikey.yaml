@@ -5,11 +5,13 @@ metadata:
   name: analyst
 spec:
   claims:
-    subjectId: "subjectId"
+    subjectId: "pii-analyst"
     groups: "groups"
   apiKeys:
-    - id: "analyst"
+    # The presented header "X-Api-Key: sl_demo_analyst.supersecret"
+    # splits on the last "." — everything before it is the keyID, so
+    # id here must match the full prefix.
+    - id: "sl_demo_analyst"
+      # hex(HMAC-SHA256(pepper, "sl_demo_analyst:supersecret"))
       hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"
       groups: ["analytics"]
-      claims:
-        subjectId: "pii-analyst"

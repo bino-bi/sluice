@@ -2,56 +2,143 @@
 
 # MCP agents
 
-Goal: an LLM agent (Claude, ChatGPT, etc.) queries your warehouse
-through Sluice. The same policies that govern humans govern the bot.
+**Goal:** give Claude (or any MCP client) governed SQL access. The agent gets
+a narrow, rate-limited, budgeted, always-audited window onto your data — the
+same parse → policy → rewrite → audit pipeline as every other caller. Runnable
+version: `examples/mcp-agent/`.
 
-## Stdio agent (local, single user)
+## Claude Desktop configuration
 
-Most agent harnesses know how to spawn an MCP server over stdio.
-Configure the agent with:
+Claude Desktop spawns Sluice as a child process and speaks MCP over stdio. The
+stdio transport authenticates **once at startup** from a static credential and
+pins that identity onto every tool call:
 
 ```json
 {
-  "name": "sluice",
-  "command": "/usr/local/bin/sluice",
-  "args": ["mcp", "--policies-dir", "/etc/sluice/policies.d",
-                  "--config",       "/etc/sluice/server.yaml"],
-  "env": {
-    "SLUICE_APIKEY_PEPPER": "${env:SLUICE_APIKEY_PEPPER}",
-    "SLUICE_AUDIT_GENESIS": "${env:SLUICE_AUDIT_GENESIS}"
+  "mcpServers": {
+    "sluice": {
+      "command": "/ABSOLUTE/PATH/TO/sluice/bin/sluice",
+      "args": [
+        "mcp",
+        "--config=/ABSOLUTE/PATH/TO/sluice/examples/mcp-agent/server.yaml",
+        "--policies-dir=/ABSOLUTE/PATH/TO/sluice/examples/mcp-agent/policies.d",
+        "--api-key=mcp.supersecret"
+      ],
+      "env": {
+        "SLUICE_APIKEY_PEPPER": "mcp-agent-demo-pepper",
+        "SLUICE_AUDIT_GENESIS": "mcp-agent-demo-genesis",
+        "SLUICE_APIKEY_MCP_HASH": "<output of: sluice apikey hash --pepper mcp-agent-demo-pepper --id mcp --material supersecret>"
+      }
+    }
   }
 }
 ```
 
-The agent sees four tools: `execute_sql`, `list_catalogs`,
-`list_tables`, `describe_table`. Errors come back as tool output
-(`IsError: true`) so the model can self-correct — "your SELECT on
-`customers.email` was denied; email is masked for this session" is a
-valid response the agent will handle.
+Paths must be absolute — Claude Desktop does not resolve relative paths. A JWT
+works too (`--jwt` or `SLUICE_MCP_TOKEN`); `--allow-anonymous` runs without a
+credential, in which case default-deny blocks every query unless a policy
+grants the anonymous subject.
 
-## Streamable HTTP (hosted agent platforms)
+## The agent-safety bundle
 
-When running a hosted agent (Claude.ai tool, Anthropic's built-in MCP
-server on claude.ai/projects, ChatGPT custom connector), configure
-Sluice with:
+Three layers, all hot-reloadable — narrow access, bounded result sizes, and
+per-day spend caps:
 
 ```yaml
-mcp:
-  enabled: true
-  transport: http
-  listen: ':8081'
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-agents
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["agents"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["products"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRewritePolicy
+metadata:
+  name: agent-guardrails
+  priority: 100
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["agents"]
+  rewrite:
+    limit:
+      max: 500        # inject LIMIT 500, clamp anything larger
+    timeout: 10s
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: mcp-local
+spec:
+  claims:
+    subjectId: "mcp-agent"
+  rateLimit:
+    rps: 2
+    burst: 5
+  budget:
+    rowsPerDay: 100000
+    cpuSecondsPerDay: 600
+  apiKeys:
+    - id: "mcp"
+      hashRef: "secret://env/SLUICE_APIKEY_MCP_HASH"
+      groups: ["agents"]
 ```
 
-Each session resolves its JWT through the same `identity.Composite`
-as the REST endpoint. Session resume re-validates the token against
-the issuer's JWKS before any tool call proceeds.
+If the agent's tables contain PII, layer the same `ColumnMaskPolicy` objects
+as in the [PII-masking recipe](pii-masking.md) — masks apply to MCP callers
+exactly as to REST callers.
 
-## Prompt engineering hints
+## An agent session
 
-- The `describe_table` tool returns column names + types. Agents that
-  plan before querying use this effectively; agents that just try SQL
-  tend to get blocked by the syntax-on-protected-table error.
-- Include the policy surface in the system prompt: "Some columns
-  (email, phone) may be masked; the response will be NULL or a
-  constant — do not retry." This avoids the "let me try again
-  differently" loop.
+The agent sees **nine tools**: `execute_sql`, `list_catalogs`, `list_tables`,
+`describe_table`, `whoami`, `explain_access`, `list_accessible_tables`,
+`check_approval`, `await_approval`. A well-behaved session starts with
+discovery instead of trial-and-error SQL:
+
+1. `whoami {}` — who am I? Subject `mcp-agent`, groups `["agents"]`.
+2. `list_accessible_tables {}` — which tables can this identity actually
+   reach? Here: `shop.main.products`, nothing else.
+3. `explain_access { table: "shop.main.products" }` — which policies apply and
+   what will happen to a query (filters, masks, and the matched policies)
+   before running it.
+4. `execute_sql { sql: "SELECT name, price_cents FROM shop.main.products ORDER BY price_cents DESC", row_limit: 100 }`
+   — rows come back with `LIMIT` injected per the rewrite policy.
+
+Verify the guardrail: ask the agent for something outside the policy. The
+`execute_sql` call returns an `ACL_DENIED` error *as tool output*, so the
+model reads it, can call `explain_access` with the failing SQL to see why, and
+self-corrects without a protocol crash. Every call — allowed or denied — lands
+in the audit log under the pinned subject.
+
+!!! warning "Not yet implemented"
+    Prompt-side niceties like schema descriptions from your own metadata store
+    are not part of the tool surface; `describe_table` returns column names,
+    types, and nullability only. There is also no OpenTelemetry tracing of
+    tool calls yet —
+    the audit log is the source of truth for agent activity.
+
+## Pitfall: an empty table list is a policy gap, not a bug
+
+Default-deny means `list_accessible_tables` returns exactly what your allow
+policies grant. If it comes back empty, the agent has no access — Sluice is
+working as designed and the fix is a `SqlAccessPolicy`, not a server setting.
+The inverse holds too: every table in that list is one prompt injection away
+from being queried, so treat the allow-list as the agent's blast radius and
+start narrow.
+
+## See also
+
+- [MCP reference](../reference/mcp.md) — all nine tools with argument schemas.
+- [Approval workflow](approval-workflow.md) — `check_approval` / `await_approval` in action.
+- [Subjects, keys & budgets](../policies/subjects.md) — rate limits and daily budgets.

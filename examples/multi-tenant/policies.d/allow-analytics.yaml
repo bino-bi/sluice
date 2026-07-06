@@ -11,6 +11,6 @@ spec:
       - subjects:
           groups: ["analytics"]
         resources:
-          tables:
-            - "shop.main.customers"
-            - "shop.main.orders"
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]

@@ -2,46 +2,71 @@
 
 # Sluice
 
-**Sluice** is a policy-enforcing SQL/MCP gateway that sits in front of
-DuckDB-attached data sources (Postgres, MySQL, SQLite, S3 Parquet,
-DuckDB file, MotherDuck). Every query flows through a single pipeline:
+Sluice is a policy-enforcing SQL gateway that sits between AI agents, BI tools, and your databases. Every statement is parsed with the real PostgreSQL grammar (pg_query), checked against declarative default-deny YAML policies, rewritten in flight — row filters, column masks, LIMIT and sampling clamps — and executed read-only through embedded DuckDB against attached catalogs. Each request, allowed or denied, lands in a hash-chained audit log you can verify offline.
 
 ```
-parse → identify → policy → rewrite → execute → audit
+client (REST / MCP) ─▶ identify ─▶ parse ─▶ policy ─▶ rewrite ─▶ execute (DuckDB, read-only) ─▶ audit ─▶ rows
 ```
 
-The result: analysts, dashboards, and LLM agents speak SQL; row filters
-and column masks are applied *before* the query reaches any backend; an
-append-only, hash-chained audit log records exactly what ran.
+## One policy, applied on the wire
 
-## Why Sluice?
+A `RowFilterPolicy` scopes every matching query to the caller's tenant:
 
-- **Default-deny.** An empty policy set rejects every query. Access is
-  granted explicitly, never assumed.
-- **Defence in depth.** Rewrites happen at the AST level (pg_query);
-  templated values flow through positional parameters — never
-  concatenation.
-- **One plane, many transports.** A single `queryservice.Service` is
-  shared by REST, MCP (stdio + Streamable HTTP), and the admin port.
-- **Tamper-evident audit.** SHA-256 hash-chained JSONL; `sluice audit
-  verify` replays the chain at any time.
-- **Open core, OSS licensed.** AGPL-3.0 for the gateway; Apache-2.0 for
-  public-API packages; CC-BY-4.0 for these docs.
+```yaml
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-tenant
+  priority: 80
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["shop.main.customers", "shop.main.orders"]
+  combine: restrictive
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenantId }}"
+```
+
+The client sends:
+
+```sql
+SELECT id, email FROM shop.main.customers
+```
+
+Sluice executes:
+
+```sql
+SELECT id, email FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers
+```
+
+with `$1` bound to the caller's `tenantId` claim — a positional parameter, never string concatenation.
+
+## Features
+
+- **11 policy kinds** — `SqlAccessPolicy`, `RowFilterPolicy`, `ColumnMaskPolicy`, `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy`, `DataSource`, `SubjectBinding`, `AuditSink`, `DataClassification`, `RelationshipPolicy`.
+- **Mask catalog** — SQL-stage `null`, `constant`, `partial`, `hash`, `regex`, `truncate`; post-query HMAC hashing, format-preserving encryption (FF1), `jitter`, deterministic `fake` data.
+- **CEL** — policy conditions, reject rules, and a safe row-filter expression subset.
+- **Approval workflow** — park sensitive queries for a human decision, delivered via webhooks; approvals mint single-use grants.
+- **Pluggable engines** — embedded OPA (Rego) and OpenFGA-backed ReBAC compose with the YAML engine.
+- **Rate limits and budgets** — per-subject token buckets plus daily CPU-seconds/rows quotas.
+- **Hot reload** — file watcher, SIGHUP, or `POST /admin/reload`; invalid snapshots never replace a good one.
+- **Policy test harness** — `sluice policy test` runs fixture suites in CI.
+- **Tamper-evident audit** — hash-chained JSONL, verified with `sluice audit verify`.
+- **MCP server** — 9 tools for agents, over stdio or Streamable HTTP.
+- **6 datasource drivers** — Postgres, MySQL, SQLite, S3 Parquet, DuckDB file, MotherDuck.
 
 ## Where to start
 
-| Audience                  | Start here                                              |
-| ------------------------- | ------------------------------------------------------- |
-| New user, 30 min demo     | [Getting started](getting-started/index.md)             |
-| Policy author             | [Concepts → Policies](concepts/policies.md)             |
-| Operator / SRE            | [Operations → Deployment](operations/deployment.md)     |
-| Security reviewer         | [Security → Threat model](security/threat-model.md)     |
-| LLM / agent integrator    | [Reference → MCP tools](reference/mcp.md)               |
+| You are | Start here |
+| --- | --- |
+| An operator standing up a gateway | [Getting started](getting-started/index.md) |
+| A policy author | [Policies](policies/index.md) |
+| An agent builder wiring up MCP | [MCP tools reference](reference/mcp.md) |
+| A security reviewer | [Security model](architecture/security-model.md) |
 
-## Project status
-
-MVP `v0.1.0` is tracking a single end-to-end round-trip through all
-three transports with a SQLite catalog. See
-[CHANGELOG](https://github.com/bino-bi/sluice/blob/main/CHANGELOG.md)
-for the current drop and [ROADMAP](https://github.com/bino-bi/sluice/blob/main/ROADMAP.md)
-for what comes next.
+!!! warning "Project status: alpha"
+    Sluice is pre-`v0.1.0`. The full query path works end to end, but there are no published release binaries or container images yet — you build from source or use the docker-compose examples. Interfaces may change between commits.

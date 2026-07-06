@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Approval workflow
 
 This example shows the human-approval flow: a query that reads PII columns
@@ -21,9 +22,25 @@ just re-submit). This is a single-instance feature.
 
 ## Configuration
 
-`server.yaml`:
+Unlike the other examples, this directory is not a self-contained
+stack: it ships only the approval policy (`policies.d/approval.yaml`)
+and a driver script (`run.sh`). To try it you need a running
+`sluice serve` with:
+
+- the `approval` block below added to your server config,
+- a `DataSource` exposing a `shop.main.people` table with `ssn`,
+  `salary*`, and `country` columns,
+- a `SubjectBinding` for the caller — `run.sh` presents the API key
+  `sl_demo_alice.world` and expects the subject in the `analysts`
+  group,
+- this example's `policies.d/approval.yaml` merged into your policy
+  directory,
+- a webhook receiver reachable under `approval.webhooks[].url`.
+
+The `examples/hello-sluice` stack is a good base to graft this onto.
 
 ```yaml
+# fragment — approval block to add to your server.yaml
 approval:
   publicBaseUrl: https://sluice.example.com   # builds the capability URLs
   syncWait: 20s                                # in-request wait before 202
@@ -39,13 +56,18 @@ loaded — Sluice refuses to start without it (fail-closed).
 
 ## Try it
 
-`run.sh` drives the flow against a local webhook catcher. It:
+`run.sh` drives the flow against a running Sluice instance (see the
+prerequisites above). It:
 
-1. starts a tiny HTTP server that records the webhook payload,
-2. submits a PII query and shows the `202 ERR_APPROVAL_PENDING`,
-3. extracts the `accept_url` from the captured webhook and curls it,
-4. re-submits the identical query and shows it now returns rows,
+1. submits a PII query and shows the `202 ERR_APPROVAL_PENDING`,
+2. prompts you to paste the `accept_url` delivered to your webhook
+   receiver (the script does not run a catcher itself),
+3. curls the pasted accept URL as the approver,
+4. re-submits the identical query, which now executes,
 5. re-submits once more and shows it pends again (grant consumed).
+
+It authenticates with `Authorization: ApiKey sl_demo_alice.world`;
+override via `SLUICE_API_KEY` and `SLUICE_BASE`.
 
 ```bash
 ./run.sh

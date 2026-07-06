@@ -3,20 +3,22 @@
 
 Four PII columns — `email`, `phone`, `ssn`, `birth_date` — and one
 analyst who needs to work on the table without seeing the plaintext
-values. Each column is neutralised by a different `ColumnMaskPolicy` to
-show the MVP providers (`null`, `constant`) in action.
+values. Three of the four columns are each neutralised by a
+`ColumnMaskPolicy` to show the two simplest providers (`null`,
+`constant`) in action; `birth_date` is deliberately left unmasked.
 
-> **Note on the v0.2 providers.** `partial` (e.g. `"al***@example.com"`)
-> and `hash` (e.g. HMAC-SHA256 with a salt pulled from the secret store)
-> are declared in the policy schema but not yet wired into the rewriter.
-> Until they land in v0.2 the rewriter treats them as `null`. This
-> example only uses the two MVP providers.
+> **More providers exist.** Beyond `null` and `constant`, Sluice ships
+> `partial` (keep the first/last characters), `hash` (SHA-256 in-query,
+> or HMAC-SHA256 with a `secret://` salt applied post-query), `fpe`
+> (format-preserving encryption), `fake` (deterministic fake values),
+> and more. This example sticks to the two simplest; see
+> `docs/policies/column-masks.md` for the full catalog.
 
 ## What this demonstrates
 
-- **Per-column granularity.** Three masks, three columns, three
-  different effects — priorities only matter when two masks collide on
-  the same column.
+- **Per-column granularity.** Three masks, three columns, two
+  providers — priorities only matter when two masks collide on the
+  same column.
 - **`null` vs `constant`.** Choosing between them is a UX decision, not
   a security one. Both preserve the SQL shape so downstream consumers
   don't break; `constant` keeps a non-null value visible so dashboards
@@ -72,8 +74,11 @@ Expected:
 
 ## Seeing the rewrite
 
-Set `SLUICE_LOG_LEVEL=debug` in the compose file and look for the
-`policy.rewritten` log line — the effective SQL is roughly:
+The rewritten SQL is never logged. To inspect it, write a policy test
+with a `rewrittenSqlContains` expectation and run
+`./bin/sluice policy test policies.d`, or use
+`./bin/sluice policy explain` to see which policies fire for a given
+subject and table. For the query above, the effective SQL is roughly:
 
 ```sql
 SELECT id,
@@ -85,14 +90,16 @@ FROM   shop.main.customers
 ORDER  BY id
 ```
 
-— i.e. the rewriter replaces the column reference in the *target list*
-only. Predicates that name `email` still resolve against the underlying
-column, so a query like `WHERE email LIKE '%acme%'` keeps working — the
-mask affects *projection*, not *filter visibility*. If you need both,
-layer a `RowFilterPolicy` on top (see `examples/multi-tenant`).
+The substitution is not limited to the target list: masked column
+references are replaced everywhere in the statement — SELECT list,
+`WHERE`/`HAVING`, `GROUP BY`/`ORDER BY`, and `JOIN` conditions. A
+predicate like `WHERE email LIKE '%acme%'` is rewritten to compare
+against `NULL` and returns no rows, so a masked column cannot be used
+to filter on plaintext values either.
 
 ## Not for production
 
 The constant masks here are placeholders suitable for a demo. For real
-PII workloads pair a `hash` mask (coming in v0.2) with a salt stored in
-Vault / AWS / GCP and rotated on a calendar cadence.
+PII workloads use a `hash` mask with `algorithm: hmac_sha256` and a
+salt supplied via a `secret://env/...` or `secret://file/...` reference
+(see `docs/policies/column-masks.md`), rotated on a calendar cadence.

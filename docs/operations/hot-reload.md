@@ -2,38 +2,79 @@
 
 # Configuration reload
 
-Sluice reloads policies, bindings, and data sources without a restart
-— queries in flight finish against the pre-reload snapshot; new
-queries see the post-reload snapshot atomically.
+Sluice reloads the policy directory without a restart. Queries in flight
+finish against the snapshot they started with; new queries see the new
+snapshot atomically.
 
 ## Triggers
 
-| Trigger             | When to use                                             |
-| ------------------- | ------------------------------------------------------- |
-| fsnotify watcher    | Default. GitOps commits land in the policies directory. |
-| `SIGHUP`            | CI tooling, one-off `kill -HUP` after scp.              |
-| `POST /admin/reload`| Operator UI / automation.                               |
+| Trigger | When to use |
+| ------- | ----------- |
+| fsnotify watcher | Default (`policies.reload: true`). GitOps deploys that write into the policy directory. |
+| `SIGHUP` | `systemctl reload sluice`, or a one-off `kill -HUP` after copying files. |
+| `POST /admin/reload` | Automation and operator tooling, via the admin listener. |
 
-All three funnel into `config.Registry.Publish(snapshot)`. Subscribers
-(`policy.Engine.ApplySnapshot` and `schema.Cache.InvalidateAll`) fan
-out.
+All three triggers require `policies.reload: true` (the default): with
+`policies.reload: false`, the watcher is never built, `SIGHUP` becomes a
+no-op, and `POST /admin/reload` returns `501` ("reload not enabled").
 
-## Debounce
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
+  http://localhost:9091/admin/reload
+```
 
-The fsnotify path coalesces a burst of editor writes within 250 ms into
-a single reload. Manual `Reload(ctx)` (SIGHUP + admin) skips the
-debounce.
+A successful call returns `{"ok": true, "digest": "..."}`; a failed one
+returns an `ERR_CONFIG_INVALID` error and leaves the running snapshot
+untouched.
 
-## What doesn't reload without a restart
+The watcher covers the policy directory tree recursively, reacts only to
+`.yaml`/`.yml` files (dotfiles and editor swap files are ignored), and
+debounces bursts of writes into a single reload after 250 ms of quiet.
+`SIGHUP` and the admin endpoint reload immediately, without debounce.
 
-- Listener addresses (`rest.listen`, `mcp.listen`, `admin.listen`).
-- Executor pool sizing.
-- The audit genesis seed (changing it would break the chain).
+## Validate, then swap
 
-These are deliberately static — changing them triggers `serve` to refuse
-the reload with a clear error.
+Every reload re-reads the whole directory and validates it as a unit. Only
+a fully valid set of manifests is published; any error rejects the reload
+and the prior snapshot keeps serving. A bad file can therefore never take
+policies down — but it also means your fix isn't live until the *entire*
+directory validates again.
+
+A successful swap updates, atomically:
+
+- the compiled policy set (all kinds, including OPA modules, which are
+  recompiled from `policies.opa.moduleDir`),
+- API-key bindings — rebuilt, with the secret cache invalidated first so
+  rotated `hashRef` values are re-read,
+- rate-limit and budget specs from `SubjectBinding` manifests,
+- the rewrite cache (purged — no decision outlives its snapshot),
+- the schema cache (invalidated).
+
+## What does not hot-reload
+
+`sluice.yaml` is read once at boot. Listener addresses (`rest.listen`,
+`mcp.listen`, `admin.listen`), the policy engine selection
+(`policies.engine`), limits, DuckDB pool settings, and audit configuration
+all require a restart. `DataSource` attachments are also built at boot —
+the reload path does not re-attach catalogs, so restart after changing a
+`DataSource` manifest.
+
+## Safe rollout
+
+1. **Validate and test in CI**: `sluice config validate ./policies.d
+   --strict` plus [`sluice policy test`](../policies/testing.md).
+2. **Deploy the files** into the policy directory.
+3. **Reload** — or let the fsnotify watcher pick the change up.
+4. **Spot-check** the live decision: `sluice policy explain --user <id>
+   --table <catalog.schema.table>` locally, or
+   `GET /admin/subjects/explain` against the running server, and confirm
+   the `config watch: reload applied` log line.
 
 ## Observing reloads
 
-Every publish increments `sluice_config_reloads_total` and logs at
-`INFO` with the new snapshot version.
+Each applied reload logs at `INFO` (`config watch: reload applied`) with
+the object count and snapshot digest, and `POST /admin/reload` returns the
+new digest in its `{"ok": true, "digest": "..."}` response. There is
+currently no dedicated Prometheus counter for reloads — watch the log line
+(see [Observability](observability.md)).

@@ -2,53 +2,149 @@
 
 # First query
 
-With `hello-sluice` running, send a query that a real user would send:
+With the [quickstart](quickstart.md) running, this page dissects the request you sent, tightens the email mask, and shows the tooling that explains every decision.
 
-```bash
-curl -sS -X POST http://localhost:8080/v1/query \
-  -H 'Authorization: ApiKey hello.world' \
-  -H 'Content-Type: application/json' \
-  -d '{"sql":"SELECT id, customer_email, amount FROM orders"}'
+## Anatomy of POST /v1/query
+
+Request body:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sql` | string | The statement. Exactly one; write statements are rejected. |
+| `params` | array | Positional parameters for `$1`, `$2`, … in your SQL. |
+| `max_rows` | int | Row cap for this request; clamped to the server limit. |
+| `timeout_ms` | int | Per-request timeout; clamped to the server maximum. |
+| `format` | string | `json` (default) or `csv`. |
+| `meta` | object | Free-form key/values. Accepted, but not yet written to the audit record. |
+
+Response body (`format: json`): `query_id` (the ULID of this request's audit records), `columns`, `rows`, `row_count`, `truncated`. Two headers accompany every response: `X-Query-Id` and `X-Sluice-Applied-Policies`, a comma-separated list of the policies that shaped the result.
+
+!!! warning "Not yet implemented: Arrow"
+    The API declares `format: arrow`, but the server rejects it with `ERR_UNSUPPORTED_SYNTAX` (`arrow output not yet supported`). Use `json` or `csv`.
+
+## The row filter you already have
+
+The quickstart directory ships `policies.d/filter-tenant.yaml`:
+
+```yaml
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-tenant
+  priority: 80
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
+  combine: restrictive
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenantId }}"
 ```
 
-The response is streamed JSON:
+Sluice rewrites each matching table into a filtered subquery — `... FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers` — binding the caller's `tenantId` as a parameter. That is why only the two `acme` rows ever leave the gateway.
+
+## Sharpen the mask: from null to partial
+
+The stock mask nulls `email` entirely. Replace the contents of `policies.d/mask-email.yaml` with a `partial` mask that keeps the first character:
+
+```yaml
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: partial
+    args: { showFirst: 1, showLast: 0 }
+```
+
+Hot reload picks the change up on save — no restart. Re-run the same query:
+
+```bash
+curl -s \
+  -H "X-Api-Key: sl_demo_hello.world" \
+  -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT id, email, tenant_id FROM shop.main.customers ORDER BY id"}' \
+  http://localhost:8080/v1/query
+```
 
 ```json
 {
-  "query_id": "01H…",
-  "columns": ["id", "customer_email", "amount"],
+  "query_id": "01KWV0FD2DK4TRGZG9XCDJKSS1",
+  "columns": ["id", "email", "tenant_id"],
   "rows": [
-    [1, null, 12.50],
-    [2, null, 22.00]
+    [1, "a**************", "acme"],
+    [2, "b************", "acme"]
   ],
   "row_count": 2,
   "truncated": false
 }
 ```
 
-Three things happened on the server side:
+Still filtered, now partially masked — and `X-Sluice-Applied-Policies: allow-analytics,filter-tenant,mask-email`.
 
-1. **Row filter** collapsed the three-tenant dataset down to two
-   `acme`-only rows via the templated predicate
-   `tenant_id = '{{ subject.tenantId }}'` (rendered through a positional
-   parameter, never concatenation).
-2. **Column mask** nulled the `customer_email` column before the result
-   left DuckDB.
-3. **Audit** appended one hash-chained record describing who asked,
-   what SQL arrived, what SQL actually ran, the row count, and the
-   verdict.
+## Why did that happen? `sluice policy explain`
 
-Inspect the audit file:
+`policy explain` answers "what would this subject get on this table?" without sending a query:
 
 ```bash
-tail -n 1 examples/hello-sluice/data/audit/audit-*.jsonl | jq .
-./bin/sluice audit verify examples/hello-sluice/data/audit
-# chain OK (1 file(s), 2 record(s), last_hash=…)
+sluice policy explain --policies-dir examples/hello-sluice/policies.d \
+  --user hello --groups analytics --claims tenantId=acme \
+  --table shop.main.customers
 ```
 
-## Where next
+```
+subject : hello
+resource: shop.main.customers
+decision: allow
+Kind              Name             Priority  Effect
+----              ----             --------  ------
+SqlAccessPolicy   allow-analytics  100       applied
+RowFilterPolicy   filter-tenant    80        applied
+ColumnMaskPolicy  mask-email       50        applied
+row filters:      shop.main.customers
+column mask:      shop.main.customers.email  -  partial (via mask-email)
+```
 
-- Craft your own policies — [Concepts → Policies](../concepts/policies.md).
-- Wire a real Postgres catalog —
-  [Operations → Data sources](../operations/data-sources.md).
-- Hook up an LLM agent — [Reference → MCP tools](../reference/mcp.md).
+Add `--json` for machine-readable output.
+
+## Trial a policy with `enforcementMode: Audit`
+
+Every enforcement policy defaults to `enforcementMode: Enforce`. Set it to `Audit` to keep the policy loaded and matched while suspending its effect — useful for trialing a new mask without breaking dashboards:
+
+```yaml
+# fragment — add to the spec of mask-email
+enforcementMode: Audit
+```
+
+Re-run the query: emails come back in the clear, and `mask-email` disappears from `X-Sluice-Applied-Policies` (and from `policies_applied` in the audit records). The query itself is still fully audited — every request lands in the hash-chained log regardless of mode:
+
+```bash
+sluice audit verify examples/hello-sluice/data/audit
+```
+
+Delete the line (or set `Enforce`) to turn the mask back on.
+
+## For agents
+
+AI agents connected over MCP get the same introspection as `policy explain` through the `explain_access` tool, plus `execute_sql`, `whoami`, and six more — see the [MCP tools reference](../reference/mcp.md).
+
+## Next
+
+- [Row filters](../policies/row-filters.md) — predicates, CEL expressions, and how filters combine.
+- [REST API reference](../reference/rest-api.md) — the full request/response contract.
+- [Error codes](../reference/error-codes.md) — every `code` the API can return.

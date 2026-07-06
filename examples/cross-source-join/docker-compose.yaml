@@ -69,7 +69,10 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "cross-source-demo-pepper"
       SLUICE_AUDIT_GENESIS: "cross-source-demo-genesis"
-      SLUICE_APIKEY_ANALYST_HASH: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3"
+      # hex(HMAC-SHA256(pepper, "sl_demo_analyst:supersecret")) — same value printed by
+      #   sluice apikey hash --pepper cross-source-demo-pepper \
+      #                      --id sl_demo_analyst --material supersecret
+      SLUICE_APIKEY_ANALYST_HASH: "6b76e522f99f8d61cb09bbd1780dc5055b96a3071d9996091c6c8618a8abaef8"
       SLUICE_PG_PASSWORD: "demo-pg-password"
       # JSON credentials for the S3 driver — the driver parses {"key_id","secret"}.
       SLUICE_S3_CREDS: '{"key_id":"sluice-demo","secret":"demo-s3-password"}'

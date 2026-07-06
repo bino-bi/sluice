@@ -28,8 +28,9 @@ hello-sluice/
 ```
 
 > Sluice loads every `apitypes.Object` kind — `DataSource`, `SubjectBinding`,
-> and each of the five policy kinds — from the single `policies.directory`
-> configured in `server.yaml`. There's no separate datasources directory.
+> and every policy kind — from the single `policies.directory`
+> configured in `server.yaml`. A separate `datasources.directory` exists
+> too; this example keeps everything in one place.
 
 ## 1. Seed the SQLite database
 
@@ -61,7 +62,7 @@ make build
   --policies-dir examples/hello-sluice/policies.d
 ```
 
-You should see a log line containing `"event":"server started","transport":"rest"`.
+You should see a log line containing `"msg":"sluice: starting"` with `"rest":":8080"`.
 
 ## 3. Issue a query
 
@@ -103,10 +104,10 @@ ls data/audit/
 # audit-2026-04-20.jsonl
 
 ./bin/sluice audit verify data/audit
-# chain OK (1 file(s), 2 record(s), last_hash=...)
+# chain OK (1 file(s), 3 record(s), last_hash=...)
 ```
 
-The `2 records` count is the genesis record (written on startup) plus the one query.
+The `3 records` count is the genesis record (written on startup), the access record for the query, and the `query-result` completion record written when the result stream closed.
 
 ## 5. Try a denied query
 
@@ -139,7 +140,7 @@ docker compose down -v
 
 ## Where to go from here
 
-- `examples/multi-tenant/` — multiple `SubjectBinding` issuers with tenant isolation. _(ships with v0.2.)_
-- `examples/pii-masking/` — `partial` and `hash` providers. _(ships with v0.2.)_
-- `examples/cross-source-join/` — Postgres + S3 Parquet in a single query. _(ships with v0.2.)_
-- `docs/reference/policy-schema.md` — the full policy DSL. _(ships with v0.2.)_
+- `examples/multi-tenant/` — one row filter isolating multiple tenants' API keys.
+- `examples/pii-masking/` — column-mask providers in action.
+- `examples/cross-source-join/` — Postgres + S3 Parquet in a single query.
+- `docs/reference/policy-schema.md` — the full policy DSL.

@@ -14,7 +14,9 @@ spec:
       - subjects:
           groups: ["analytics"]
         resources:
-          tables: ["shop.main.customers"]
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
           columns: ["email"]
   exclude:
     any:

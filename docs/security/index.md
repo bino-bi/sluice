@@ -2,14 +2,40 @@
 
 # Security
 
-Sluice's security posture is documented in three places that together
-form the full picture:
+Sluice sits between untrusted SQL clients — AI agents, BI tools — and your data.
+Its posture rests on five properties:
 
-- [**Threat model**](threat-model.md) — STRIDE per component, attack
-  surface, residual risks.
-- [**Hardening**](hardening.md) — checklist for production deployment.
-- [**Key rotation**](key-rotation.md) — peppers, JWKS, audit genesis.
+- **Default-deny.** An empty policy directory is a valid configuration that
+  rejects every query. Access exists only where a `SqlAccessPolicy` explicitly
+  allows it.
+- **Read-only execution.** Only `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and
+  `PRAGMA` reach the engine. Writes are rejected before execution, and every
+  data source is attached `READ_ONLY`.
+- **Fail-closed audit.** By default a query is not served unless its access
+  record has been durably enqueued to the hash-chained audit log first.
+- **Separate admin plane.** Operational endpoints (`/admin/*`, `/metrics`)
+  live on their own listener (`:9091`) behind a static bearer token, intended
+  for private networks only.
+- **Secret hygiene.** Credentials are referenced via `secret://` URIs, never
+  inlined; secret byte values never appear in logs, metrics, or audit records.
 
-The [SECURITY.md](https://github.com/bino-bi/sluice/blob/main/SECURITY.md)
-file at the repo root covers disclosure: how to report a vulnerability
-and the 72 h / 14 d response SLA.
+## In this chapter
+
+| Page | What it covers |
+|---|---|
+| [Audit trail](audit.md) | Record anatomy, the hash chain, fail-closed serving, verification, retention |
+| [Threat model](threat-model.md) | Assets, adversaries, trust boundaries, mitigations, residual risks |
+| [Hardening](hardening.md) | Production checklist: process, network, credentials, audit, data sources, policies |
+| [Key rotation](key-rotation.md) | Rotating peppers, API keys, JWT keys, the audit genesis seed, and mask salts |
+
+## Related reading
+
+- [Security model](../architecture/security-model.md) explains the design
+  rationale behind these properties — why the pipeline is shaped the way it is.
+- The full STRIDE analysis lives in
+  [`THREAT_MODEL.md`](https://github.com/bino-bi/sluice/blob/main/THREAT_MODEL.md)
+  at the repository root.
+- To report a vulnerability, follow
+  [`SECURITY.md`](https://github.com/bino-bi/sluice/blob/main/SECURITY.md) —
+  private GitHub reporting or `security@bino.bi`, with a 72-hour
+  acknowledgement target.

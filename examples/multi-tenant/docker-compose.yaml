@@ -12,11 +12,12 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "multi-tenant-demo-pepper"
       SLUICE_AUDIT_GENESIS: "multi-tenant-demo-genesis"
-      # HMAC-SHA256 of the key material over the demo pepper, hex-encoded.
-      # Regenerate with `./bin/sluice apikey hash` once that subcommand lands
-      # (v0.2). For the demo these match the key strings in the README.
-      SLUICE_APIKEY_ACME_HASH: "7f1b8d3a2c5e6f4a9b0d1e2f3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d"
-      SLUICE_APIKEY_BETA_HASH: "8a2c9e4b3d6f5a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b"
+      # hex(HMAC-SHA256(pepper, "<id>:<material>")) — same values printed by
+      #   sluice apikey hash --pepper multi-tenant-demo-pepper \
+      #                      --id sl_demo_acme --material supersecret
+      # (and --id sl_demo_beta for the second key).
+      SLUICE_APIKEY_ACME_HASH: "5b42d0c29c4c20b5e7b0d67392a0aafbb18ac33355cdd2d432738230e09365ea"
+      SLUICE_APIKEY_BETA_HASH: "04fdc1c07ea3005824b81762e4d5e608a4d10a5a96db9003b6c0b68090b6b04a"
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro
