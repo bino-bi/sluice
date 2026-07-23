@@ -82,6 +82,22 @@ func (e *fakeExec) Execute(_ context.Context, req executor.Request) (*executor.R
 		iter.parent = resp
 		return resp, nil
 	}
+	if contains(sql, " AS trunc") {
+		// Serves one row then flips Truncated mid-stream, like the real
+		// sqlRowIterator when the row cap is hit.
+		iter := &fakeIter{
+			rows:          [][]any{{int64(1)}, {int64(2)}},
+			rowCount:      rowCount,
+			truncateAfter: 1,
+		}
+		resp := &executor.Response{
+			Columns:  []executor.ColumnInfo{{Name: "trunc"}},
+			Rows:     iter,
+			RowCount: rowCount,
+		}
+		iter.parent = resp
+		return resp, nil
+	}
 	// Default: single-column "n" with value 1.
 	iter := &fakeIter{
 		rows:     [][]any{{int64(1)}},
@@ -97,15 +113,20 @@ func (e *fakeExec) Execute(_ context.Context, req executor.Request) (*executor.R
 }
 
 type fakeIter struct {
-	rows     [][]any
-	rowCount *int64
-	idx      int
-	closed   bool
-	parent   *executor.Response
+	rows          [][]any
+	rowCount      *int64
+	idx           int
+	closed        bool
+	parent        *executor.Response
+	truncateAfter int
 }
 
 func (it *fakeIter) Next() bool {
 	if it.closed || it.idx >= len(it.rows) {
+		return false
+	}
+	if it.truncateAfter > 0 && it.idx >= it.truncateAfter {
+		it.parent.Truncated = true
 		return false
 	}
 	*it.rowCount++

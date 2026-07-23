@@ -149,6 +149,89 @@ func TestHandleQuery_AcceptCSV(t *testing.T) {
 	}
 }
 
+func TestHandleQuery_CSVTrailers(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS n"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Trailer"); !strings.Contains(got, "X-Sluice-Row-Count") {
+		t.Fatalf("Trailer declaration missing, got %q", got)
+	}
+	trailer := w.Result().Trailer
+	if got := trailer.Get("X-Sluice-Row-Count"); got != "1" {
+		t.Fatalf("X-Sluice-Row-Count trailer: got %q want 1", got)
+	}
+	if got := trailer.Get("X-Sluice-Truncated"); got != "false" {
+		t.Fatalf("X-Sluice-Truncated trailer: got %q want false", got)
+	}
+}
+
+func TestHandleQuery_CSVTrailerTruncated(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS trunc"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	trailer := w.Result().Trailer
+	if got := trailer.Get("X-Sluice-Truncated"); got != "true" {
+		t.Fatalf("X-Sluice-Truncated trailer: got %q want true", got)
+	}
+	if got := trailer.Get("X-Sluice-Row-Count"); got != "1" {
+		t.Fatalf("X-Sluice-Row-Count trailer: got %q want 1", got)
+	}
+}
+
+func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS trunc"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Truncated bool  `json:"truncated"`
+		RowCount  int64 `json:"row_count"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Truncated {
+		t.Fatalf("truncated: got false want true (stale-flag regression)")
+	}
+	if resp.RowCount != 1 {
+		t.Fatalf("row_count: got %d want 1", resp.RowCount)
+	}
+}
+
 func TestHandleQuery_JSONHappyPath(t *testing.T) {
 	t.Parallel()
 	svc := newRealService(t)

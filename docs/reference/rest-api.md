@@ -50,14 +50,17 @@ When `format` is absent, the `Accept` header is consulted:
 ```
 
 **CSV variant** — `Content-Type: text/csv` with a header row. Row count and
-truncation are meant to ride on the `X-Sluice-Row-Count` and
-`X-Sluice-Truncated` headers instead of the body.
+truncation ride on the `X-Sluice-Row-Count` and `X-Sluice-Truncated` **HTTP
+trailers** (the body has no place for them, and buffering to count first
+would break streaming). The trailers are declared in the `Trailer` response
+header and sent after the last row.
 
-!!! warning "Known issue: CSV metadata headers are not emitted"
-    The renderer currently sets `X-Sluice-Row-Count` and
-    `X-Sluice-Truncated` after the response body has been committed, so
-    HTTP clients never receive them. Use `format: json` when you need the
-    row count or the truncation flag.
+!!! note "Trailers need a trailer-aware client"
+    Trailers require HTTP/1.1 chunked transfer encoding or HTTP/2, and a
+    client that reads them after draining the body (Go:
+    `http.Response.Trailer`; curl: shown with `--raw`). Buffering proxies
+    may drop them. Use `format: json` when the metadata is critical — it is
+    part of the body there.
 
 **Response headers**: `X-Query-Id` always carries the query ID (also present
 on errors that have one); `X-Sluice-Applied-Policies` lists the names of
