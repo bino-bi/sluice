@@ -445,6 +445,48 @@ func TestExecute_RejectEmitsOnce(t *testing.T) {
 	}
 }
 
+func TestExecute_AuditSQLSample(t *testing.T) {
+	sql := "SELECT id, name FROM pg.public.orders WHERE id = 42"
+	cases := []struct {
+		name        string
+		sampleBytes int
+		want        string
+	}{
+		{"capped", 16, sql[:16]},
+		{"disabled", 0, ""},
+		{"larger than sql", 4096, sql},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeAudit{}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}},
+				Audit:    a,
+				Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+				Limits:   queryservice.Limits{SQLSampleBytes: tc.sampleBytes},
+			})
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+				SQL:    sql,
+				Origin: queryservice.OriginREST,
+			})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			_ = res.Rows.Close()
+			recs := a.all()
+			if len(recs) == 0 {
+				t.Fatalf("no audit records")
+			}
+			if got := recs[0].SQLSample; got != tc.want {
+				t.Fatalf("sql_sample = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAuditedRows_TruncatedSyncs(t *testing.T) {
 	a := &fakeAudit{}
 	svc := buildService(t,

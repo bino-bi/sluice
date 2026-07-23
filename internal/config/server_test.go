@@ -23,6 +23,23 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Limits.MaxRows != 100_000 {
 		t.Errorf("Limits.MaxRows = %d", cfg.Limits.MaxRows)
 	}
+	if cfg.Audit.SQLSampleBytes != 2048 {
+		t.Errorf("Audit.SQLSampleBytes = %d, want 2048", cfg.Audit.SQLSampleBytes)
+	}
+}
+
+func TestLoadServer_AuditSQLSampleBytesOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(path, []byte("audit:\n  sqlSampleBytes: 512\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.Audit.SQLSampleBytes != 512 {
+		t.Errorf("Audit.SQLSampleBytes = %d, want 512", cfg.Audit.SQLSampleBytes)
+	}
 }
 
 func TestLoadServer_MissingFile_NotAnError(t *testing.T) {

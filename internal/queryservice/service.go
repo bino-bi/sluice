@@ -105,6 +105,10 @@ type Limits struct {
 	// default).
 	SQLSampleBytes int
 
+	// ApprovalSQLSampleBytes caps the SQL text carried in approval
+	// webhook payloads and pending-approval views. Zero means no sample.
+	ApprovalSQLSampleBytes int
+
 	// DisableCrossCatalog rejects any query whose parsed table set spans
 	// more than one catalog (ACL_REJECTED), before policy evaluation and
 	// before the rewrite cache. Only three-part (catalog.schema.table)

@@ -16,7 +16,7 @@ log a precondition for serving data, not an afterthought.
 | `timestamp`, `event_type`, `query_id` | When, what kind of event, and the id echoed to the client as `X-Query-Id` |
 | `subject` | `id`, `method` (jwt / api_key / admin_token / none), `issuer`, `email`, `groups`, `remote_ip` |
 | `origin` | Transport that carried the request: `rest`, `mcp`, or `admin` |
-| `sql_fingerprint`, `rewritten_fingerprint`, `sql_sample` | Fingerprints of the inbound and rewritten SQL, plus a bounded sample |
+| `sql_fingerprint`, `rewritten_fingerprint`, `sql_sample` | Fingerprints of the inbound and rewritten SQL, plus a bounded sample (`audit.sqlSampleBytes`, default 2048; `0` disables) |
 | `tables`, `catalogs` | Resources the statement touched |
 | `policies_applied`, `decision`, `error_code` | Which policies fired, the outcome (`allow`, `deny`, `reject`, `error`), and the error code if any |
 | `row_count`, `truncated`, `duration_ms` | Result metadata, only on the `query-result` record written when the stream closes |

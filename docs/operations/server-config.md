@@ -53,6 +53,7 @@ policies:
 
 audit:
   failClosed: true             # refuse to serve unaudited queries
+  sqlSampleBytes: 2048         # sql_sample cap per record; 0 disables
   file:                        # unset = $TMPDIR/sluice-audit + loud warning
     path: /var/lib/sluice/audit
     rotateDaily: true
@@ -85,7 +86,7 @@ approval:
   requestTtl: 15m
   grantTtl: 5m
   maxPending: 1000
-  sqlSampleBytes: 2048
+  sqlSampleBytes: 2048         # SQL text cap in webhook payloads; 0 disables
 
 budget:
   enabled: false

@@ -83,7 +83,7 @@ approval:
   requestTtl: 15m        # how long a pending request lives
   grantTtl: 5m           # how long an unclaimed grant lives after accept
   maxPending: 1000       # cap on concurrent pending requests
-  sqlSampleBytes: 2048   # cap on the SQL text carried in the webhook
+  sqlSampleBytes: 2048   # cap on the SQL text carried in the webhook; 0 sends no SQL
   webhooks:
     - url: https://hooks.example.com/sluice
       headersRef: secret://env/APPROVAL_WEBHOOK_HEADERS  # JSON header map: {"Authorization":"Bearer …"}

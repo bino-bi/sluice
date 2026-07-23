@@ -54,6 +54,7 @@ func TestApproval_EndToEndWithRealBroker(t *testing.T) {
 		Clock:            func() time.Time { return time.Unix(1713600000, 0) },
 		Approvals:        broker,
 		ApprovalSyncWait: 30 * time.Millisecond,
+		Limits:           queryservice.Limits{ApprovalSQLSampleBytes: 2048},
 	})
 
 	const sql = "SELECT ssn FROM hr.people"
@@ -69,6 +70,10 @@ func TestApproval_EndToEndWithRealBroker(t *testing.T) {
 	case payload = <-received:
 	case <-time.After(2 * time.Second):
 		t.Fatal("webhook not delivered")
+	}
+	// The approver must see the SQL they are approving.
+	if got, _ := payload["sql"].(string); got != sql {
+		t.Fatalf("webhook sql = %q, want %q", got, sql)
 	}
 	id, _ := payload["approval_id"].(string)
 	acceptURL, _ := payload["accept_url"].(string)
@@ -123,6 +128,11 @@ func TestApproval_EndToEndRejectPath(t *testing.T) {
 
 	_, _ = svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
 	p := <-received
+	// ApprovalSQLSampleBytes is unset here: 0 disables the sample — there
+	// is no hidden fallback.
+	if got, _ := p["sql"].(string); got != "" {
+		t.Fatalf("webhook sql = %q, want empty when sampling disabled", got)
+	}
 	id, _ := p["approval_id"].(string)
 	token := tokenFromCapabilityURL(t, p["reject_url"].(string))
 
