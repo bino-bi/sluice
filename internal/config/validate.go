@@ -46,6 +46,25 @@ func (c *ServerConfig) Validate() error {
 			}
 		}
 	}
+	if c.MCP.TokenRef != "" {
+		if err := checkSecretRef("mcp.tokenRef", c.MCP.TokenRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.MCP.APIKeyRef != "" {
+		if err := checkSecretRef("mcp.apiKeyRef", c.MCP.APIKeyRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	// The serve-embedded stdio transport pins one identity for every tool
+	// call; without a credential it would silently run anonymous, so an
+	// anonymous run must be an explicit choice. "" and "stdio" are the
+	// stdio spellings; the http aliases are normalised by the transport.
+	if c.MCP.Enabled && (c.MCP.Transport == "" || c.MCP.Transport == "stdio") &&
+		c.MCP.TokenRef == "" && c.MCP.APIKeyRef == "" && !c.MCP.AllowAnonymous {
+		errs = append(errs, errors.New(
+			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
+	}
 	return errors.Join(errs...)
 }
 

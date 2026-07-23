@@ -342,16 +342,22 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.rest = rest.New(restCfg, restDeps)
 
 	if scfg.MCP.Enabled {
+		pinned, err := resolveMCPPinnedUser(ctx, scfg, deps.resolver, deps.identifier, deps.log)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: %w", err)
+		}
 		deps.mcp, err = mcp.New(mcp.Config{
 			Enabled:        true,
 			Transport:      mcp.TransportMode(scfg.MCP.Transport),
 			HTTPListen:     scfg.MCP.Listen,
 			SessionIdleMax: scfg.MCP.SessionIdleMax,
+			AllowAnonymous: scfg.MCP.AllowAnonymous,
 		}, mcp.Deps{
 			Service:    deps.service,
 			Identifier: deps.identifier,
 			Catalogs:   registryCatalogLister{r: deps.sourceReg},
 			Logger:     deps.log,
+			PinnedUser: pinned,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)

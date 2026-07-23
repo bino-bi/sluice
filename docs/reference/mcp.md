@@ -18,16 +18,19 @@ Two ways:
   `--allow-anonymous`. See [CLI](cli.md#mcp).
 - **Inside `sluice serve`** — set `mcp.enabled: true` in `server.yaml`, with
   `mcp.transport`, `mcp.listen` (Streamable HTTP bind address), and
-  `mcp.sessionIdleMax`. Note: the serve-embedded stdio transport has no
-  credential flags, so tool calls run as the anonymous subject; use
-  `sluice mcp` when you need a pinned identity.
+  `mcp.sessionIdleMax`. The serve-embedded stdio transport pins its
+  identity from `mcp.tokenRef` / `mcp.apiKeyRef` (`secret://` references,
+  e.g. `secret://env/SLUICE_MCP_TOKEN`); without one, `serve` refuses to
+  start unless `mcp.allowAnonymous: true` opts into a default-denied
+  anonymous run. `sluice config validate` catches the misconfiguration at
+  exit code 3.
 
 ## Identity model
 
 | Transport | Authentication |
 |---|---|
-| `stdio` | One identity, resolved **once at startup** from `--jwt` / `--api-key` / `SLUICE_MCP_TOKEN`, then pinned onto every tool call. No credential and no `--allow-anonymous` → the command refuses to start. |
-| `streamable_http` | **Every request** is authenticated from its `Authorization` / `X-Api-Key` header, fail-closed: an invalid credential is always rejected with `401`, and a missing one is rejected too unless `--allow-anonymous` is set. A leaked `Mcp-Session-Id` alone grants nothing. |
+| `stdio` | One identity, resolved **once at startup** and pinned onto every tool call — from `--jwt` / `--api-key` / `SLUICE_MCP_TOKEN` for `sluice mcp`, or from `mcp.tokenRef` / `mcp.apiKeyRef` for the serve-embedded transport. No credential and no allow-anonymous opt-in (`--allow-anonymous` / `mcp.allowAnonymous`) → refuses to start. |
+| `streamable_http` | **Every request** is authenticated from its `Authorization` / `X-Api-Key` header, fail-closed: an invalid credential is always rejected with `401`, and a missing one is rejected too unless allow-anonymous (`--allow-anonymous` / `mcp.allowAnonymous`) is set. A leaked `Mcp-Session-Id` alone grants nothing. |
 
 Anonymous sessions still hit default-deny — queries fail unless a policy
 explicitly allows the anonymous subject.

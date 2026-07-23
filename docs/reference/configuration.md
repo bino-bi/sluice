@@ -29,6 +29,9 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `mcp.transport` | `string` | `stdio` | `SLUICE_MCP__TRANSPORT` |
 | `mcp.listen` | `string` | `""` | `SLUICE_MCP__LISTEN` |
 | `mcp.sessionIdleMax` | `Duration` | `30m0s` | `SLUICE_MCP__SESSIONIDLEMAX` |
+| `mcp.tokenRef` | `string` | `""` | `SLUICE_MCP__TOKENREF` |
+| `mcp.apiKeyRef` | `string` | `""` | `SLUICE_MCP__APIKEYREF` |
+| `mcp.allowAnonymous` | `bool` | `false` | `SLUICE_MCP__ALLOWANONYMOUS` |
 | `admin.enabled` | `bool` | `false` | `SLUICE_ADMIN__ENABLED` |
 | `admin.listen` | `string` | `:9091` | `SLUICE_ADMIN__LISTEN` |
 | `admin.token` | `string` | `""` | `SLUICE_ADMIN__TOKEN` |

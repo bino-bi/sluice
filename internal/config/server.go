@@ -46,6 +46,20 @@ type MCPConfig struct {
 	Transport      string        `mapstructure:"transport"` // "stdio" | "streamable_http"
 	Listen         string        `mapstructure:"listen"`
 	SessionIdleMax time.Duration `mapstructure:"sessionIdleMax"`
+
+	// TokenRef is a secret:// reference to a static JWT bearer token that
+	// pins the identity of the serve-embedded stdio transport. Resolved
+	// once at boot through the same identity pipeline as the HTTP
+	// transports.
+	TokenRef string `mapstructure:"tokenRef"`
+	// APIKeyRef is a secret:// reference to a static API key
+	// ("<id>.<secret>") used the same way. When both are set, the JWT is
+	// tried first.
+	APIKeyRef string `mapstructure:"apiKeyRef"`
+	// AllowAnonymous lets the MCP transport run without a credential:
+	// stdio pins the anonymous subject; streamable_http admits
+	// credential-less requests as anonymous instead of rejecting with 401.
+	AllowAnonymous bool `mapstructure:"allowAnonymous"`
 }
 
 // AdminConfig configures the admin transport (metrics, reload, health).
@@ -347,6 +361,9 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("mcp.enabled", d.MCP.Enabled)
 	v.SetDefault("mcp.transport", d.MCP.Transport)
 	v.SetDefault("mcp.sessionIdleMax", d.MCP.SessionIdleMax)
+	v.SetDefault("mcp.tokenRef", d.MCP.TokenRef)
+	v.SetDefault("mcp.apiKeyRef", d.MCP.APIKeyRef)
+	v.SetDefault("mcp.allowAnonymous", d.MCP.AllowAnonymous)
 
 	v.SetDefault("admin.enabled", d.Admin.Enabled)
 	v.SetDefault("admin.listen", d.Admin.Listen)

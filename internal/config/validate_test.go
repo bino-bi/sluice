@@ -80,6 +80,49 @@ func TestServerConfigValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "mcp stdio without credential rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+			},
+			wantErr: []string{"mcp.enabled with transport=stdio", "mcp.tokenRef"},
+		},
+		{
+			name: "mcp stdio with tokenRef is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "stdio"
+				c.MCP.TokenRef = "secret://env/MCP_TOKEN"
+			},
+		},
+		{
+			name: "mcp stdio with allowAnonymous is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.AllowAnonymous = true
+			},
+		},
+		{
+			name: "mcp streamable_http without credential is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "streamable_http"
+			},
+		},
+		{
+			name: "mcp disabled needs nothing",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Transport = "stdio"
+			},
+		},
+		{
+			name: "mcp vault tokenRef rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.TokenRef = "secret://vault/token"
+			},
+			wantErr: []string{"mcp.tokenRef", "parsed but unimplemented"},
+		},
+		{
 			name: "multiple violations all reported",
 			mutate: func(c *ServerConfig) {
 				c.Admin.TLS = &TLSConfig{}

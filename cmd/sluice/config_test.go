@@ -93,6 +93,35 @@ func TestConfigValidate_UnenforceableServerConfig_ExitCode3(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_MCPStdioWithoutCredential_ExitCode3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(path, []byte("mcp:\n  enabled: true\n  transport: stdio\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"config", "validate", "--config", path})
+
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for stdio without credential")
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("want *exitError, got %T: %v", err, err)
+	}
+	if exit.Code != 3 {
+		t.Fatalf("exit code = %d, want 3", exit.Code)
+	}
+	if !strings.Contains(errOut.String(), "mcp.tokenRef") {
+		t.Fatalf("stderr must name the fix, got: %q", errOut.String())
+	}
+}
+
 func TestConfigValidate_BadServerConfig_ExitCode1(t *testing.T) {
 	root := newRootCmd()
 	root.SetArgs([]string{"config", "validate", "--config", "/tmp/sluice-no-such-file.yaml"})
