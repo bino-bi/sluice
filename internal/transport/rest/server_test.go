@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -70,6 +71,52 @@ func TestHandleReady_NoRegistry200(t *testing.T) {
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200", w.Code)
+	}
+}
+
+func TestHandleReady_DegradedThenHealthy(t *testing.T) {
+	t.Parallel()
+	reg, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{readyDSSpec("ready-ds")}},
+		HealthInterval: -1,
+	})
+	if err != nil {
+		t.Fatalf("datasource.New: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier: &stubIdentifier{},
+		Registry:   reg,
+	})
+
+	// Before any probe: fail-closed degraded.
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("pre-probe status: got %d want 503", w.Code)
+	}
+	var body struct {
+		Status      string `json:"status"`
+		DataSources []struct {
+			Healthy bool `json:"healthy"`
+		} `json:"datasources"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "degraded" {
+		t.Fatalf("pre-probe status field: got %q want degraded", body.Status)
+	}
+
+	// After a successful probe: ready.
+	if err := reg.Probe(context.Background(), "ready-ds", readyFakePool{}); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("post-probe status: got %d want 200: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -113,7 +113,7 @@ subject (or an unknown ID) gets `404`. Returns
 | Endpoint | Behavior |
 |---|---|
 | `GET /v1/health` | Liveness: always `200` with `{"status":"ok","version":"…"}` |
-| `GET /v1/ready` | Readiness: `200` when every datasource is healthy; `503` with `"status":"degraded"` otherwise. Lists each datasource as `{name, type, healthy, error}` |
+| `GET /v1/ready` | Readiness: `200` when every datasource is healthy; `503` with `"status":"degraded"` otherwise. Lists each datasource as `{name, type, healthy, error}`. Fail-closed at boot: sources report unhealthy until the first health sweep (which runs immediately) has probed them |
 | `GET /v1/version` | Build identity: `{version, commit, build_time, go, parser_version}` |
 | `GET /openapi.json` | OpenAPI document (see below) |
 

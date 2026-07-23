@@ -3,6 +3,7 @@
 package datasource
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 )
@@ -25,3 +26,23 @@ type SQLConn interface {
 // errInvalidConn is returned when a Probe is given a pool whose Conn()
 // implementation does not satisfy SQLConn.
 var errInvalidConn = errors.New("datasource: pool did not return a *sql.Conn")
+
+// NewSQLPool adapts a *sql.DB (the executor's pool) to ConnProvider so
+// the health sweep can borrow probe connections. The returned conns
+// satisfy SQLConn, which Probe requires.
+func NewSQLPool(db *sql.DB) ConnProvider { return sqlPool{db: db} }
+
+type sqlPool struct{ db *sql.DB }
+
+func (p sqlPool) Conn(ctx context.Context) (ConnCloser, error) {
+	c, err := p.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sqlPoolConn{c: c}, nil
+}
+
+type sqlPoolConn struct{ c *sql.Conn }
+
+func (s sqlPoolConn) Close() error       { return s.c.Close() }
+func (s sqlPoolConn) SQLConn() *sql.Conn { return s.c }

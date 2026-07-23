@@ -5,6 +5,7 @@ package queryservice_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -484,6 +486,50 @@ func TestExecute_AuditSQLSample(t *testing.T) {
 				t.Fatalf("sql_sample = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExecute_AttachErrorMapsToDataSourceUnavailable(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{err: fmt.Errorf("run: %w", executor.ErrAttach)},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeDataSourceUnavailable {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeDataSourceUnavailable)
+	}
+}
+
+func TestExecute_UnknownCatalogMapsToDataSourceUnavailable(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{err: fmt.Errorf("resolve: %w", schema.ErrUnknownCatalog)},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeDataSourceUnavailable {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeDataSourceUnavailable)
 	}
 }
 

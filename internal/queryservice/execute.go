@@ -13,6 +13,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -445,6 +446,8 @@ func toAPIError(err error, qid string) error {
 		return pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrReject):
 		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
+	case stderrors.Is(err, schema.ErrUnknownCatalog):
+		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }
@@ -475,6 +478,8 @@ func execErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeCanceled, err).WithQueryID(qid)
 	case stderrors.Is(err, context.DeadlineExceeded):
 		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
+	case stderrors.Is(err, executor.ErrAttach):
+		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }

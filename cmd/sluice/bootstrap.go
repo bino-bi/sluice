@@ -161,6 +161,11 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		return nil, fmt.Errorf("executor: %w", err)
 	}
 
+	// 8b. Health sweep pool — same *sql.DB the schema cache borrows from.
+	// Kicks one immediate sweep so /v1/ready reflects real state shortly
+	// after boot instead of after the first full HealthInterval.
+	deps.sourceReg.SetPool(ctx, datasource.NewSQLPool(deps.exec.DB()))
+
 	// 9. Schema cache — wired to the pool via a narrow ConnProvider.
 	deps.schemaCache = schema.New(schema.Options{
 		Loader: schema.NewLoader(deps.sourceReg, deps.exec.DB()),

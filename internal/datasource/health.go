@@ -16,20 +16,19 @@ type HealthProbe interface {
 	Probe(ctx context.Context, catalog string, conn ConnProvider) error
 }
 
-// ConnProvider matches sql.DB.Conn and is the minimum needed to run a
-// HealthCheck. Declared locally to avoid pulling in database/sql in
-// every call site.
+// ConnProvider hands out pooled connections for health probes; the
+// minimum needed to run a HealthCheck. Satisfied by NewSQLPool
+// (production) and by test fakes. Declared locally to avoid pulling in
+// database/sql in every call site.
 type ConnProvider interface {
-	Conn(ctx context.Context) (interface {
-		Close() error
-	}, error)
+	Conn(ctx context.Context) (ConnCloser, error)
 }
 
 // healthLoop ticks through every catalog and records Status updates.
 // HealthCheck requires a *sql.Conn from the executor pool, which only
-// exists once the composition root wires them together. Until the
-// executor exists this loop runs but skips the actual probe — it still
-// clears out-of-date error states after a reload.
+// exists once the composition root calls SetPool. Until then the loop
+// runs but every sweep is a no-op and statuses keep their fail-closed
+// Healthy=false.
 func (r *Registry) healthLoop(ctx context.Context) {
 	defer close(r.stopped)
 
@@ -43,39 +42,47 @@ func (r *Registry) healthLoop(ctx context.Context) {
 	}
 }
 
-// runHealthSweep walks the registry and fires one HealthCheck per
-// catalog. Without a pool the sweep is a no-op; once executor.Pool is
-// wired in Slice 2 this function learns to borrow a connection.
+// SetPool wires the executor-backed connection pool the health sweep
+// borrows probe connections from. Called by the composition root once
+// the executor exists (the Registry is constructed first because the
+// executor needs its AttachHook). Triggers one immediate sweep so
+// readiness reflects real state shortly after boot rather than after
+// the first full HealthInterval.
+func (r *Registry) SetPool(ctx context.Context, pool ConnProvider) {
+	r.mu.Lock()
+	r.pool = pool
+	r.mu.Unlock()
+	select {
+	case <-r.stop:
+		return
+	default:
+	}
+	go r.runHealthSweep(ctx)
+}
+
+// runHealthSweep fires one Probe per catalog against the wired pool.
+// Nil pool (SetPool not called yet, or a CLI-only composition): skip —
+// statuses keep their fail-closed Healthy=false until a probe succeeds.
 func (r *Registry) runHealthSweep(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	catalogs := r.Catalogs()
-	for _, name := range catalogs {
-		r.recordHealthPlaceholder(name)
-	}
-}
-
-// recordHealthPlaceholder keeps the Status present in the admin view
-// even when no probe has actually run. The executor will replace this
-// with a real probe in Slice 2.
-func (r *Registry) recordHealthPlaceholder(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	s, ok := r.statuses[name]
-	if !ok {
+	r.mu.RLock()
+	pool := r.pool
+	r.mu.RUnlock()
+	if pool == nil {
 		return
 	}
-	s.LastCheck = r.opts.Clock()
-	s.LastLatency = 0
+	for _, name := range r.Catalogs() {
+		// Probe records the status transition and logs failures.
+		_ = r.Probe(ctx, name, pool)
+	}
 }
 
 // Probe runs a single HealthCheck against a caller-supplied connection
-// provider. Primarily used by unit tests and the admin explicit
-// /admin/datasources/:name/check endpoint (read-only MVP).
-func (r *Registry) Probe(ctx context.Context, catalog string, pool interface {
-	Conn(ctx context.Context) (ConnCloser, error)
-}) error {
+// provider and records the Status transition. Used by the periodic
+// sweep, unit tests, and the admin explicit check path.
+func (r *Registry) Probe(ctx context.Context, catalog string, pool ConnProvider) error {
 	ds, err := r.Lookup(catalog)
 	if err != nil {
 		return err

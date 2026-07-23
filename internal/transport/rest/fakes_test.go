@@ -4,18 +4,22 @@ package rest_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
+	"github.com/bino-bi/sluice/pkg/datasource/testfakes"
 )
 
 // fakeAST implements parser.AST. We only care about Fingerprint and Tables.
@@ -165,6 +169,38 @@ func (a *fakeAudit) Enqueue(_ context.Context, r *audit.Record) error {
 	a.records = append(a.records, r)
 	return nil
 }
+
+// readyFakeType backs TestHandleReady_DegradedThenHealthy with a real
+// datasource.Registry; pkg/datasource's registry panics on duplicate
+// registration, so the name must be unique across the test binary.
+const readyFakeType = "fake_rest_ready_test"
+
+func init() {
+	pkgds.Register(readyFakeType, func(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
+		return testfakes.New(spec.Name, pkgds.Schema{Catalog: spec.Name}), nil
+	})
+}
+
+func readyDSSpec(name string) *pkgapi.DataSource {
+	return &pkgapi.DataSource{
+		TypeMeta: pkgapi.TypeMeta{APIVersion: "sluice.dev/v1alpha1", Kind: pkgapi.KindDataSource},
+		Metadata: pkgapi.ObjectMeta{Name: name},
+		Spec:     pkgapi.DataSourceSpec{Type: pkgapi.DataSourceType(readyFakeType)},
+	}
+}
+
+// readyFakePool satisfies datasource.ConnProvider; the conn satisfies
+// SQLConn with a nil *sql.Conn (the testfakes driver never touches it).
+type readyFakePool struct{}
+
+func (readyFakePool) Conn(context.Context) (datasource.ConnCloser, error) {
+	return readyFakeConn{}, nil
+}
+
+type readyFakeConn struct{}
+
+func (readyFakeConn) Close() error       { return nil }
+func (readyFakeConn) SQLConn() *sql.Conn { return nil }
 
 func newQuerySvc(t *testing.T) *queryservice.Service {
 	t.Helper()

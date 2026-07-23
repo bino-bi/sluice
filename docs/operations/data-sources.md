@@ -138,6 +138,12 @@ sluice datasource check --dir ./policies.d        # alias: sluice ds check
 attach and the periodic health probe happen in `sluice serve`, and
 `GET /v1/ready` reports per-source health.
 
+Readiness is fail-closed: every source starts unhealthy, one sweep fires
+immediately at boot, then every `healthCheck.interval` (default 30 s). A
+source that dies mid-run flips unhealthy within one interval, `/v1/ready`
+turns `503`, and queries touching it return `ERR_DATASOURCE_UNAVAILABLE`
+instead of `ERR_INTERNAL`.
+
 For editor and CI schema validation of the manifests themselves:
 
 ```bash
