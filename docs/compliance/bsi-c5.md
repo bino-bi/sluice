@@ -25,9 +25,11 @@ an engineering-level map, not evidence.
 ## Gaps
 
 !!! warning "What Sluice does not provide today"
-    - **File-only audit sink.** `s3`, `postgres`, `syslog`, and `otlp`
-      sink types parse but are not implemented. Forwarding audit files
-      to your SIEM or archival storage is an external pipeline.
+    - **`postgres` and `otlp` audit sinks are not implemented.** Built-in
+      forwarding covers syslog (SIEM hand-off) and S3 with Object Lock
+      (WORM archival) via the `audit.*` server config; both are
+      best-effort secondaries — the hash-chained file sink remains the
+      durable record, so evidence the file retention path.
     - **No published release artifacts.** The release pipeline is set
       up to sign binaries with cosign and attach CycloneDX SBOMs, but
       no release has been published yet — build from source and record

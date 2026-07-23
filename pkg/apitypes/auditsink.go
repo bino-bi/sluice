@@ -2,8 +2,9 @@
 
 package apitypes
 
-// AuditSink configures where audit records are written. MVP supports the
-// file sink only; the other variants (s3, postgres, syslog, otlp) are
+// AuditSink configures where audit records are written. Only the file
+// sink is honoured from manifests; syslog and s3 sinks exist but are
+// configured via the audit.* server-config block, and postgres/otlp are
 // declared here so policy files targeting v1 parse cleanly.
 type AuditSink struct {
 	TypeMeta `yaml:",inline" json:",inline"`

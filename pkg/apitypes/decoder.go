@@ -481,7 +481,15 @@ func validateAuditSink(a *AuditSink) error {
 				Reason: "required for file sink",
 			}
 		}
-	case AuditS3, AuditPostgres, AuditSyslog, AuditOTLP:
+	case AuditS3, AuditSyslog:
+		// These sinks exist, but only via server config — AuditSink
+		// manifests are not wired to the dispatcher. Rejected so an
+		// operator never believes a manifest configured them.
+		return &ValidationError{
+			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",
+			Reason: fmt.Sprintf("audit sink type %q is configured via audit.%s in sluice.yaml — AuditSink manifests are not wired to the dispatcher in this build", s.Type, s.Type),
+		}
+	case AuditPostgres, AuditOTLP:
 		// Declared by the manifest grammar but no implementation writes
 		// records yet. Rejected so an operator never believes durable
 		// delivery is configured when it is not; the guard drops per type

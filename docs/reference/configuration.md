@@ -54,6 +54,8 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `policies.rebac.cacheTtl` | `Duration` | `10s` | `SLUICE_POLICIES__REBAC__CACHETTL` |
 | `policies.rebac.cacheSize` | `int` | `10000` | `SLUICE_POLICIES__REBAC__CACHESIZE` |
 | `audit.file` | `FileSinkConfig?` | _unset_ | `SLUICE_AUDIT__FILE` |
+| `audit.syslog` | `SyslogSinkConfig?` | _unset_ | `SLUICE_AUDIT__SYSLOG` |
+| `audit.s3` | `S3SinkConfig?` | _unset_ | `SLUICE_AUDIT__S3` |
 | `audit.failClosed` | `bool` | `true` | `SLUICE_AUDIT__FAILCLOSED` |
 | `audit.sqlSampleBytes` | `int` | `2048` | `SLUICE_AUDIT__SQLSAMPLEBYTES` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |

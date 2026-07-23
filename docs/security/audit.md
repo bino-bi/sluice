@@ -138,13 +138,62 @@ spec:
   rotateSizeMB: 256
 ```
 
-!!! warning "Not yet implemented — rejected at load"
-    Only `type: file` is implemented, and the running sink is wired from
-    `audit.file` in `sluice.yaml` — keep the two in sync. AuditSink
-    manifests declaring `s3`, `postgres`, `syslog`, or `otlp` **fail
-    validation** (`sluice config validate` exits 3, `sluice serve` refuses
-    to start) so nobody believes durable delivery is configured when it
-    is not.
+!!! warning "Manifests declare the file sink only"
+    The running sinks are wired from the `audit.*` block in `sluice.yaml`,
+    not from manifests. AuditSink manifests declaring `s3` or `syslog`
+    **fail validation** with a pointer to the server-config keys below;
+    `postgres` and `otlp` remain unimplemented and fail validation too
+    (`sluice config validate` exits 3, `sluice serve` refuses to start).
+
+## Secondary sinks: syslog and S3
+
+Beyond the file sink, two network sinks fan out every record:
+
+```yaml
+audit:
+  file:
+    path: /var/lib/sluice/audit        # the durable, hash-chained record
+  syslog:
+    network: tcp                       # udp (default) | tcp | unix | unixgram
+    address: siem.internal:6514
+    facility: local0
+    tag: sluice
+  s3:
+    endpoint: s3.amazonaws.com         # or a MinIO endpoint
+    bucket: acme-sluice-audit
+    prefix: audit/
+    region: eu-central-1
+    objectLock: compliance             # "" | governance | compliance
+    retentionDays: 365
+    credentialsRef: secret://env/SLUICE_S3_CREDS   # JSON {accessKeyId, secretAccessKey}
+    uploadInterval: 30s
+    uploadBytes: 1048576
+```
+
+Their delivery semantics are deliberately **best-effort**:
+
+- The **file sink stays the durable record** and carries the hash chain;
+  `audit.failClosed` gates queries on it alone. A syslog daemon outage or
+  an unreachable bucket never blocks a query and never breaks the chain.
+- **syslog** forwards each record as an RFC 5424 message (octet-counted
+  framing on stream transports) — fire-and-forget with one reconnect
+  attempt; failures count `sluice_audit_dropped_total{sink="syslog"}`.
+  UDP is silently lossy by nature, and TCP syslog carries no TLS — put
+  the collector on a trusted network. An unreachable daemon fails boot
+  (visible misconfiguration).
+- **s3** batches records into newline-delimited JSON objects
+  (`<prefix>/YYYY/MM/DD/audit-<ulid>.jsonl`), uploading on a size or
+  interval trigger. Failed uploads are retried from an in-memory buffer;
+  past `maxBufferBytes` new records are dropped for this sink with
+  `sluice_audit_dropped_total{sink="s3",reason="buffer_full"}` counting
+  the loss. A process crash loses at most one un-uploaded batch — the
+  file sink still has every record.
+- **Object Lock**: the bucket must be *created* with Object Lock enabled
+  (`aws s3api create-bucket --object-lock-enabled-for-bucket`); the sink
+  sets per-object mode and retention but cannot enable locking on an
+  existing bucket. With `credentialsRef` unset, credentials come from the
+  standard env / shared-config / IAM chain (IRSA and instance profiles
+  work with zero config).
 
 ## Retention without breaking the chain
 

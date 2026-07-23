@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/approval"
@@ -198,27 +197,11 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Salts:  secrets.NewSaltStore(deps.resolver),
 	})
 
-	// 12. Audit dispatcher — file sink only in MVP.
-	if scfg.Audit.File != nil && scfg.Audit.File.Path != "" {
-		sink, err := audit.NewFileSink(audit.FileOptions{
-			Dir:          scfg.Audit.File.Path,
-			RotateDaily:  scfg.Audit.File.RotateDaily,
-			RotateSizeMB: scfg.Audit.File.RotateSizeMB,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("audit file sink: %w", err)
-		}
-		deps.auditSinks = []audit.Sink{sink}
-	} else {
-		// Fall back to a temp directory so the server still boots without
-		// audit config. Operators get a loud warning.
-		tmp := filepath.Join(os.TempDir(), "sluice-audit")
-		deps.log.Warn("audit: no sink configured; defaulting to temp directory", slog.String("path", tmp))
-		sink, err := audit.NewFileSink(audit.FileOptions{Dir: tmp, RotateDaily: true})
-		if err != nil {
-			return nil, fmt.Errorf("audit fallback sink: %w", err)
-		}
-		deps.auditSinks = []audit.Sink{sink}
+	// 12. Audit dispatcher — file sink (chain primary) plus optional
+	// best-effort syslog / s3 secondaries.
+	deps.auditSinks, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
+	if err != nil {
+		return nil, err
 	}
 
 	genesis, err := resolveGenesisSeed(ctx, deps.resolver, scfg.Audit.File)

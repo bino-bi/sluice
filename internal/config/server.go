@@ -117,9 +117,13 @@ type RebacConfig struct {
 	CacheSize int           `mapstructure:"cacheSize"`
 }
 
-// AuditConfig selects audit sinks. MVP ships file only; richer sinks land in v1.
+// AuditConfig selects audit sinks. The file sink is the durable,
+// hash-chained record; syslog and s3 are best-effort secondary sinks that
+// receive every record but never gate a query.
 type AuditConfig struct {
-	File *FileSinkConfig `mapstructure:"file"`
+	File   *FileSinkConfig   `mapstructure:"file"`
+	Syslog *SyslogSinkConfig `mapstructure:"syslog"` // nil = disabled
+	S3     *S3SinkConfig     `mapstructure:"s3"`     // nil = disabled
 
 	// FailClosed refuses to serve a query when its access audit record
 	// cannot be durably enqueued. Default true — audit-first posture. Set
@@ -137,6 +141,33 @@ type FileSinkConfig struct {
 	RotateDaily  bool   `mapstructure:"rotateDaily"`
 	RotateSizeMB int    `mapstructure:"rotateSizeMB"`
 	Genesis      string `mapstructure:"genesis"` // secret:// ref
+}
+
+// SyslogSinkConfig forwards each audit record to a syslog daemon
+// (RFC 5424; octet-counted on stream transports). Fire-and-forget: the
+// file sink remains the durable record.
+type SyslogSinkConfig struct {
+	Network  string `mapstructure:"network"`  // udp (default) | tcp | unix | unixgram
+	Address  string `mapstructure:"address"`  // host:port or socket path; required
+	Facility string `mapstructure:"facility"` // local0..local7, daemon, auth, ...; default local0
+	Tag      string `mapstructure:"tag"`      // RFC 5424 APP-NAME; default "sluice"
+}
+
+// S3SinkConfig batches audit records into newline-delimited JSON objects
+// in an S3(-compatible) bucket, optionally under Object Lock retention.
+type S3SinkConfig struct {
+	Endpoint       string        `mapstructure:"endpoint"`       // default s3.amazonaws.com
+	Bucket         string        `mapstructure:"bucket"`         // required
+	Prefix         string        `mapstructure:"prefix"`         // default "audit/"
+	Region         string        `mapstructure:"region"`
+	Insecure       bool          `mapstructure:"insecure"`       // plain HTTP (dev / MinIO)
+	ForcePathStyle bool          `mapstructure:"forcePathStyle"` // path-style addressing (MinIO)
+	ObjectLock     string        `mapstructure:"objectLock"`     // "" | governance | compliance
+	RetentionDays  int           `mapstructure:"retentionDays"`  // required when objectLock is set
+	CredentialsRef string        `mapstructure:"credentialsRef"` // secret:// JSON; empty = env/IAM chain
+	UploadInterval time.Duration `mapstructure:"uploadInterval"` // default 30s
+	UploadBytes    int           `mapstructure:"uploadBytes"`    // default 1 MiB
+	MaxBufferBytes int           `mapstructure:"maxBufferBytes"` // default 8 MiB
 }
 
 // LoggingConfig controls slog output.
