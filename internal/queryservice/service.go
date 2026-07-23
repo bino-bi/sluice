@@ -104,6 +104,17 @@ type Limits struct {
 	// the audit record. Zero means do not store any sample (privacy
 	// default).
 	SQLSampleBytes int
+
+	// ApprovalSQLSampleBytes caps the SQL text carried in approval
+	// webhook payloads and pending-approval views. Zero means no sample.
+	ApprovalSQLSampleBytes int
+
+	// DisableCrossCatalog rejects any query whose parsed table set spans
+	// more than one catalog (ACL_REJECTED), before policy evaluation and
+	// before the rewrite cache. Only three-part (catalog.schema.table)
+	// references carry a catalog — parity with the policy-rule
+	// equivalent size(query.catalogs) > 1.
+	DisableCrossCatalog bool
 }
 
 // Service is the orchestrator. One instance is shared across all

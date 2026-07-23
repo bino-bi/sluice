@@ -80,10 +80,15 @@ type runtimeDeps struct {
 func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtimeDeps, error) {
 	deps := &runtimeDeps{}
 
-	// 1. Server config.
+	// 1. Server config. Validate refuses settings this build cannot
+	// enforce — an operator must never believe a control is active when
+	// it is not.
 	scfg, err := config.LoadServer(serverCfgPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load server config: %w", err)
+	}
+	if err := scfg.Validate(); err != nil {
+		return nil, fmt.Errorf("server config: %w", err)
 	}
 	deps.server = scfg
 
@@ -160,6 +165,11 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if err != nil {
 		return nil, fmt.Errorf("executor: %w", err)
 	}
+
+	// 8b. Health sweep pool — same *sql.DB the schema cache borrows from.
+	// Kicks one immediate sweep so /v1/ready reflects real state shortly
+	// after boot instead of after the first full HealthInterval.
+	deps.sourceReg.SetPool(ctx, datasource.NewSQLPool(deps.exec.DB()))
 
 	// 9. Schema cache — wired to the pool via a narrow ConnProvider.
 	deps.schemaCache = schema.New(schema.Options{
@@ -274,12 +284,15 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Keys:            secrets.NewKeyStore(deps.resolver),
 		Salts:           secrets.NewSaltStore(deps.resolver),
 		Limits: queryservice.Limits{
-			DefaultMaxRows: scfg.Limits.MaxRows,
-			MaxRowsCeiling: scfg.Limits.MaxRowsCeiling,
-			DefaultTimeout: scfg.Limits.QueryTimeout,
-			MaxTimeout:     scfg.Limits.MaxQueryTimeout,
-			MaxSQLBytes:    scfg.Limits.MaxSQLBytes,
-			MaxConcurrent:  scfg.Limits.MaxConcurrent,
+			DefaultMaxRows:         scfg.Limits.MaxRows,
+			MaxRowsCeiling:         scfg.Limits.MaxRowsCeiling,
+			DefaultTimeout:         scfg.Limits.QueryTimeout,
+			MaxTimeout:             scfg.Limits.MaxQueryTimeout,
+			MaxSQLBytes:            scfg.Limits.MaxSQLBytes,
+			MaxConcurrent:          scfg.Limits.MaxConcurrent,
+			DisableCrossCatalog:    scfg.Limits.DisableCrossCatalog,
+			SQLSampleBytes:         scfg.Audit.SQLSampleBytes,
+			ApprovalSQLSampleBytes: scfg.Approval.SQLSampleBytes,
 		},
 	}
 	if deps.rewriteCache != nil {
@@ -295,11 +308,15 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.service = queryservice.New(qopts)
 
 	// 15. Transports.
-	deps.rest = rest.New(rest.Config{
+	restCfg := rest.Config{
 		Listen:         scfg.REST.Listen,
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
 		RequestTimeout: scfg.REST.RequestTimeout,
-	}, rest.Deps{
+	}
+	if t := scfg.REST.TLS; t != nil && t.CertFile != "" && t.KeyFile != "" {
+		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
+	}
+	deps.rest = rest.New(restCfg, rest.Deps{
 		Service:    deps.service,
 		Identifier: deps.identifier,
 		Registry:   deps.sourceReg,

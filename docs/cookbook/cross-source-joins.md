@@ -105,8 +105,11 @@ curl -s -H "X-Api-Key: analyst.supersecret" -H "Content-Type: application/json" 
 ## Opting out of cross-catalog joins
 
 Two mechanisms, from coarse to fine. Globally, in `server.yaml`:
-`limits.disableCrossCatalog: true` (default `false`). Per subject or resource,
-as a policy:
+`limits.disableCrossCatalog: true` (default `false`) rejects any query whose
+table set spans more than one catalog with `ACL_REJECTED`, before policy
+evaluation and before the rewrite cache. Like the policy rule below, it sees
+a catalog only in three-part (`catalog.schema.table`) names. Per subject or
+resource, as a policy:
 
 ```yaml
 apiVersion: sluice.bino.bi/v1alpha1

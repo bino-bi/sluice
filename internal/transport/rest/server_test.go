@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -70,6 +71,52 @@ func TestHandleReady_NoRegistry200(t *testing.T) {
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200", w.Code)
+	}
+}
+
+func TestHandleReady_DegradedThenHealthy(t *testing.T) {
+	t.Parallel()
+	reg, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{readyDSSpec("ready-ds")}},
+		HealthInterval: -1,
+	})
+	if err != nil {
+		t.Fatalf("datasource.New: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier: &stubIdentifier{},
+		Registry:   reg,
+	})
+
+	// Before any probe: fail-closed degraded.
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("pre-probe status: got %d want 503", w.Code)
+	}
+	var body struct {
+		Status      string `json:"status"`
+		DataSources []struct {
+			Healthy bool `json:"healthy"`
+		} `json:"datasources"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "degraded" {
+		t.Fatalf("pre-probe status field: got %q want degraded", body.Status)
+	}
+
+	// After a successful probe: ready.
+	if err := reg.Probe(context.Background(), "ready-ds", readyFakePool{}); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/ready", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("post-probe status: got %d want 200: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -146,6 +193,89 @@ func TestHandleQuery_AcceptCSV(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "n\n1\n") {
 		t.Fatalf("body: got %q", w.Body.String())
+	}
+}
+
+func TestHandleQuery_CSVTrailers(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS n"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Trailer"); !strings.Contains(got, "X-Sluice-Row-Count") {
+		t.Fatalf("Trailer declaration missing, got %q", got)
+	}
+	trailer := w.Result().Trailer
+	if got := trailer.Get("X-Sluice-Row-Count"); got != "1" {
+		t.Fatalf("X-Sluice-Row-Count trailer: got %q want 1", got)
+	}
+	if got := trailer.Get("X-Sluice-Truncated"); got != "false" {
+		t.Fatalf("X-Sluice-Truncated trailer: got %q want false", got)
+	}
+}
+
+func TestHandleQuery_CSVTrailerTruncated(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS trunc"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	trailer := w.Result().Trailer
+	if got := trailer.Get("X-Sluice-Truncated"); got != "true" {
+		t.Fatalf("X-Sluice-Truncated trailer: got %q want true", got)
+	}
+	if got := trailer.Get("X-Sluice-Row-Count"); got != "1" {
+		t.Fatalf("X-Sluice-Row-Count trailer: got %q want 1", got)
+	}
+}
+
+func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS trunc"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200: body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Truncated bool  `json:"truncated"`
+		RowCount  int64 `json:"row_count"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Truncated {
+		t.Fatalf("truncated: got false want true (stale-flag regression)")
+	}
+	if resp.RowCount != 1 {
+		t.Fatalf("row_count: got %d want 1", resp.RowCount)
 	}
 }
 

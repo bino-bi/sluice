@@ -111,6 +111,10 @@ type AuditConfig struct {
 	// cannot be durably enqueued. Default true — audit-first posture. Set
 	// to false to fall back to best-effort auditing (serve on audit drop).
 	FailClosed bool `mapstructure:"failClosed"`
+
+	// SQLSampleBytes caps the leading bytes of request SQL copied into
+	// each audit record's sql_sample. 0 disables sampling entirely.
+	SQLSampleBytes int `mapstructure:"sqlSampleBytes"`
 }
 
 // FileSinkConfig configures the append-only audit log file.
@@ -239,7 +243,8 @@ func DefaultServerConfig() ServerConfig {
 			Format: "json",
 		},
 		Audit: AuditConfig{
-			FailClosed: true,
+			FailClosed:     true,
+			SQLSampleBytes: 2048,
 		},
 		Limits: LimitsConfig{
 			MaxRows:         100_000,
@@ -352,6 +357,7 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("logging.format", d.Logging.Format)
 
 	v.SetDefault("audit.failClosed", d.Audit.FailClosed)
+	v.SetDefault("audit.sqlSampleBytes", d.Audit.SQLSampleBytes)
 	v.SetDefault("limits.maxRows", d.Limits.MaxRows)
 	v.SetDefault("limits.maxRowsCeiling", d.Limits.MaxRowsCeiling)
 	v.SetDefault("limits.maxSqlBytes", d.Limits.MaxSQLBytes)

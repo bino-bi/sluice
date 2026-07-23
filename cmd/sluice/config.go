@@ -38,14 +38,20 @@ manifest under <policy-dir>, surfacing all decoding or structural errors.
 Exit codes:
   0  success
   1  I/O error (file not readable, missing flags, etc.)
-  3  validation failure (one or more policy documents rejected)`,
+  3  validation failure (one or more policy documents rejected, or server
+     config setting controls this build cannot enforce)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
 			if serverPath != "" {
-				if _, err := config.LoadServer(serverPath, nil); err != nil {
+				scfg, err := config.LoadServer(serverPath, nil)
+				if err != nil {
 					return &exitError{Code: 1, Err: fmt.Errorf("server config: %w", err)}
+				}
+				if verr := scfg.Validate(); verr != nil {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), verr.Error())
+					return &exitError{Code: 3}
 				}
 				_, _ = fmt.Fprintf(out, "server config OK: %s\n", serverPath)
 			}

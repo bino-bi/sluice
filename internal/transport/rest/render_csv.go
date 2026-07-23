@@ -14,9 +14,13 @@ import (
 
 // renderCSV streams the result as RFC 4180 CSV with a header row. Row
 // count and truncation are not encoded in the body (CSV has no place for
-// them); callers get them via X-Sluice-Row-Count / X-Sluice-Truncated.
+// them); callers get them via the X-Sluice-Row-Count / X-Sluice-Truncated
+// HTTP trailers, declared before the first body write and set once the
+// stream is drained.
 func renderCSV(w http.ResponseWriter, res *queryservice.QueryResult) error {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Trailer", "X-Sluice-Row-Count, X-Sluice-Truncated")
+	flusher, _ := w.(http.Flusher)
 	writer := csv.NewWriter(w)
 
 	header := make([]string, len(res.Columns))
@@ -52,8 +56,9 @@ func renderCSV(w http.ResponseWriter, res *queryservice.QueryResult) error {
 		return err
 	}
 	w.Header().Set("X-Sluice-Row-Count", strconv.FormatInt(rowCount(res), 10))
-	if res.Truncated {
-		w.Header().Set("X-Sluice-Truncated", "true")
+	w.Header().Set("X-Sluice-Truncated", strconv.FormatBool(res.Truncated))
+	if flusher != nil {
+		flusher.Flush()
 	}
 	return nil
 }

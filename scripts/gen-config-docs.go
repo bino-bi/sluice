@@ -53,7 +53,8 @@ URI. The MVP providers are:
 - ` + "`secret://file/PATH`" + ` — read from a file (permission-checked; 0o022
   rejected, world-readable warned).
 
-Vault, AWS SM, and GCP SM land behind build tags in v0.3+.
+Vault, AWS SM, and GCP SM land behind build tags in v0.3+; until then those
+references are rejected at config validation / boot.
 
 ## Reference schema
 

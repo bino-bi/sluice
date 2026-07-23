@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
 
@@ -178,8 +179,14 @@ ORDER BY table_schema, table_name, ordinal_position
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
 	q := opts.Query
 	if q == "" {
-		// Pick any visible schema — sqlite's default is "main".
-		q = fmt.Sprintf("SELECT 1 FROM %s.sqlite_master LIMIT 1", d.name)
+		// Same probe every other driver uses: one row from DuckDB's
+		// catalog metadata iff the catalog is attached. The previous
+		// default (<name>.sqlite_master) was never exercised before the
+		// health sweep landed and fails under DuckDB, which exposes it
+		// only as <name>.main.sqlite_master — and an empty database
+		// would yield zero rows anyway.
+		q = fmt.Sprintf(`SELECT 1 FROM information_schema.schemata WHERE catalog_name = '%s' LIMIT 1`,
+			common.EscapeSQLString(d.name))
 	}
 	row := conn.QueryRowContext(ctx, q)
 	var one int

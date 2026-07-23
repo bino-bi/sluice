@@ -41,7 +41,7 @@ duckdb:
 datasources:
   directory: ./datasources.d   # examples keep DataSource manifests in policies.d
   failFast: true               # abort boot when a source fails to attach
-  reload: false                # declared; DataSource changes still need a restart
+  reload: false                # setting true is rejected at load; DataSource changes need a restart
 
 policies:
   directory: ./policies.d      # empty directory = valid = deny everything
@@ -53,6 +53,7 @@ policies:
 
 audit:
   failClosed: true             # refuse to serve unaudited queries
+  sqlSampleBytes: 2048         # sql_sample cap per record; 0 disables
   file:                        # unset = $TMPDIR/sluice-audit + loud warning
     path: /var/lib/sluice/audit
     rotateDaily: true
@@ -73,7 +74,7 @@ limits:
   queryTimeout: 30s
   maxQueryTimeout: 30s
   maxConcurrent: 100
-  disableCrossCatalog: false
+  disableCrossCatalog: false   # true rejects multi-catalog queries (ACL_REJECTED)
 
 cache:
   rewrite: {enabled: false, size: 4096, ttl: 60s}
@@ -85,7 +86,7 @@ approval:
   requestTtl: 15m
   grantTtl: 5m
   maxPending: 1000
-  sqlSampleBytes: 2048
+  sqlSampleBytes: 2048         # SQL text cap in webhook payloads; 0 disables
 
 budget:
   enabled: false
@@ -136,9 +137,11 @@ A `#fragment` suffix parses as a subfield selector for JSON-encoded
 secrets (e.g. `secret://vault/secret/data/pii#value`); the `env` and
 `file` providers return the whole value.
 
-!!! warning "Not yet implemented"
+!!! warning "Not yet implemented — rejected at parse"
     `secret://vault/...`, `secret://aws-sm/...`, and `secret://gcp-sm/...`
-    parse but cannot be resolved — only `env` and `file` are wired.
+    are **rejected** wherever a reference is parsed — `sluice config
+    validate` exits 3 for server-config fields, and boot/reload fails for
+    manifest refs. Only `env` and `file` resolve in this build.
 
 Where references are accepted:
 

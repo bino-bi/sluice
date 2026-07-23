@@ -40,7 +40,7 @@ func (s *Service) awaitApproval(
 		Subject:    approvalSubject(req.User),
 		SubjectKey: subjectKey,
 		SQLHash:    sqlHash,
-		SQLSample:  sqlSampleFor(req.SQL, s.opts.Limits.SQLSampleBytes),
+		SQLSample:  sqlSampleFor(req.SQL, s.opts.Limits.ApprovalSQLSampleBytes),
 		Reasons:    dec.Approval.Reasons,
 		Policies:   names,
 	})
@@ -162,9 +162,11 @@ func approvalSubject(u *identity.UserCtx) approval.Subject {
 	return approval.Subject{ID: u.Subject, Issuer: u.Issuer, Email: u.Email, Groups: u.Groups}
 }
 
+// sqlSampleFor truncates sql to limit bytes. Zero or negative means no
+// sample — the operator disabled it; there is no hidden fallback.
 func sqlSampleFor(sql string, limit int) string {
 	if limit <= 0 {
-		limit = 2048
+		return ""
 	}
 	if len(sql) <= limit {
 		return sql

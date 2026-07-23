@@ -9,6 +9,9 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Added
 
+- **Datasource health monitoring is real** — the health sweep now borrows a connection from the executor pool and runs each driver's `HealthCheck` (one immediate sweep at boot, then every `HealthInterval`, default 30 s). Previously the sweep was a placeholder with zero probe callers: `/v1/ready` returned 503 permanently once a DataSource was configured and MCP `list_catalogs` always reported `healthy:false`. Attach failures and unknown catalogs on the query path now return `ERR_DATASOURCE_UNAVAILABLE` (503) instead of `ERR_INTERNAL`.
+- **`audit.sqlSampleBytes`** (default `2048`) — audit records now carry a bounded `sql_sample`; it was always empty because the limit was never wired. Set `0` to disable sampling and restore the previous behavior.
+
 - **QueryRewritePolicy runtime** — `limit` (AST-level LIMIT injection/clamp), `sample` (DuckDB `USING SAMPLE` wrap), and `timeout` (executor override) are now enforced.
 - **Column-mask providers** — SQL-expression masks `partial`, `hash` (sha256), `regex`, `truncate`; post-query masks `fpe` (FF1), `jitter`, `fake`, and `hash` (hmac_sha256). New error code `ERR_MASK_UNSUPPORTED_CONTEXT` when a post-query-masked column is used in a predicate/expression.
 - **CEL** — policy `conditions`, CEL row-filter `expression`s (lowered to parameterised SQL), and CEL reject-rule `expression`s are evaluated (google/cel-go).
@@ -28,6 +31,8 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **Unenforceable configuration now fails at load** — `rest.tls.clientCA`/`clientAuth`, `admin.tls`, `datasources.reload`, AuditSink types `s3`/`postgres`/`syslog`/`otlp`, and `secret://vault|aws-sm|gcp-sm` references parsed but silently did nothing; they are now rejected with a "parsed but unimplemented" error naming the field (`sluice config validate` exits 3, `serve`/`mcp` refuse to start). Guards drop as each feature lands.
+- **Approval webhook SQL sampling honors `approval.sqlSampleBytes`** — the knob was never read; a hardcoded 2048-byte fallback always won. `0` now disables the sample instead of silently reverting to 2048.
 - **QueryRewritePolicy `hint` entries and out-of-subset CEL expressions now fail at policy load** (previously inert/rejected-as-unsupported).
 - FPE ships **FF1**, not the roadmap's FF3-1 (FF3 was broken in 2017; FF1 is NIST-preferred and dependency-free).
 - Embedded OPA adds ~17 MB to the binary; it is isolated behind the `PolicyEngine` interface.
@@ -35,6 +40,11 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **`limits.disableCrossCatalog` is enforced** — it parsed (and was documented as working) but had zero readers. Queries spanning more than one catalog are now rejected with `ERR_ACL_REJECTED` before policy evaluation and before the rewrite cache. Only three-part (`catalog.schema.table`) names carry a catalog — parity with the policy rule `size(query.catalogs) > 1`.
+- **CSV metadata delivered as HTTP trailers** — `X-Sluice-Row-Count`/`X-Sluice-Truncated` were set after the response body was committed, so clients never received them; they now arrive as declared trailers without breaking streaming.
+- **`truncated` was always `false`** in JSON response bodies and completion audit records: the executor flips its truncation flag during iteration, after the result envelope was built, and nothing synced it back.
+- **`rest.tls.certFile`/`keyFile` are wired** — bootstrap never passed them to the REST server, which always served plain HTTP despite the hardening docs instructing operators to set them.
+- **sqlitefile default health query** (`<catalog>.sqlite_master`) never resolved under DuckDB and would fail on an empty database; it now uses the same `information_schema.schemata` probe as every other driver. Latent until the health sweep landed — the probe had no callers.
 - `examples/multi-tenant/policies.d/filter-tenant.yaml` used a schema shape that never loaded (`predicate:` directly under `spec:`, lowercase `op: equals`); corrected to `spec.filter.predicate` with `op: Equals`.
 - Stale example READMEs (mask providers "landing in v0.2" that are shipped, four MCP tools instead of nine).
 

@@ -16,7 +16,7 @@ log a precondition for serving data, not an afterthought.
 | `timestamp`, `event_type`, `query_id` | When, what kind of event, and the id echoed to the client as `X-Query-Id` |
 | `subject` | `id`, `method` (jwt / api_key / admin_token / none), `issuer`, `email`, `groups`, `remote_ip` |
 | `origin` | Transport that carried the request: `rest`, `mcp`, or `admin` |
-| `sql_fingerprint`, `rewritten_fingerprint`, `sql_sample` | Fingerprints of the inbound and rewritten SQL, plus a bounded sample |
+| `sql_fingerprint`, `rewritten_fingerprint`, `sql_sample` | Fingerprints of the inbound and rewritten SQL, plus a bounded sample (`audit.sqlSampleBytes`, default 2048; `0` disables) |
 | `tables`, `catalogs` | Resources the statement touched |
 | `policies_applied`, `decision`, `error_code` | Which policies fired, the outcome (`allow`, `deny`, `reject`, `error`), and the error code if any |
 | `row_count`, `truncated`, `duration_ms` | Result metadata, only on the `query-result` record written when the stream closes |
@@ -138,11 +138,13 @@ spec:
   rotateSizeMB: 256
 ```
 
-!!! warning "Not yet implemented"
+!!! warning "Not yet implemented — rejected at load"
     Only `type: file` is implemented, and the running sink is wired from
-    `audit.file` in `sluice.yaml` — keep the two in sync. The `s3`,
-    `postgres`, `syslog`, and `otlp` sink types parse but do not write
-    anywhere yet.
+    `audit.file` in `sluice.yaml` — keep the two in sync. AuditSink
+    manifests declaring `s3`, `postgres`, `syslog`, or `otlp` **fail
+    validation** (`sluice config validate` exits 3, `sluice serve` refuses
+    to start) so nobody believes durable delivery is configured when it
+    is not.
 
 ## Retention without breaking the chain
 

@@ -95,6 +95,10 @@ type Registry struct {
 	sources  map[string]pkgds.DataSource
 	statuses map[string]*Status
 	order    []string // insertion order for deterministic iteration
+	// pool hands out probe connections for the health sweep; nil until
+	// the composition root calls SetPool (the executor is built after
+	// the Registry because it needs the AttachHook).
+	pool ConnProvider
 
 	// healthTicker can be nil when HealthInterval <= 0.
 	healthTicker *time.Ticker

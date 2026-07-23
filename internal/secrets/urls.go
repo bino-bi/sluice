@@ -14,11 +14,20 @@ import (
 // providers like vault/aws-sm for JSON-encoded secrets.
 type URI struct {
 	Scheme   string     // always "secret"
-	Provider string     // "env", "file", "vault", "aws-sm", "gcp-sm"
+	Provider string     // "env" or "file" (vault/aws-sm/gcp-sm reserved, rejected)
 	Path     string     // leading slash preserved for absolute-path semantics
 	Fragment string     // optional
 	Query    url.Values // optional
 	Raw      string     // original input
+}
+
+// unimplementedProviders are reserved by the URI grammar but have no
+// resolver in this build. Parse rejects them so misconfiguration fails at
+// load, not at first resolve. Remove entries as providers land.
+var unimplementedProviders = map[string]struct{}{
+	"vault":  {},
+	"aws-sm": {},
+	"gcp-sm": {},
 }
 
 // Parse accepts references in the canonical form documented on
@@ -27,9 +36,9 @@ type URI struct {
 //	secret://env/VAR_NAME
 //	secret://file//absolute/path                 (double slash: authority empty → file:///path)
 //	secret://file/rel/or/abs/path                (single slash: leading slash preserved in Path)
-//	secret://vault/secret/data/pii#value
-//	secret://aws-sm/prod/sluice/pii#salt
-//	secret://gcp-sm/projects/demo/secrets/pii/versions/latest
+//
+// The vault, aws-sm, and gcp-sm forms are reserved for later releases and
+// are rejected until their providers exist.
 func Parse(raw string) (URI, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -44,6 +53,10 @@ func Parse(raw string) (URI, error) {
 	}
 	if u.Host == "" {
 		return URI{}, fmt.Errorf("secrets: %q missing provider (expected secret://<provider>/...)", raw)
+	}
+	if _, ok := unimplementedProviders[u.Host]; ok {
+		return URI{}, fmt.Errorf(
+			"secrets: provider %q parsed but unimplemented — only env and file resolve in this build (docs/operations/server-config.md)", u.Host)
 	}
 
 	return URI{

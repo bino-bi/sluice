@@ -5,6 +5,7 @@ package queryservice_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -109,6 +111,9 @@ type fakeExecutor struct {
 	err       error
 	lastReq   executor.Request
 	execCount int
+	// truncateAfter > 0 stops iteration after that many rows and flips
+	// Response.Truncated mid-stream, like the real sqlRowIterator.
+	truncateAfter int
 }
 
 func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*executor.Response, error) {
@@ -118,21 +123,28 @@ func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*execut
 		return nil, e.err
 	}
 	rowCount := new(int64)
-	iter := &fakeIter{rows: e.rows, rowCount: rowCount}
+	iter := &fakeIter{rows: e.rows, rowCount: rowCount, truncateAfter: e.truncateAfter}
 	resp := &executor.Response{Columns: e.columns, Rows: iter, RowCount: rowCount}
+	iter.resp = resp
 	return resp, nil
 }
 
 type fakeIter struct {
-	rows     [][]any
-	rowCount *int64
-	idx      int
-	closed   bool
-	err      error
+	rows          [][]any
+	rowCount      *int64
+	idx           int
+	closed        bool
+	err           error
+	truncateAfter int
+	resp          *executor.Response
 }
 
 func (it *fakeIter) Next() bool {
 	if it.closed || it.idx >= len(it.rows) {
+		return false
+	}
+	if it.truncateAfter > 0 && it.idx >= it.truncateAfter {
+		it.resp.Truncated = true
 		return false
 	}
 	*it.rowCount++
@@ -432,6 +444,214 @@ func TestExecute_RejectEmitsOnce(t *testing.T) {
 	}
 	if a.all()[0].Decision != audit.DecisionReject {
 		t.Fatalf("expected reject decision in audit")
+	}
+}
+
+func TestExecute_AuditSQLSample(t *testing.T) {
+	sql := "SELECT id, name FROM pg.public.orders WHERE id = 42"
+	cases := []struct {
+		name        string
+		sampleBytes int
+		want        string
+	}{
+		{"capped", 16, sql[:16]},
+		{"disabled", 0, ""},
+		{"larger than sql", 4096, sql},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeAudit{}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}},
+				Audit:    a,
+				Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+				Limits:   queryservice.Limits{SQLSampleBytes: tc.sampleBytes},
+			})
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+				SQL:    sql,
+				Origin: queryservice.OriginREST,
+			})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			_ = res.Rows.Close()
+			recs := a.all()
+			if len(recs) == 0 {
+				t.Fatalf("no audit records")
+			}
+			if got := recs[0].SQLSample; got != tc.want {
+				t.Fatalf("sql_sample = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExecute_AttachErrorMapsToDataSourceUnavailable(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{err: fmt.Errorf("run: %w", executor.ErrAttach)},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeDataSourceUnavailable {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeDataSourceUnavailable)
+	}
+}
+
+func TestExecute_UnknownCatalogMapsToDataSourceUnavailable(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{err: fmt.Errorf("resolve: %w", schema.ErrUnknownCatalog)},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeDataSourceUnavailable {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeDataSourceUnavailable)
+	}
+}
+
+func TestAuditedRows_TruncatedSyncs(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{
+			columns:       []executor.ColumnInfo{{Name: "id"}},
+			rows:          [][]any{{int64(1)}, {int64(2)}, {int64(3)}},
+			truncateAfter: 2,
+		},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Truncated {
+		t.Fatalf("Truncated must be false before iteration")
+	}
+	for res.Rows.Next() {
+		var id any
+		if err := res.Rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+	}
+	if !res.Truncated {
+		t.Fatalf("Truncated not synced onto QueryResult after stream end")
+	}
+	if err := res.Rows.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	recs := a.all()
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 audit records, got %d", len(recs))
+	}
+	if !recs[1].Truncated {
+		t.Fatalf("completion audit record must carry Truncated=true")
+	}
+}
+
+func TestExecute_CrossCatalogGate(t *testing.T) {
+	twoCatalogs := []parser.TableRef{
+		{Catalog: "pg", Schema: "public", Table: "orders"},
+		{Catalog: "ref", Schema: "public", Table: "regions"},
+	}
+	oneCatalog := []parser.TableRef{
+		{Catalog: "pg", Schema: "public", Table: "orders"},
+		{Catalog: "pg", Schema: "public", Table: "customers"},
+	}
+	// Two-part names carry no catalog; the gate cannot see them (parity
+	// with the policy rule size(query.catalogs) > 1).
+	twoPart := []parser.TableRef{
+		{Schema: "sales", Table: "orders"},
+		{Schema: "crm", Table: "contacts"},
+	}
+
+	cases := []struct {
+		name    string
+		disable bool
+		tables  []parser.TableRef
+		reject  bool
+	}{
+		{"two catalogs, flag on", true, twoCatalogs, true},
+		{"one catalog, flag on", true, oneCatalog, false},
+		{"two catalogs, flag off", false, twoCatalogs, false},
+		{"two-part names, flag on", true, twoPart, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeAudit{}
+			ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{ast: &fakeAST{tables: tc.tables, stmt: parser.StmtSelect, fingerprint: "fp-in"}},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: ex,
+				Audit:    a,
+				Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+				Limits:   queryservice.Limits{DisableCrossCatalog: tc.disable},
+			})
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+				SQL:    "SELECT 1",
+				Origin: queryservice.OriginREST,
+			})
+			if !tc.reject {
+				if err != nil {
+					t.Fatalf("execute: %v", err)
+				}
+				_ = res.Rows.Close()
+				if ex.execCount != 1 {
+					t.Fatalf("execCount = %d, want 1", ex.execCount)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected cross-catalog reject")
+			}
+			ae := pkgerr.FromError(err)
+			if ae.Code != pkgerr.CodeACLRejected {
+				t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeACLRejected)
+			}
+			if ex.execCount != 0 {
+				t.Fatalf("executor must not run on reject, got %d calls", ex.execCount)
+			}
+			recs := a.all()
+			if len(recs) != 1 {
+				t.Fatalf("reject must emit exactly 1 audit record, got %d", len(recs))
+			}
+			if recs[0].Decision != audit.DecisionReject {
+				t.Fatalf("decision = %s, want reject", recs[0].Decision)
+			}
+			if recs[0].Message == "" {
+				t.Fatalf("reject audit record must carry a message")
+			}
+		})
 	}
 }
 

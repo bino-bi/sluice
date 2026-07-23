@@ -13,6 +13,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -100,6 +101,21 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	rec := s.buildAuditBase(req, qid, tables)
 	if ast != nil {
 		rec.SQLFingerprint = ast.Fingerprint()
+	}
+
+	// 1b. Cross-catalog gate. Runs before the rewrite cache and policy so
+	// a memoised Allow cannot bypass it. Only three-part
+	// (catalog.schema.table) names carry a catalog, matching the policy
+	// rule size(query.catalogs) > 1.
+	if s.opts.Limits.DisableCrossCatalog {
+		if cats := catalogsFromTables(tables); len(cats) > 1 {
+			rec.Decision = audit.DecisionReject
+			rec.Message = "cross-catalog queries are disabled (limits.disableCrossCatalog)"
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).
+				WithMessage("cross-catalog queries are disabled (limits.disableCrossCatalog)")
+		}
 	}
 
 	// 2. Policy evaluation + rewrite, memoised when the cache is enabled.
@@ -306,11 +322,12 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		DurationMs: 0,
 	}
 	ar := &auditedRows{
-		inner:  resp.Rows,
-		svc:    s,
-		qid:    qid,
-		start:  start,
-		parent: qr,
+		inner:    resp.Rows,
+		svc:      s,
+		qid:      qid,
+		start:    start,
+		parent:   qr,
+		truncSrc: &resp.Truncated,
 	}
 	// Budget usage: capture the execute duration now (excludes client
 	// streaming so a slow reader does not burn budget); rows are known at
@@ -429,6 +446,8 @@ func toAPIError(err error, qid string) error {
 		return pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrReject):
 		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
+	case stderrors.Is(err, schema.ErrUnknownCatalog):
+		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }
@@ -459,6 +478,8 @@ func execErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeCanceled, err).WithQueryID(qid)
 	case stderrors.Is(err, context.DeadlineExceeded):
 		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
+	case stderrors.Is(err, executor.ErrAttach):
+		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }
