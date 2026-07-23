@@ -62,23 +62,26 @@ type DecisionResult struct {
 	AlreadyDecided bool
 }
 
-// request is the internal, mutable record. Tokens never leave the broker.
+// request is the internal, mutable record. Capability tokens are held
+// (and persisted) only as SHA-256 hex — the plaintext exists in Require
+// locals just long enough to build the notification URLs, so neither
+// process memory nor the store can mint a working link afterwards.
 type request struct {
-	id          string
-	subjectKey  string
-	subject     Subject
-	sqlHash     string
-	sqlSample   string
-	reasons     []string
-	policies    []string
-	acceptToken string
-	rejectToken string
-	state       State
-	createdAt   time.Time
-	expiresAt   time.Time
-	decidedAt   time.Time
-	approverIP  string
-	done        chan struct{} // closed exactly once when decided or expired
+	id             string
+	subjectKey     string
+	subject        Subject
+	sqlHash        string
+	sqlSample      string
+	reasons        []string
+	policies       []string
+	acceptTokenSHA string
+	rejectTokenSHA string
+	state          State
+	createdAt      time.Time
+	expiresAt      time.Time
+	decidedAt      time.Time
+	approverIP     string
+	done           chan struct{} // closed exactly once when decided or expired
 }
 
 func (r *request) view() View {

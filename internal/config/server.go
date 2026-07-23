@@ -231,6 +231,13 @@ type ApprovalConfig struct {
 	GrantTTL       time.Duration     `mapstructure:"grantTtl"`       // approved-grant lifetime
 	MaxPending     int               `mapstructure:"maxPending"`     // cap on concurrent pending requests
 	SQLSampleBytes int               `mapstructure:"sqlSampleBytes"` // webhook SQL payload cap
+
+	// Persist stores pending requests and unconsumed grants in SQLite
+	// under StateDir so approvals survive a restart. Default false
+	// (in-memory, dev posture). A store that cannot open fails startup —
+	// silently degrading to memory-only would be worse.
+	Persist  bool   `mapstructure:"persist"`
+	StateDir string `mapstructure:"stateDir"` // default "./state" (shared with budget)
 }
 
 // ApprovalWebhook is one outbound approval target. HeadersRef is a
@@ -328,6 +335,8 @@ func DefaultServerConfig() ServerConfig {
 			GrantTTL:       5 * time.Minute,
 			MaxPending:     1000,
 			SQLSampleBytes: 2048,
+			Persist:        false,
+			StateDir:       "./state",
 		},
 		Budget: BudgetConfig{
 			Enabled:       false,
@@ -447,6 +456,8 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("approval.grantTtl", d.Approval.GrantTTL)
 	v.SetDefault("approval.maxPending", d.Approval.MaxPending)
 	v.SetDefault("approval.sqlSampleBytes", d.Approval.SQLSampleBytes)
+	v.SetDefault("approval.persist", d.Approval.Persist)
+	v.SetDefault("approval.stateDir", d.Approval.StateDir)
 
 	v.SetDefault("budget.enabled", d.Budget.Enabled)
 	v.SetDefault("budget.stateDir", d.Budget.StateDir)

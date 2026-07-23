@@ -42,8 +42,9 @@ For the observation period, an auditor will typically accept:
     - **No published signed releases yet** — the pipeline signs with
       cosign and attaches SBOMs, but until a release ships, evidence
       the deployed git commit and your own build process instead.
-    - **In-memory approval broker** — approval decisions are audited,
-      but pending state does not survive a restart and is
-      single-instance.
+    - **Single-instance approval broker** — approval decisions are
+      audited and pending state survives restarts when
+      `approval.persist: true` is set, but the broker is not replicated
+      across instances.
     - **No built-in reporting** — Sluice emits raw JSONL and metrics;
       dashboards and periodic control reports are yours to build.

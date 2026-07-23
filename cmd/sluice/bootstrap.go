@@ -481,6 +481,10 @@ func (d *runtimeDeps) Close(ctx context.Context) {
 		// Final flush so the last window of usage is persisted.
 		_ = d.budget.Close(ctx)
 	}
+	if d.approvals != nil {
+		// Before the dispatcher: the broker's auditor writes through it.
+		_ = d.approvals.Close(ctx)
+	}
 	if d.auditDisp != nil {
 		_ = d.auditDisp.Close(ctx)
 	}

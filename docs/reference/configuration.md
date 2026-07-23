@@ -85,6 +85,8 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `approval.grantTtl` | `Duration` | `5m0s` | `SLUICE_APPROVAL__GRANTTTL` |
 | `approval.maxPending` | `int` | `1000` | `SLUICE_APPROVAL__MAXPENDING` |
 | `approval.sqlSampleBytes` | `int` | `2048` | `SLUICE_APPROVAL__SQLSAMPLEBYTES` |
+| `approval.persist` | `bool` | `false` | `SLUICE_APPROVAL__PERSIST` |
+| `approval.stateDir` | `string` | `./state` | `SLUICE_APPROVAL__STATEDIR` |
 | `budget.enabled` | `bool` | `false` | `SLUICE_BUDGET__ENABLED` |
 | `budget.stateDir` | `string` | `./state` | `SLUICE_BUDGET__STATEDIR` |
 | `budget.flushInterval` | `Duration` | `5s` | `SLUICE_BUDGET__FLUSHINTERVAL` |

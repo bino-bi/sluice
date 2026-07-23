@@ -34,9 +34,10 @@ an engineering-level map, not evidence.
       up to sign binaries with cosign and attach CycloneDX SBOMs, but
       no release has been published yet — build from source and record
       the git commit you deployed.
-    - **Single-instance approval broker.** Approval state is in-memory;
-      a restart drops pending requests. Do not base a control on
-      approval-state durability.
+    - **Single-instance approval broker.** Approval state is not
+      replicated across instances. Durability across restarts is opt-in
+      (`approval.persist: true`, SQLite-backed); without it a restart
+      drops pending requests.
     - **No OTel tracing.** Observability is structured logs plus
       Prometheus metrics on the admin listener; see
       [observability](../operations/observability.md).
