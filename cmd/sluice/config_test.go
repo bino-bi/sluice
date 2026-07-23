@@ -93,6 +93,77 @@ func TestConfigValidate_UnenforceableServerConfig_ExitCode3(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_MCPStdioWithoutCredential_ExitCode3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(path, []byte("mcp:\n  enabled: true\n  transport: stdio\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"config", "validate", "--config", path})
+
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for stdio without credential")
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("want *exitError, got %T: %v", err, err)
+	}
+	if exit.Code != 3 {
+		t.Fatalf("exit code = %d, want 3", exit.Code)
+	}
+	if !strings.Contains(errOut.String(), "mcp.tokenRef") {
+		t.Fatalf("stderr must name the fix, got: %q", errOut.String())
+	}
+}
+
+func TestConfigValidate_ApprovalPoliciesWithoutBaseURL_ExitCode3(t *testing.T) {
+	dir := t.TempDir()
+	policy := `apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata: { name: approve-x, priority: 100 }
+spec:
+  match:
+    any:
+      - resources: { tables: [people] }
+  reason: "needs sign-off"
+`
+	if err := os.WriteFile(filepath.Join(dir, "approval.yaml"), []byte(policy), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(cfgPath, []byte("logging:\n  level: info\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"config", "validate", "--config", cfgPath, dir})
+
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for ApprovalPolicies without publicBaseUrl")
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("want *exitError, got %T: %v", err, err)
+	}
+	if exit.Code != 3 {
+		t.Fatalf("exit code = %d, want 3", exit.Code)
+	}
+	if !strings.Contains(errOut.String(), "approval.publicBaseUrl") {
+		t.Fatalf("stderr must name the field, got: %q", errOut.String())
+	}
+}
+
 func TestConfigValidate_BadServerConfig_ExitCode1(t *testing.T) {
 	root := newRootCmd()
 	root.SetArgs([]string{"config", "validate", "--config", "/tmp/sluice-no-such-file.yaml"})

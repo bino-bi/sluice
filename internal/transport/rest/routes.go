@@ -29,7 +29,10 @@ func (s *Server) routes() http.Handler {
 		Identifier: s.deps.Identifier,
 		Logger:     s.lg,
 	})
-	mux.Handle("POST /v1/query", authMW(http.HandlerFunc(s.handleQuery)))
+	// The transport-level rate buckets run before identity so a flood
+	// cannot exhaust JWKS fetches / key hashing; health and approval
+	// capability endpoints stay unlimited (probes must not 429).
+	mux.Handle("POST /v1/query", s.rateLimitMW(authMW(http.HandlerFunc(s.handleQuery))))
 
 	// Approval capability endpoints. Accept/reject are PUBLIC — the
 	// capability token in the request IS the authorisation, so no identity

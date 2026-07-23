@@ -33,14 +33,14 @@ A leaf predicate is `column` + `op` + a value set. Operators are **PascalCase**:
 | `In` / `NotIn` | `values` (1 or more) | `col IN ($1, …)` / `col NOT IN ($1, …)` |
 | `Like` / `NotLike` | `value` | `col ~~ $1` / `col !~~ $1` (SQL `LIKE` / `NOT LIKE`) |
 | `IsNull` / `IsNotNull` | nothing | `col IS NULL` / `col IS NOT NULL` |
-| `Matches`, `StartsWith`, `EndsWith` | `value` | see warning below |
+| `StartsWith` / `EndsWith` | `value` | `starts_with(col, $1)` / `ends_with(col, $1)` |
+| `Contains` | `value` | `contains(col, $1)` |
+| `Matches` | `value` | `regexp_matches(col, $1)` |
 
-!!! warning "Three operators do not execute yet"
-    `Matches`, `StartsWith`, and `EndsWith` are accepted by `sluice policy validate`, but the
-    rewriter cannot emit SQL for them yet: a query that triggers such a filter fails with
-    `ERR_UNSUPPORTED_SYNTAX`. This fails closed — rows are never returned unfiltered — but the
-    query breaks. Until they land, use `Like` (`value: "eu-%"`), or the CEL variant's
-    `startsWith`/`endsWith`, which compile down to `Like`.
+`StartsWith`, `EndsWith`, and `Contains` compare **literally** — `%`, `_`, and `\` in the value
+match themselves, so user-supplied prefixes need no escaping. Only `Like`/`NotLike` interpret
+pattern metacharacters. `Matches` uses regular-expression **partial-match** semantics: the filter
+keeps a row when the pattern matches anywhere in the value; anchor with `^…$` for a full match.
 
 Internal nodes nest arbitrarily via `all` (AND), `any` (OR), and `not`:
 
@@ -110,8 +110,9 @@ filter:
 
 The supported subset: `row.<col>` compared with `== != < <= > >=` against a literal or a
 `subject.*`/`request.*` reference; `&& || !`; `row.<col> in [literals]`; and
-`row.<col>.startsWith/endsWith/contains("literal")` (lowered to `Like` with the literal escaped).
-Arithmetic, function calls, macros, `query.*` references, and dynamic string-match arguments are
+`row.<col>.startsWith/endsWith/contains("literal")` (lowered to the `StartsWith`/`EndsWith`/
+`Contains` operators above — literal comparison, no pattern escaping involved). Arithmetic,
+function calls, macros, `query.*` references, and dynamic string-match arguments are
 rejected at load. CEL never renders SQL text — it lowers into the same predicate tree, so
 parameter binding and the missing-variable deny apply identically.
 

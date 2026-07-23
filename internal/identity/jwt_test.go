@@ -287,6 +287,72 @@ func TestJWTHMACPath(t *testing.T) {
 	}
 }
 
+func TestJWTSetHMACSecrets(t *testing.T) {
+	secretA := []byte("secret-a-32-bytes-padded-value!!!")
+	secretB := []byte("secret-b-32-bytes-padded-value!!!")
+	issuer := "https://hmac-rotate.example"
+
+	binding := apitypes.SubjectBinding{
+		Metadata: apitypes.ObjectMeta{Name: "hmac"},
+		Spec: apitypes.SubjectBindingSpec{
+			Issuer:   issuer,
+			Audience: "sluice-hmac",
+			Claims:   apitypes.ClaimPaths{SubjectID: "sub"},
+		},
+	}
+	reg, err := identity.NewBindingRegistry([]apitypes.SubjectBinding{binding})
+	if err != nil {
+		t.Fatalf("reg: %v", err)
+	}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	v, err := identity.NewJWTIdentifier(identity.JWTOptions{
+		Bindings:    reg,
+		HMACSecrets: map[string][]byte{issuer: secretA},
+		Clock:       func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+
+	mint := func(secret []byte) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"iss": issuer,
+			"aud": "sluice-hmac",
+			"sub": "bob",
+			"iat": now.Unix(),
+			"exp": now.Add(10 * time.Minute).Unix(),
+		})
+		raw, err := tok.SignedString(secret)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return raw
+	}
+	identify := func(raw string) error {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+raw)
+		_, err := v.Identify(context.Background(), r)
+		return err
+	}
+
+	if err := identify(mint(secretA)); err != nil {
+		t.Fatalf("token under secret A must verify before rotation: %v", err)
+	}
+
+	v.SetHMACSecrets(map[string][]byte{issuer: secretB})
+	if err := identify(mint(secretA)); err == nil {
+		t.Fatal("token under secret A must fail after rotation")
+	}
+	if err := identify(mint(secretB)); err != nil {
+		t.Fatalf("token under secret B must verify after rotation: %v", err)
+	}
+
+	v.SetHMACSecrets(nil)
+	if err := identify(mint(secretB)); err == nil {
+		t.Fatal("HS token must fail once secrets are cleared")
+	}
+}
+
 func TestJWTAudienceArrayClaim(t *testing.T) {
 	f := newJWTFixture(t)
 	raw := f.mint(t, func(c *jwt.MapClaims) {

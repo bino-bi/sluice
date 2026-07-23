@@ -306,8 +306,26 @@ func (s *state) renderBinary(col *pg.Node, op string, values []*pg.Node) (*pg.No
 		return inExpr(col, values, true), nil
 	case "Between":
 		return betweenExpr(col, values[0], values[1], false), nil
+	case "StartsWith":
+		return funcExpr("starts_with", col, values[0]), nil
+	case "EndsWith":
+		return funcExpr("ends_with", col, values[0]), nil
+	case "Contains":
+		return funcExpr("contains", col, values[0]), nil
+	case "Matches":
+		// Partial-match semantics (DuckDB regexp_matches); anchor with ^…$
+		// for a full match. DuckDB's ~ operator is a full match and must
+		// not be used here.
+		return funcExpr("regexp_matches", col, values[0]), nil
 	}
 	return nil, fmt.Errorf("%w: unsupported predicate op %q", ErrUnsupportedSyntax, op)
+}
+
+// funcExpr renders a plain function call. String operators render as
+// DuckDB functions rather than LIKE patterns so parameter values stay
+// literal — no pattern-metacharacter escaping anywhere.
+func funcExpr(name string, args ...*pg.Node) *pg.Node {
+	return pg.MakeFuncCallNode([]*pg.Node{pg.MakeStrNode(name)}, args, -1)
 }
 
 func opExpr(l *pg.Node, op string, r *pg.Node) *pg.Node {

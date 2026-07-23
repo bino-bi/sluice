@@ -80,6 +80,103 @@ func TestServerConfigValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "syslog sink without address rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.Syslog = &SyslogSinkConfig{Network: "tcp"}
+			},
+			wantErr: []string{"audit.syslog.address"},
+		},
+		{
+			name: "syslog sink with bad network rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.Syslog = &SyslogSinkConfig{Address: "localhost:514", Network: "sctp"}
+			},
+			wantErr: []string{"audit.syslog.network"},
+		},
+		{
+			name: "syslog sink valid",
+			mutate: func(c *ServerConfig) {
+				c.Audit.Syslog = &SyslogSinkConfig{Address: "localhost:514"}
+			},
+		},
+		{
+			name: "s3 sink without bucket rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.S3 = &S3SinkConfig{}
+			},
+			wantErr: []string{"audit.s3.bucket"},
+		},
+		{
+			name: "s3 objectLock without retention rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.S3 = &S3SinkConfig{Bucket: "b", ObjectLock: "compliance"}
+			},
+			wantErr: []string{"audit.s3.retentionDays"},
+		},
+		{
+			name: "s3 bad objectLock mode rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.S3 = &S3SinkConfig{Bucket: "b", ObjectLock: "worm", RetentionDays: 30}
+			},
+			wantErr: []string{"audit.s3.objectLock"},
+		},
+		{
+			name: "s3 vault credentialsRef rejected",
+			mutate: func(c *ServerConfig) {
+				c.Audit.S3 = &S3SinkConfig{Bucket: "b", CredentialsRef: "secret://vault/creds"}
+			},
+			wantErr: []string{"audit.s3.credentialsRef"},
+		},
+		{
+			name: "s3 sink valid with lock",
+			mutate: func(c *ServerConfig) {
+				c.Audit.S3 = &S3SinkConfig{Bucket: "b", ObjectLock: "governance", RetentionDays: 90}
+			},
+		},
+		{
+			name: "mcp stdio without credential rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+			},
+			wantErr: []string{"mcp.enabled with transport=stdio", "mcp.tokenRef"},
+		},
+		{
+			name: "mcp stdio with tokenRef is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "stdio"
+				c.MCP.TokenRef = "secret://env/MCP_TOKEN"
+			},
+		},
+		{
+			name: "mcp stdio with allowAnonymous is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.AllowAnonymous = true
+			},
+		},
+		{
+			name: "mcp streamable_http without credential is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "streamable_http"
+			},
+		},
+		{
+			name: "mcp disabled needs nothing",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Transport = "stdio"
+			},
+		},
+		{
+			name: "mcp vault tokenRef rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.TokenRef = "secret://vault/token"
+			},
+			wantErr: []string{"mcp.tokenRef", "parsed but unimplemented"},
+		},
+		{
 			name: "multiple violations all reported",
 			mutate: func(c *ServerConfig) {
 				c.Admin.TLS = &TLSConfig{}

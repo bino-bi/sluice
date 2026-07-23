@@ -55,7 +55,7 @@ and `predicates` are OR'd — any hit triggers:
 
 ## Broker semantics
 
-Requests live in an in-memory state machine with five states: `pending`, `approved`,
+Requests live in a state machine with five states: `pending`, `approved`,
 `rejected`, `expired`, `consumed`.
 
 - **Dedup** — a second identical query (same subject + same SQL hash) while a request is pending
@@ -68,9 +68,18 @@ Requests live in an in-memory state machine with five states: `pending`, `approv
   verb after a decision is a `409` conflict.
 - **Capacity** — at `maxPending` (1000) new requests are refused, fail-closed.
 
-!!! warning "Single instance, in-memory state"
-    A restart drops all pending requests and grants — callers simply re-submit. Approvals are not
-    replicated across instances. Every lifecycle transition is written to the
+By default the state machine is in-memory: a restart drops pending requests and grants, and
+callers simply re-submit. Set `approval.persist: true` and pending requests, unconsumed grants,
+and their capability links survive a restart — the state lands in an SQLite file under
+`approval.stateDir` with the tokens stored only as SHA-256 hashes, so the database (and its
+backups) cannot mint a working link. Grants stay single-use across the restart boundary, no
+webhook re-fires for restored requests, and requests that expired while the process was down
+expire normally on the next tick. An in-flight *synchronous* wait does not survive the restart —
+the caller's `syncWait` simply passes and the usual 202-then-poll flow takes over.
+
+!!! warning "Single instance"
+    Approvals are not replicated: with or without persistence, run one gateway instance per
+    approval domain. Every lifecycle transition is written to the
     [audit trail](../security/audit.md) as `approval-requested/approved/rejected/expired` events.
 
 ## Server configuration
@@ -84,6 +93,8 @@ approval:
   grantTtl: 5m           # how long an unclaimed grant lives after accept
   maxPending: 1000       # cap on concurrent pending requests
   sqlSampleBytes: 2048   # cap on the SQL text carried in the webhook; 0 sends no SQL
+  persist: false         # true: pending requests + grants survive restarts (SQLite)
+  stateDir: ./state      # where approvals.db lives when persist is on
   webhooks:
     - url: https://hooks.example.com/sluice
       headersRef: secret://env/APPROVAL_WEBHOOK_HEADERS  # JSON header map: {"Authorization":"Bearer …"}

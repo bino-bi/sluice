@@ -124,7 +124,7 @@ func compilePredicate(p *apitypes.Predicate) (*CompiledPredicate, error) {
 		apitypes.PredOpLessThan, apitypes.PredOpLessThanOrEqual,
 		apitypes.PredOpLike, apitypes.PredOpNotLike,
 		apitypes.PredOpMatches, apitypes.PredOpStartsWith,
-		apitypes.PredOpEndsWith:
+		apitypes.PredOpEndsWith, apitypes.PredOpContains:
 		if p.Value == nil {
 			return nil, fmt.Errorf("predicate %q %s: value is required", p.Column, p.Op)
 		}

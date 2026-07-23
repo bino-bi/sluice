@@ -134,8 +134,8 @@ kind: AuditSink
 metadata:
   name: siem
 spec:
-  type: s3
-  bucket: audit-bucket
+  type: postgres
+  connection: postgres://audit
 `))
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
@@ -146,6 +146,29 @@ spec:
 	}
 	if !strings.Contains(ve.Reason, "parsed but unimplemented") {
 		t.Errorf("Reason = %q, want parsed-but-unimplemented", ve.Reason)
+	}
+}
+
+func TestDecodeRejectsServerConfigAuditSinkManifest(t *testing.T) {
+	t.Parallel()
+	_, err := Decode(strings.NewReader(`
+apiVersion: sluice.bino.bi/v1alpha1
+kind: AuditSink
+metadata:
+  name: siem
+spec:
+  type: s3
+  bucket: audit-bucket
+`))
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T: %v", err, err)
+	}
+	if ve.Field != "spec.type" {
+		t.Errorf("Field = %q, want spec.type", ve.Field)
+	}
+	if !strings.Contains(ve.Reason, "audit.s3 in sluice.yaml") {
+		t.Errorf("Reason = %q, want pointer to server config", ve.Reason)
 	}
 }
 

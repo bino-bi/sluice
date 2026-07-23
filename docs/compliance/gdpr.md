@@ -38,10 +38,11 @@ register, together with the gaps below.
 ## Gaps
 
 !!! warning "What Sluice does not do"
-    - **File-only audit sink.** Only the `file` AuditSink type works
-      today (`s3`, `postgres`, `syslog`, `otlp` parse but are not
-      implemented). Shipping audit files to long-term, access-controlled
-      storage is your pipeline's job.
+    - **`postgres` and `otlp` audit sinks are not implemented.** Syslog
+      forwarding and S3 archival (optionally under Object Lock) are
+      built in via the `audit.*` server config; they are best-effort —
+      long-term retention guarantees rest on the hash-chained file sink
+      and your handling of its files.
     - **No built-in DSR tooling.** Sluice has no "find/export/erase all
       data about person X" function — neither for the upstream databases
       nor for its own audit files.

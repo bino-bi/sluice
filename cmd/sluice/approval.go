@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/approval"
@@ -49,14 +50,35 @@ func buildApprovalBroker(
 	}
 	notifier := approval.NewWebhookNotifier(baseURL, targets, log)
 
-	broker := approval.New(approval.Options{
+	// Persistence is opt-in and fail-closed: a store that cannot open
+	// aborts boot rather than silently degrading to memory-only.
+	var store approval.Store
+	if scfg.Approval.Persist {
+		dir := scfg.Approval.StateDir
+		if dir == "" {
+			dir = "./state"
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("approval state dir: %w", err)
+		}
+		store, err = approval.NewSQLiteStore(filepath.Join(dir, "approvals.db"), log)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	broker, err := approval.New(approval.Options{
 		Logger:     log,
 		Notifier:   notifier,
 		Auditor:    &approvalAuditor{disp: auditDisp, origin: hostname()},
+		Store:      store,
 		RequestTTL: scfg.Approval.RequestTTL,
 		GrantTTL:   scfg.Approval.GrantTTL,
 		MaxPending: scfg.Approval.MaxPending,
 	})
+	if err != nil {
+		return nil, err
+	}
 	return broker, nil
 }
 

@@ -46,6 +46,20 @@ type MCPConfig struct {
 	Transport      string        `mapstructure:"transport"` // "stdio" | "streamable_http"
 	Listen         string        `mapstructure:"listen"`
 	SessionIdleMax time.Duration `mapstructure:"sessionIdleMax"`
+
+	// TokenRef is a secret:// reference to a static JWT bearer token that
+	// pins the identity of the serve-embedded stdio transport. Resolved
+	// once at boot through the same identity pipeline as the HTTP
+	// transports.
+	TokenRef string `mapstructure:"tokenRef"`
+	// APIKeyRef is a secret:// reference to a static API key
+	// ("<id>.<secret>") used the same way. When both are set, the JWT is
+	// tried first.
+	APIKeyRef string `mapstructure:"apiKeyRef"`
+	// AllowAnonymous lets the MCP transport run without a credential:
+	// stdio pins the anonymous subject; streamable_http admits
+	// credential-less requests as anonymous instead of rejecting with 401.
+	AllowAnonymous bool `mapstructure:"allowAnonymous"`
 }
 
 // AdminConfig configures the admin transport (metrics, reload, health).
@@ -103,9 +117,13 @@ type RebacConfig struct {
 	CacheSize int           `mapstructure:"cacheSize"`
 }
 
-// AuditConfig selects audit sinks. MVP ships file only; richer sinks land in v1.
+// AuditConfig selects audit sinks. The file sink is the durable,
+// hash-chained record; syslog and s3 are best-effort secondary sinks that
+// receive every record but never gate a query.
 type AuditConfig struct {
-	File *FileSinkConfig `mapstructure:"file"`
+	File   *FileSinkConfig   `mapstructure:"file"`
+	Syslog *SyslogSinkConfig `mapstructure:"syslog"` // nil = disabled
+	S3     *S3SinkConfig     `mapstructure:"s3"`     // nil = disabled
 
 	// FailClosed refuses to serve a query when its access audit record
 	// cannot be durably enqueued. Default true — audit-first posture. Set
@@ -125,6 +143,33 @@ type FileSinkConfig struct {
 	Genesis      string `mapstructure:"genesis"` // secret:// ref
 }
 
+// SyslogSinkConfig forwards each audit record to a syslog daemon
+// (RFC 5424; octet-counted on stream transports). Fire-and-forget: the
+// file sink remains the durable record.
+type SyslogSinkConfig struct {
+	Network  string `mapstructure:"network"`  // udp (default) | tcp | unix | unixgram
+	Address  string `mapstructure:"address"`  // host:port or socket path; required
+	Facility string `mapstructure:"facility"` // local0..local7, daemon, auth, ...; default local0
+	Tag      string `mapstructure:"tag"`      // RFC 5424 APP-NAME; default "sluice"
+}
+
+// S3SinkConfig batches audit records into newline-delimited JSON objects
+// in an S3(-compatible) bucket, optionally under Object Lock retention.
+type S3SinkConfig struct {
+	Endpoint       string        `mapstructure:"endpoint"` // default s3.amazonaws.com
+	Bucket         string        `mapstructure:"bucket"`   // required
+	Prefix         string        `mapstructure:"prefix"`   // default "audit/"
+	Region         string        `mapstructure:"region"`
+	Insecure       bool          `mapstructure:"insecure"`       // plain HTTP (dev / MinIO)
+	ForcePathStyle bool          `mapstructure:"forcePathStyle"` // path-style addressing (MinIO)
+	ObjectLock     string        `mapstructure:"objectLock"`     // "" | governance | compliance
+	RetentionDays  int           `mapstructure:"retentionDays"`  // required when objectLock is set
+	CredentialsRef string        `mapstructure:"credentialsRef"` // secret:// JSON; empty = env/IAM chain
+	UploadInterval time.Duration `mapstructure:"uploadInterval"` // default 30s
+	UploadBytes    int           `mapstructure:"uploadBytes"`    // default 1 MiB
+	MaxBufferBytes int           `mapstructure:"maxBufferBytes"` // default 8 MiB
+}
+
 // LoggingConfig controls slog output.
 type LoggingConfig struct {
 	Level  string `mapstructure:"level"`  // debug/info/warn/error
@@ -137,7 +182,13 @@ type IdentityConfig struct {
 	APIKeyPepper string `mapstructure:"apiKeyPepper"` // secret:// ref
 }
 
-// LimitsConfig bundles request-size / concurrency / cross-catalog switches.
+// LimitsConfig bundles request-size / concurrency / rate / cross-catalog
+// switches. The rate fields are token buckets: RPS refills, Burst caps.
+// GlobalRPS bounds all /v1/query traffic before identity resolution;
+// PerIPRPS adds a per-remote-IP bucket on the same path (off by default —
+// behind a load balancer every request shares the LB's address);
+// DefaultSubjectRPS applies to authenticated subjects whose binding has no
+// explicit rateLimit. Zero RPS disables the respective bucket.
 type LimitsConfig struct {
 	MaxRows             int64         `mapstructure:"maxRows"`
 	MaxRowsCeiling      int64         `mapstructure:"maxRowsCeiling"`
@@ -146,6 +197,13 @@ type LimitsConfig struct {
 	MaxQueryTimeout     time.Duration `mapstructure:"maxQueryTimeout"`
 	MaxConcurrent       int           `mapstructure:"maxConcurrent"`
 	DisableCrossCatalog bool          `mapstructure:"disableCrossCatalog"`
+	GlobalRPS           float64       `mapstructure:"globalRps"`
+	GlobalBurst         int           `mapstructure:"globalBurst"`
+	PerIPRPS            float64       `mapstructure:"perIpRps"`
+	PerIPBurst          int           `mapstructure:"perIpBurst"`
+	PerIPMaxBuckets     int           `mapstructure:"perIpMaxBuckets"`
+	DefaultSubjectRPS   float64       `mapstructure:"defaultSubjectRps"`
+	DefaultSubjectBurst int           `mapstructure:"defaultSubjectBurst"`
 }
 
 // CacheConfig configures the optional rewrite/decision cache.
@@ -173,6 +231,13 @@ type ApprovalConfig struct {
 	GrantTTL       time.Duration     `mapstructure:"grantTtl"`       // approved-grant lifetime
 	MaxPending     int               `mapstructure:"maxPending"`     // cap on concurrent pending requests
 	SQLSampleBytes int               `mapstructure:"sqlSampleBytes"` // webhook SQL payload cap
+
+	// Persist stores pending requests and unconsumed grants in SQLite
+	// under StateDir so approvals survive a restart. Default false
+	// (in-memory, dev posture). A store that cannot open fails startup —
+	// silently degrading to memory-only would be worse.
+	Persist  bool   `mapstructure:"persist"`
+	StateDir string `mapstructure:"stateDir"` // default "./state" (shared with budget)
 }
 
 // ApprovalWebhook is one outbound approval target. HeadersRef is a
@@ -253,6 +318,9 @@ func DefaultServerConfig() ServerConfig {
 			QueryTimeout:    30 * time.Second,
 			MaxQueryTimeout: 30 * time.Second,
 			MaxConcurrent:   100,
+			GlobalRPS:       500,
+			GlobalBurst:     1000,
+			PerIPMaxBuckets: 10_000,
 		},
 		Cache: CacheConfig{
 			Rewrite: RewriteCacheConfig{
@@ -267,6 +335,8 @@ func DefaultServerConfig() ServerConfig {
 			GrantTTL:       5 * time.Minute,
 			MaxPending:     1000,
 			SQLSampleBytes: 2048,
+			Persist:        false,
+			StateDir:       "./state",
 		},
 		Budget: BudgetConfig{
 			Enabled:       false,
@@ -331,6 +401,9 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("mcp.enabled", d.MCP.Enabled)
 	v.SetDefault("mcp.transport", d.MCP.Transport)
 	v.SetDefault("mcp.sessionIdleMax", d.MCP.SessionIdleMax)
+	v.SetDefault("mcp.tokenRef", d.MCP.TokenRef)
+	v.SetDefault("mcp.apiKeyRef", d.MCP.APIKeyRef)
+	v.SetDefault("mcp.allowAnonymous", d.MCP.AllowAnonymous)
 
 	v.SetDefault("admin.enabled", d.Admin.Enabled)
 	v.SetDefault("admin.listen", d.Admin.Listen)
@@ -365,6 +438,13 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("limits.maxQueryTimeout", d.Limits.MaxQueryTimeout)
 	v.SetDefault("limits.maxConcurrent", d.Limits.MaxConcurrent)
 	v.SetDefault("limits.disableCrossCatalog", d.Limits.DisableCrossCatalog)
+	v.SetDefault("limits.globalRps", d.Limits.GlobalRPS)
+	v.SetDefault("limits.globalBurst", d.Limits.GlobalBurst)
+	v.SetDefault("limits.perIpRps", d.Limits.PerIPRPS)
+	v.SetDefault("limits.perIpBurst", d.Limits.PerIPBurst)
+	v.SetDefault("limits.perIpMaxBuckets", d.Limits.PerIPMaxBuckets)
+	v.SetDefault("limits.defaultSubjectRps", d.Limits.DefaultSubjectRPS)
+	v.SetDefault("limits.defaultSubjectBurst", d.Limits.DefaultSubjectBurst)
 
 	v.SetDefault("cache.rewrite.enabled", d.Cache.Rewrite.Enabled)
 	v.SetDefault("cache.rewrite.size", d.Cache.Rewrite.Size)
@@ -376,6 +456,8 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("approval.grantTtl", d.Approval.GrantTTL)
 	v.SetDefault("approval.maxPending", d.Approval.MaxPending)
 	v.SetDefault("approval.sqlSampleBytes", d.Approval.SQLSampleBytes)
+	v.SetDefault("approval.persist", d.Approval.Persist)
+	v.SetDefault("approval.stateDir", d.Approval.StateDir)
 
 	v.SetDefault("budget.enabled", d.Budget.Enabled)
 	v.SetDefault("budget.stateDir", d.Budget.StateDir)

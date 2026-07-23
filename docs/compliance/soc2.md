@@ -34,14 +34,17 @@ For the observation period, an auditor will typically accept:
 ## Gaps
 
 !!! warning "Plan compensating controls for these"
-    - **File-only audit sink** — replication of audit files to durable,
-      access-controlled storage is an external pipeline you must
-      evidence separately.
+    - **Audit forwarding is best-effort** — the built-in syslog and S3
+      (Object Lock) sinks replicate records to SIEM/WORM storage, but
+      the hash-chained file sink is the sink of record; evidence its
+      retention, and treat forwarding gaps as monitored, not impossible
+      (`sluice_audit_dropped_total`).
     - **No published signed releases yet** — the pipeline signs with
       cosign and attaches SBOMs, but until a release ships, evidence
       the deployed git commit and your own build process instead.
-    - **In-memory approval broker** — approval decisions are audited,
-      but pending state does not survive a restart and is
-      single-instance.
+    - **Single-instance approval broker** — approval decisions are
+      audited and pending state survives restarts when
+      `approval.persist: true` is set, but the broker is not replicated
+      across instances.
     - **No built-in reporting** — Sluice emits raw JSONL and metrics;
       dashboards and periodic control reports are yours to build.

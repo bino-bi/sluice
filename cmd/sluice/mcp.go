@@ -6,15 +6,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
 )
 
@@ -131,6 +135,52 @@ Exit codes:
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "static API key to authenticate as (stdio)")
 	cmd.Flags().BoolVar(&allowAnon, "allow-anonymous", false, "run without a credential (queries default-denied unless a policy allows the anonymous subject)")
 	return cmd
+}
+
+// resolveMCPPinnedUser resolves mcp.tokenRef / mcp.apiKeyRef into the
+// pinned identity for the serve-embedded stdio transport. Returns
+// (nil, nil) for streamable_http (per-request auth) and for allowAnonymous
+// without refs (with a loud warning). No credential and no allowAnonymous
+// is an error — defense-in-depth behind ServerConfig.Validate.
+func resolveMCPPinnedUser(ctx context.Context, scfg *config.ServerConfig, r *secrets.Resolver, id identity.Identifier, log *slog.Logger) (*identity.UserCtx, error) {
+	switch scfg.MCP.Transport {
+	case "", "stdio":
+	default:
+		return nil, nil
+	}
+	token, err := resolveMCPCredential(ctx, r, "mcp.tokenRef", scfg.MCP.TokenRef)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := resolveMCPCredential(ctx, r, "mcp.apiKeyRef", scfg.MCP.APIKeyRef)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case token != "" || apiKey != "":
+		u, err := resolveStaticIdentity(ctx, id, token, apiKey)
+		if err != nil {
+			return nil, fmt.Errorf("authenticate static credential: %w", err)
+		}
+		log.Info("mcp: authenticated static identity", "subject", u.Subject, "issuer", u.Issuer)
+		return u, nil
+	case scfg.MCP.AllowAnonymous:
+		log.Warn("mcp: running anonymous — every query is default-denied unless a policy grants the anonymous subject")
+		return nil, nil
+	default:
+		return nil, errors.New("stdio transport requires a pinned credential: set mcp.tokenRef or mcp.apiKeyRef (or mcp.allowAnonymous: true to run without one)")
+	}
+}
+
+func resolveMCPCredential(ctx context.Context, r *secrets.Resolver, field, ref string) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	sec, err := r.Resolve(ctx, ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", field, err)
+	}
+	return strings.TrimRight(string(sec), "\r\n"), nil
 }
 
 // resolveStaticIdentity verifies a static credential through the composite

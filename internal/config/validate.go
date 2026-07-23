@@ -34,6 +34,34 @@ func (c *ServerConfig) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	if s := c.Audit.Syslog; s != nil {
+		if s.Address == "" {
+			errs = append(errs, errors.New("audit.syslog.address: required when the syslog sink is configured"))
+		}
+		switch s.Network {
+		case "", "udp", "tcp", "unix", "unixgram":
+		default:
+			errs = append(errs, fmt.Errorf("audit.syslog.network: unknown network %q (udp, tcp, unix, unixgram)", s.Network))
+		}
+	}
+	if s := c.Audit.S3; s != nil {
+		if s.Bucket == "" {
+			errs = append(errs, errors.New("audit.s3.bucket: required when the s3 sink is configured"))
+		}
+		switch s.ObjectLock {
+		case "", "governance", "compliance":
+		default:
+			errs = append(errs, fmt.Errorf("audit.s3.objectLock: unknown mode %q (governance, compliance)", s.ObjectLock))
+		}
+		if s.ObjectLock != "" && s.RetentionDays <= 0 {
+			errs = append(errs, errors.New("audit.s3.retentionDays: must be > 0 when objectLock is set"))
+		}
+		if s.CredentialsRef != "" {
+			if err := checkSecretRef("audit.s3.credentialsRef", s.CredentialsRef); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	if c.Identity.APIKeyPepper != "" {
 		if err := checkSecretRef("identity.apiKeyPepper", c.Identity.APIKeyPepper); err != nil {
 			errs = append(errs, err)
@@ -45,6 +73,25 @@ func (c *ServerConfig) Validate() error {
 				errs = append(errs, err)
 			}
 		}
+	}
+	if c.MCP.TokenRef != "" {
+		if err := checkSecretRef("mcp.tokenRef", c.MCP.TokenRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.MCP.APIKeyRef != "" {
+		if err := checkSecretRef("mcp.apiKeyRef", c.MCP.APIKeyRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	// The serve-embedded stdio transport pins one identity for every tool
+	// call; without a credential it would silently run anonymous, so an
+	// anonymous run must be an explicit choice. "" and "stdio" are the
+	// stdio spellings; the http aliases are normalised by the transport.
+	if c.MCP.Enabled && (c.MCP.Transport == "" || c.MCP.Transport == "stdio") &&
+		c.MCP.TokenRef == "" && c.MCP.APIKeyRef == "" && !c.MCP.AllowAnonymous {
+		errs = append(errs, errors.New(
+			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
 	}
 	return errors.Join(errs...)
 }

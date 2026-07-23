@@ -1,0 +1,37 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: string-ops
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["products"]
+  filter:
+    predicate:
+      all:
+        - column: sku
+          op: StartsWith
+          value: "100%"
+        - column: region
+          op: EndsWith
+          value: "{{ subject.region }}"
+        - column: name
+          op: Matches
+          value: "^[A-Z][a-z]+$"
+        - column: notes
+          op: Contains
+          value: "a_b"

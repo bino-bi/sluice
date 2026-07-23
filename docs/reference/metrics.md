@@ -48,6 +48,12 @@ directly on the prometheus client rather than via `telemetry.Define*`.
 | `sluice_policy_evaluations_total` | counter | `outcome` | Policy engine evaluations by outcome. |
 | `sluice_policy_rejections_total` | counter | `policy`, `rule` | Policy engine rejections by policy + rule. |
 
+### rest
+
+| Metric | Type | Labels | Help |
+| ------ | ---- | ------ | ---- |
+| `sluice_rest_rate_limited_total` | counter | `scope` | REST requests refused by the transport-level rate limiter, before identity resolution. |
+
 ### schema
 
 | Metric | Type | Labels | Help |

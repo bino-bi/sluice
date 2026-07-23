@@ -29,6 +29,9 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `mcp.transport` | `string` | `stdio` | `SLUICE_MCP__TRANSPORT` |
 | `mcp.listen` | `string` | `""` | `SLUICE_MCP__LISTEN` |
 | `mcp.sessionIdleMax` | `Duration` | `30m0s` | `SLUICE_MCP__SESSIONIDLEMAX` |
+| `mcp.tokenRef` | `string` | `""` | `SLUICE_MCP__TOKENREF` |
+| `mcp.apiKeyRef` | `string` | `""` | `SLUICE_MCP__APIKEYREF` |
+| `mcp.allowAnonymous` | `bool` | `false` | `SLUICE_MCP__ALLOWANONYMOUS` |
 | `admin.enabled` | `bool` | `false` | `SLUICE_ADMIN__ENABLED` |
 | `admin.listen` | `string` | `:9091` | `SLUICE_ADMIN__LISTEN` |
 | `admin.token` | `string` | `""` | `SLUICE_ADMIN__TOKEN` |
@@ -51,6 +54,8 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `policies.rebac.cacheTtl` | `Duration` | `10s` | `SLUICE_POLICIES__REBAC__CACHETTL` |
 | `policies.rebac.cacheSize` | `int` | `10000` | `SLUICE_POLICIES__REBAC__CACHESIZE` |
 | `audit.file` | `FileSinkConfig?` | _unset_ | `SLUICE_AUDIT__FILE` |
+| `audit.syslog` | `SyslogSinkConfig?` | _unset_ | `SLUICE_AUDIT__SYSLOG` |
+| `audit.s3` | `S3SinkConfig?` | _unset_ | `SLUICE_AUDIT__S3` |
 | `audit.failClosed` | `bool` | `true` | `SLUICE_AUDIT__FAILCLOSED` |
 | `audit.sqlSampleBytes` | `int` | `2048` | `SLUICE_AUDIT__SQLSAMPLEBYTES` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |
@@ -63,6 +68,13 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `limits.maxQueryTimeout` | `Duration` | `30s` | `SLUICE_LIMITS__MAXQUERYTIMEOUT` |
 | `limits.maxConcurrent` | `int` | `100` | `SLUICE_LIMITS__MAXCONCURRENT` |
 | `limits.disableCrossCatalog` | `bool` | `false` | `SLUICE_LIMITS__DISABLECROSSCATALOG` |
+| `limits.globalRps` | `float64` | `500` | `SLUICE_LIMITS__GLOBALRPS` |
+| `limits.globalBurst` | `int` | `1000` | `SLUICE_LIMITS__GLOBALBURST` |
+| `limits.perIpRps` | `float64` | `0` | `SLUICE_LIMITS__PERIPRPS` |
+| `limits.perIpBurst` | `int` | `0` | `SLUICE_LIMITS__PERIPBURST` |
+| `limits.perIpMaxBuckets` | `int` | `10000` | `SLUICE_LIMITS__PERIPMAXBUCKETS` |
+| `limits.defaultSubjectRps` | `float64` | `0` | `SLUICE_LIMITS__DEFAULTSUBJECTRPS` |
+| `limits.defaultSubjectBurst` | `int` | `0` | `SLUICE_LIMITS__DEFAULTSUBJECTBURST` |
 | `cache.rewrite.enabled` | `bool` | `false` | `SLUICE_CACHE__REWRITE__ENABLED` |
 | `cache.rewrite.size` | `int` | `4096` | `SLUICE_CACHE__REWRITE__SIZE` |
 | `cache.rewrite.ttl` | `Duration` | `1m0s` | `SLUICE_CACHE__REWRITE__TTL` |
@@ -73,6 +85,8 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `approval.grantTtl` | `Duration` | `5m0s` | `SLUICE_APPROVAL__GRANTTTL` |
 | `approval.maxPending` | `int` | `1000` | `SLUICE_APPROVAL__MAXPENDING` |
 | `approval.sqlSampleBytes` | `int` | `2048` | `SLUICE_APPROVAL__SQLSAMPLEBYTES` |
+| `approval.persist` | `bool` | `false` | `SLUICE_APPROVAL__PERSIST` |
+| `approval.stateDir` | `string` | `./state` | `SLUICE_APPROVAL__STATEDIR` |
 | `budget.enabled` | `bool` | `false` | `SLUICE_BUDGET__ENABLED` |
 | `budget.stateDir` | `string` | `./state` | `SLUICE_BUDGET__STATEDIR` |
 | `budget.flushInterval` | `Duration` | `5s` | `SLUICE_BUDGET__FLUSHINTERVAL` |

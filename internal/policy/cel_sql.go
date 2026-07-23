@@ -76,11 +76,11 @@ func lowerExpr(e ast.Expr) (*CompiledPredicate, error) {
 	case operators.In, operators.OldIn:
 		return lowerIn(args)
 	case "startsWith":
-		return lowerStringMatch(call, "%s%%")
+		return lowerStringMatch(call, apitypes.PredOpStartsWith)
 	case "endsWith":
-		return lowerStringMatch(call, "%%%s")
+		return lowerStringMatch(call, apitypes.PredOpEndsWith)
 	case "contains":
-		return lowerStringMatch(call, "%%%s%%")
+		return lowerStringMatch(call, apitypes.PredOpContains)
 	default:
 		return nil, fmt.Errorf("%w: unsupported operator %q", ErrFilterExprInvalid, fn)
 	}
@@ -157,10 +157,12 @@ func lowerIn(args []ast.Expr) (*CompiledPredicate, error) {
 }
 
 // lowerStringMatch handles row.col.startsWith/endsWith/contains(<literal>)
-// by translating to a Like predicate with the literal escaped and wrapped
-// per pattern. Only a string-literal argument is allowed — a dynamic
-// argument cannot be safely escaped at compile time.
-func lowerStringMatch(call ast.CallExpr, pattern string) (*CompiledPredicate, error) {
+// by translating to the matching predicate op; the rewriter renders these
+// as literal-safe functions (starts_with/ends_with/contains), so the value
+// carries no pattern metacharacters and needs no escaping. Only a
+// string-literal argument is allowed to keep the CEL subset small and
+// statically checkable.
+func lowerStringMatch(call ast.CallExpr, op apitypes.PredOp) (*CompiledPredicate, error) {
 	col, ok := rowColumn(call.Target())
 	if !ok {
 		return nil, fmt.Errorf("%w: string matcher must target row.<column>", ErrFilterExprInvalid)
@@ -173,8 +175,7 @@ func lowerStringMatch(call ast.CallExpr, pattern string) (*CompiledPredicate, er
 	if !ok {
 		return nil, fmt.Errorf("%w: string matcher argument must be a string literal", ErrFilterExprInvalid)
 	}
-	like := fmt.Sprintf(pattern, escapeLike(s))
-	return &CompiledPredicate{Column: col, Op: apitypes.PredOpLike, Values: []ValueSource{{Literal: like}}}, nil
+	return &CompiledPredicate{Column: col, Op: op, Values: []ValueSource{{Literal: s}}}, nil
 }
 
 // rowColumn returns the column name if e is a `row.<col>` selection.
@@ -268,11 +269,4 @@ func literalString(v ref.Val) (string, bool) {
 	}
 	s, ok := v.Value().(string)
 	return s, ok
-}
-
-// escapeLike escapes LIKE metacharacters so a startsWith/contains literal
-// matches literally.
-func escapeLike(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
 }

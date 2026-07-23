@@ -75,6 +75,13 @@ limits:
   maxQueryTimeout: 30s
   maxConcurrent: 100
   disableCrossCatalog: false   # true rejects multi-catalog queries (ACL_REJECTED)
+  globalRps: 500               # token bucket over all /v1/query traffic, before auth; 0 disables
+  globalBurst: 1000
+  perIpRps: 0                  # per-remote-IP bucket on /v1/query; keep 0 behind a load balancer
+  perIpBurst: 0
+  perIpMaxBuckets: 10000       # LRU bound on the per-IP bucket map
+  defaultSubjectRps: 0         # fallback per-subject rate when a binding has no rateLimit; 0 disables
+  defaultSubjectBurst: 0
 
 cache:
   rewrite: {enabled: false, size: 4096, ttl: 60s}

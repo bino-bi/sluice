@@ -45,13 +45,17 @@ func (n *recordingNotifier) Notify(v View, acceptURL, rejectURL string) {
 
 func newBroker(t *testing.T, clk *fakeClock, n Notifier) *Broker {
 	t.Helper()
-	return New(Options{
+	b, err := New(Options{
 		Clock:      clk.now,
 		Notifier:   n,
 		RequestTTL: 10 * time.Minute,
 		GrantTTL:   5 * time.Minute,
 		MaxPending: 3,
 	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return b
 }
 
 func requireInput(subject, sql string) RequireInput {

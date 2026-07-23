@@ -37,12 +37,15 @@ func TestApproval_EndToEndWithRealBroker(t *testing.T) {
 
 	notifier := approval.NewWebhookNotifier("https://sluice.example.com",
 		[]approval.Target{{URL: catcher.URL}}, nil)
-	broker := approval.New(approval.Options{
+	broker, err := approval.New(approval.Options{
 		Notifier:   notifier,
 		RequestTTL: time.Minute,
 		GrantTTL:   time.Minute,
 		MaxPending: 10,
 	})
+	if err != nil {
+		t.Fatalf("approval.New: %v", err)
+	}
 
 	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "ssn"}}, rows: [][]any{{"x"}}}
 	svc := queryservice.New(queryservice.Options{
@@ -60,7 +63,7 @@ func TestApproval_EndToEndWithRealBroker(t *testing.T) {
 	const sql = "SELECT ssn FROM hr.people"
 
 	// 1. First submission pends and fires the webhook.
-	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql})
+	_, err = svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql})
 	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeApprovalPending {
 		t.Fatalf("first submit err = %v, want ERR_APPROVAL_PENDING", err)
 	}
@@ -111,10 +114,13 @@ func TestApproval_EndToEndRejectPath(t *testing.T) {
 	}))
 	defer catcher.Close()
 
-	broker := approval.New(approval.Options{
+	broker, err := approval.New(approval.Options{
 		Notifier:   approval.NewWebhookNotifier("https://x", []approval.Target{{URL: catcher.URL}}, nil),
 		RequestTTL: time.Minute,
 	})
+	if err != nil {
+		t.Fatalf("approval.New: %v", err)
+	}
 	svc := queryservice.New(queryservice.Options{
 		Parser:           &fakeParser{},
 		Policy:           &fakePolicy{decision: approvalDecision()},
@@ -141,7 +147,7 @@ func TestApproval_EndToEndRejectPath(t *testing.T) {
 	}
 	// A re-submission after rejection pends again (no grant); reject only
 	// affects the specific request, and re-submission mints a new one.
-	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
+	_, err = svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
 	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeApprovalPending {
 		t.Fatalf("post-reject re-submit err = %v, want ERR_APPROVAL_PENDING", err)
 	}
