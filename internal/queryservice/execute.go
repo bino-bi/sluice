@@ -321,11 +321,12 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		DurationMs: 0,
 	}
 	ar := &auditedRows{
-		inner:  resp.Rows,
-		svc:    s,
-		qid:    qid,
-		start:  start,
-		parent: qr,
+		inner:    resp.Rows,
+		svc:      s,
+		qid:      qid,
+		start:    start,
+		parent:   qr,
+		truncSrc: &resp.Truncated,
 	}
 	// Budget usage: capture the execute duration now (excludes client
 	// streaming so a slow reader does not burn budget); rows are known at

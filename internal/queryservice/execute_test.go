@@ -109,6 +109,9 @@ type fakeExecutor struct {
 	err       error
 	lastReq   executor.Request
 	execCount int
+	// truncateAfter > 0 stops iteration after that many rows and flips
+	// Response.Truncated mid-stream, like the real sqlRowIterator.
+	truncateAfter int
 }
 
 func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*executor.Response, error) {
@@ -118,21 +121,28 @@ func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*execut
 		return nil, e.err
 	}
 	rowCount := new(int64)
-	iter := &fakeIter{rows: e.rows, rowCount: rowCount}
+	iter := &fakeIter{rows: e.rows, rowCount: rowCount, truncateAfter: e.truncateAfter}
 	resp := &executor.Response{Columns: e.columns, Rows: iter, RowCount: rowCount}
+	iter.resp = resp
 	return resp, nil
 }
 
 type fakeIter struct {
-	rows     [][]any
-	rowCount *int64
-	idx      int
-	closed   bool
-	err      error
+	rows          [][]any
+	rowCount      *int64
+	idx           int
+	closed        bool
+	err           error
+	truncateAfter int
+	resp          *executor.Response
 }
 
 func (it *fakeIter) Next() bool {
 	if it.closed || it.idx >= len(it.rows) {
+		return false
+	}
+	if it.truncateAfter > 0 && it.idx >= it.truncateAfter {
+		it.resp.Truncated = true
 		return false
 	}
 	*it.rowCount++
@@ -432,6 +442,50 @@ func TestExecute_RejectEmitsOnce(t *testing.T) {
 	}
 	if a.all()[0].Decision != audit.DecisionReject {
 		t.Fatalf("expected reject decision in audit")
+	}
+}
+
+func TestAuditedRows_TruncatedSyncs(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{
+			columns:       []executor.ColumnInfo{{Name: "id"}},
+			rows:          [][]any{{int64(1)}, {int64(2)}, {int64(3)}},
+			truncateAfter: 2,
+		},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Truncated {
+		t.Fatalf("Truncated must be false before iteration")
+	}
+	for res.Rows.Next() {
+		var id any
+		if err := res.Rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+	}
+	if !res.Truncated {
+		t.Fatalf("Truncated not synced onto QueryResult after stream end")
+	}
+	if err := res.Rows.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	recs := a.all()
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 audit records, got %d", len(recs))
+	}
+	if !recs[1].Truncated {
+		t.Fatalf("completion audit record must carry Truncated=true")
 	}
 }
 

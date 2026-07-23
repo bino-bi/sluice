@@ -192,6 +192,10 @@ type auditedRows struct {
 	closed  bool
 	iterErr error
 	parent  *QueryResult
+	// truncSrc points at the executor Response's Truncated flag, which
+	// the row iterator flips during iteration — after the QueryResult
+	// was constructed. Synced onto parent at stream end / Close.
+	truncSrc *bool
 	// Budget write-back (set only when a budget manager is configured).
 	recordBudget  bool
 	budgetSubject string
@@ -203,7 +207,19 @@ func (r *auditedRows) Next() bool {
 	if r.closed {
 		return false
 	}
-	return r.inner.Next()
+	ok := r.inner.Next()
+	if !ok {
+		r.syncTruncated()
+	}
+	return ok
+}
+
+// syncTruncated copies the executor's live truncation flag onto the
+// QueryResult so renderers and the completion record see the final value.
+func (r *auditedRows) syncTruncated() {
+	if r.truncSrc != nil && r.parent != nil && *r.truncSrc {
+		r.parent.Truncated = true
+	}
 }
 
 func (r *auditedRows) Scan(dest ...any) error {
@@ -230,6 +246,7 @@ func (r *auditedRows) Close() error {
 	}
 	r.closed = true
 	closeErr := r.inner.Close()
+	r.syncTruncated()
 
 	// Completion record: the access was already audited (fail-closed) before
 	// any row was served, so this best-effort record only adds the final
