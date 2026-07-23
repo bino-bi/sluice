@@ -1,0 +1,24 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: string-matchers-cel
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["products"]
+  filter:
+    expression: 'row.sku.startsWith("100%") && row.name.contains("a_b") && row.region.endsWith("-eu")'

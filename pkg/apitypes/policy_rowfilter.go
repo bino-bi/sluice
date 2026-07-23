@@ -60,6 +60,7 @@ const (
 	PredOpMatches            PredOp = "Matches"
 	PredOpStartsWith         PredOp = "StartsWith"
 	PredOpEndsWith           PredOp = "EndsWith"
+	PredOpContains           PredOp = "Contains"
 )
 
 // GetTypeMeta implements Object.

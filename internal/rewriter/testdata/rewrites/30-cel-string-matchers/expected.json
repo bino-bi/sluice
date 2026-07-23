@@ -1,0 +1,18 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.products WHERE (starts_with(sku, $1) AND contains(name, $2)) AND ends_with(region, $3)) products",
+  "changed": true,
+  "params": [
+    "100%",
+    "a_b",
+    "-eu"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/string-matchers-cel",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "94aa7dbc0d120061",
+  "filters": [
+    "pg.public.products"
+  ]
+}

@@ -99,7 +99,9 @@ func TestCELRowFilterToPredicate(t *testing.T) {
 		{"and", `row.a == 1 && row.b == 2`, "All"},
 		{"or", `row.a == 1 || row.b == 2`, "Any"},
 		{"reversed", `5 < row.age`, "age GreaterThan"},
-		{"startswith", `row.name.startsWith("A")`, "name Like"},
+		{"startswith", `row.name.startsWith("A")`, "name StartsWith"},
+		{"endswith", `row.name.endsWith("%x")`, "name EndsWith"},
+		{"contains", `row.name.contains("a_b")`, "name Contains"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
