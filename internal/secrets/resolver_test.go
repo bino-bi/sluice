@@ -36,9 +36,15 @@ func TestResolver_EnvMissing(t *testing.T) {
 
 func TestResolver_UnsupportedProvider(t *testing.T) {
 	r := NewResolver(ResolverOptions{})
-	_, err := r.Resolve(context.Background(), "secret://vault/secret/data/x")
+	// Unknown providers fail at resolve time.
+	_, err := r.Resolve(context.Background(), "secret://zamboni/secret/data/x")
 	if err == nil || !strings.Contains(err.Error(), "unsupported provider") {
 		t.Fatalf("want unsupported-provider error, got %v", err)
+	}
+	// Reserved-but-unimplemented providers fail earlier, at parse.
+	_, err = r.Resolve(context.Background(), "secret://vault/secret/data/x")
+	if err == nil || !strings.Contains(err.Error(), "parsed but unimplemented") {
+		t.Fatalf("want parsed-but-unimplemented error, got %v", err)
 	}
 }
 

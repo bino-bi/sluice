@@ -21,10 +21,11 @@ warning at boot ("running without an auth token — do not expose this port").
 Failed auth returns `401` with `WWW-Authenticate: Bearer realm="sluice-admin"`.
 Responses echo an `X-Admin-Request-Id` header.
 
-!!! warning "Not yet implemented: TLS on the admin listener"
-    `admin.tls` parses but is not wired — the admin listener always serves
-    plain HTTP. Terminate TLS in front of it, as the danger admonition
-    below recommends.
+!!! warning "Not yet implemented: TLS on the admin listener — rejected at load"
+    The admin listener always serves plain HTTP, so setting `admin.tls`
+    **fails validation**: `sluice config validate` exits 3 and
+    `sluice serve` refuses to start. Terminate TLS in front of it, as the
+    danger admonition below recommends.
 
 !!! danger "Never expose the admin listener publicly"
     The admin plane reads audit records and policy internals and can trigger

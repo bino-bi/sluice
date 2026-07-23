@@ -78,7 +78,10 @@ $ sluice version --json
 
 `sluice config validate [<policy-dir>]` validates the server config (when
 `--config` is given) and every policy manifest under `<policy-dir>`,
-surfacing all decoding and structural errors. Exits 0/1/3. See
+surfacing all decoding and structural errors. Server-config settings this
+build cannot enforce (mTLS fields, `admin.tls`, `datasources.reload`,
+unimplemented `secret://` providers) are rejected with exit 3 — the same
+check that makes `sluice serve` refuse to start. Exits 0/1/3. See
 [Server config & secrets](../operations/server-config.md).
 
 | Flag | Default | Meaning |

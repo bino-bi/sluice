@@ -482,7 +482,14 @@ func validateAuditSink(a *AuditSink) error {
 			}
 		}
 	case AuditS3, AuditPostgres, AuditSyslog, AuditOTLP:
-		// v1 sinks: structural checks land with the sink implementations.
+		// Declared by the manifest grammar but no implementation writes
+		// records yet. Rejected so an operator never believes durable
+		// delivery is configured when it is not; the guard drops per type
+		// as each sink lands.
+		return &ValidationError{
+			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",
+			Reason: fmt.Sprintf("audit sink type %q parsed but unimplemented — only \"file\" writes records in this build", s.Type),
+		}
 	default:
 		return &ValidationError{
 			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",

@@ -30,11 +30,12 @@ your `policies.d/`.
 - [ ] Set a strong admin token. An empty token boots in dev mode with only a
       logged warning between you and an open admin plane.
 
-!!! warning "Not yet implemented: mTLS"
-    The config schema parses `rest.tls.clientCA` and `rest.tls.clientAuth`,
-    but client-certificate verification is not enforced — the REST server
-    loads a single server cert/key pair. If you need mutual TLS, enforce it
-    at a proxy in front of Sluice.
+!!! warning "Not yet implemented: mTLS — rejected at load"
+    Client-certificate verification is not enforced yet, so setting
+    `rest.tls.clientCA` or `rest.tls.clientAuth` **fails validation**:
+    `sluice config validate` exits 3 and `sluice serve` refuses to start.
+    The REST server loads a single server cert/key pair. If you need
+    mutual TLS, enforce it at a proxy in front of Sluice.
 
 ## Credentials
 

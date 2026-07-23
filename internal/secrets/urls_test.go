@@ -2,7 +2,10 @@
 
 package secrets
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParse_Env(t *testing.T) {
 	u, err := Parse("secret://env/PG_PASSWORD")
@@ -33,16 +36,20 @@ func TestParse_FileAbsolute(t *testing.T) {
 	}
 }
 
-func TestParse_VaultFragment(t *testing.T) {
-	u, err := Parse("secret://vault/secret/data/pii#value")
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if u.Fragment != "value" {
-		t.Errorf("Fragment = %q, want %q", u.Fragment, "value")
-	}
-	if u.Provider != "vault" {
-		t.Errorf("Provider = %q", u.Provider)
+func TestParse_RejectsUnimplementedProviders(t *testing.T) {
+	for _, in := range []string{
+		"secret://vault/secret/data/pii#value",
+		"secret://aws-sm/prod/sluice/pii#salt",
+		"secret://gcp-sm/projects/demo/secrets/pii/versions/latest",
+	} {
+		_, err := Parse(in)
+		if err == nil {
+			t.Errorf("Parse(%q) should fail until the provider is implemented", in)
+			continue
+		}
+		if !strings.Contains(err.Error(), "parsed but unimplemented") {
+			t.Errorf("Parse(%q) error = %v, want parsed-but-unimplemented", in, err)
+		}
 	}
 }
 

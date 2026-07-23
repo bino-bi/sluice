@@ -138,11 +138,13 @@ spec:
   rotateSizeMB: 256
 ```
 
-!!! warning "Not yet implemented"
+!!! warning "Not yet implemented — rejected at load"
     Only `type: file` is implemented, and the running sink is wired from
-    `audit.file` in `sluice.yaml` — keep the two in sync. The `s3`,
-    `postgres`, `syslog`, and `otlp` sink types parse but do not write
-    anywhere yet.
+    `audit.file` in `sluice.yaml` — keep the two in sync. AuditSink
+    manifests declaring `s3`, `postgres`, `syslog`, or `otlp` **fail
+    validation** (`sluice config validate` exits 3, `sluice serve` refuses
+    to start) so nobody believes durable delivery is configured when it
+    is not.
 
 ## Retention without breaking the chain
 

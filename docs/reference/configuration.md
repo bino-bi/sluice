@@ -52,6 +52,7 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `policies.rebac.cacheSize` | `int` | `10000` | `SLUICE_POLICIES__REBAC__CACHESIZE` |
 | `audit.file` | `FileSinkConfig?` | _unset_ | `SLUICE_AUDIT__FILE` |
 | `audit.failClosed` | `bool` | `true` | `SLUICE_AUDIT__FAILCLOSED` |
+| `audit.sqlSampleBytes` | `int` | `2048` | `SLUICE_AUDIT__SQLSAMPLEBYTES` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |
 | `logging.format` | `string` | `json` | `SLUICE_LOGGING__FORMAT` |
 | `identity.apiKeyPepper` | `string` | `""` | `SLUICE_IDENTITY__APIKEYPEPPER` |
@@ -87,7 +88,8 @@ URI. The MVP providers are:
 - `secret://file/PATH` — read from a file (permission-checked; 0o022
   rejected, world-readable warned).
 
-Vault, AWS SM, and GCP SM land behind build tags in v0.3+.
+Vault, AWS SM, and GCP SM land behind build tags in v0.3+; until then those
+references are rejected at config validation / boot.
 
 ## Reference schema
 

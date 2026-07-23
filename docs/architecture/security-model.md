@@ -49,9 +49,9 @@ datasource manifest. Every catalog is attached to DuckDB
 `READ_ONLY`, so even a bug that slipped a write past the statement allowlist would hit a read-only
 attachment.
 
-!!! warning "Not yet implemented"
-    `secret://vault/…`, `secret://aws-sm/…`, and `secret://gcp-sm/…` references parse but do not
-    resolve yet. Use `env` or `file`.
+!!! warning "Not yet implemented — rejected at parse"
+    `secret://vault/…`, `secret://aws-sm/…`, and `secret://gcp-sm/…` references are rejected at
+    config validation / boot until their providers land. Use `env` or `file`.
 
 ### Admin plane
 

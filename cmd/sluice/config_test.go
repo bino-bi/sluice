@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,6 +61,35 @@ func TestConfigValidate_MissingDir_IsValid(t *testing.T) {
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("missing dir should not be an error: %v", err)
+	}
+}
+
+func TestConfigValidate_UnenforceableServerConfig_ExitCode3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(path, []byte("datasources:\n  reload: true\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"config", "validate", "--config", path})
+
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for unenforceable config")
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("want *exitError, got %T: %v", err, err)
+	}
+	if exit.Code != 3 {
+		t.Fatalf("exit code = %d, want 3", exit.Code)
+	}
+	if !strings.Contains(errOut.String(), "datasources.reload") {
+		t.Fatalf("stderr must name the field, got: %q", errOut.String())
 	}
 }
 

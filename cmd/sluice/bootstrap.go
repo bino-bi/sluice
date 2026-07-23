@@ -80,10 +80,15 @@ type runtimeDeps struct {
 func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtimeDeps, error) {
 	deps := &runtimeDeps{}
 
-	// 1. Server config.
+	// 1. Server config. Validate refuses settings this build cannot
+	// enforce — an operator must never believe a control is active when
+	// it is not.
 	scfg, err := config.LoadServer(serverCfgPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load server config: %w", err)
+	}
+	if err := scfg.Validate(); err != nil {
+		return nil, fmt.Errorf("server config: %w", err)
 	}
 	deps.server = scfg
 
@@ -303,11 +308,15 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.service = queryservice.New(qopts)
 
 	// 15. Transports.
-	deps.rest = rest.New(rest.Config{
+	restCfg := rest.Config{
 		Listen:         scfg.REST.Listen,
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
 		RequestTimeout: scfg.REST.RequestTimeout,
-	}, rest.Deps{
+	}
+	if t := scfg.REST.TLS; t != nil && t.CertFile != "" && t.KeyFile != "" {
+		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
+	}
+	deps.rest = rest.New(restCfg, rest.Deps{
 		Service:    deps.service,
 		Identifier: deps.identifier,
 		Registry:   deps.sourceReg,

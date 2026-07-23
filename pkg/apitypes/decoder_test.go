@@ -126,6 +126,48 @@ spec:
 	}
 }
 
+func TestDecodeRejectsUnimplementedAuditSink(t *testing.T) {
+	t.Parallel()
+	_, err := Decode(strings.NewReader(`
+apiVersion: sluice.bino.bi/v1alpha1
+kind: AuditSink
+metadata:
+  name: siem
+spec:
+  type: s3
+  bucket: audit-bucket
+`))
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T: %v", err, err)
+	}
+	if ve.Field != "spec.type" {
+		t.Errorf("Field = %q, want spec.type", ve.Field)
+	}
+	if !strings.Contains(ve.Reason, "parsed but unimplemented") {
+		t.Errorf("Reason = %q, want parsed-but-unimplemented", ve.Reason)
+	}
+}
+
+func TestDecodeAcceptsFileAuditSink(t *testing.T) {
+	t.Parallel()
+	objs, err := Decode(strings.NewReader(`
+apiVersion: sluice.bino.bi/v1alpha1
+kind: AuditSink
+metadata:
+  name: local
+spec:
+  type: file
+  path: /var/lib/sluice/audit
+`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(objs) != 1 {
+		t.Fatalf("objects = %d, want 1", len(objs))
+	}
+}
+
 func TestDecodeValidatesFilterExclusivity(t *testing.T) {
 	t.Parallel()
 	// Both predicate and expression set → invalid.
