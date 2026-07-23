@@ -218,7 +218,7 @@ func TestS3Sink_CloseDrainsAndRejectsFurtherRecords(t *testing.T) {
 	if len(store.snapshot()) != 1 {
 		t.Fatal("Close must upload the remaining batch")
 	}
-	if err := sink.Record(context.Background(), &audit.Record{}); err != audit.ErrClosed {
+	if err := sink.Record(context.Background(), &audit.Record{}); !errors.Is(err, audit.ErrClosed) {
 		t.Fatalf("Record after Close = %v, want ErrClosed", err)
 	}
 }

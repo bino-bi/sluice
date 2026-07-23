@@ -156,9 +156,9 @@ type SyslogSinkConfig struct {
 // S3SinkConfig batches audit records into newline-delimited JSON objects
 // in an S3(-compatible) bucket, optionally under Object Lock retention.
 type S3SinkConfig struct {
-	Endpoint       string        `mapstructure:"endpoint"`       // default s3.amazonaws.com
-	Bucket         string        `mapstructure:"bucket"`         // required
-	Prefix         string        `mapstructure:"prefix"`         // default "audit/"
+	Endpoint       string        `mapstructure:"endpoint"` // default s3.amazonaws.com
+	Bucket         string        `mapstructure:"bucket"`   // required
+	Prefix         string        `mapstructure:"prefix"`   // default "audit/"
 	Region         string        `mapstructure:"region"`
 	Insecure       bool          `mapstructure:"insecure"`       // plain HTTP (dev / MinIO)
 	ForcePathStyle bool          `mapstructure:"forcePathStyle"` // path-style addressing (MinIO)

@@ -114,9 +114,11 @@ gives a non-blocking status snapshot. See [MCP agents](mcp-agents.md).
   receiver.
 - **`grantTtl` expiry.** The grant window (default 5m) starts at acceptance.
   A requester who re-runs too late is parked again and needs a fresh approval.
-- **State is in-memory.** A restart drops pending requests and grants; callers
-  re-submit. This is a single-instance feature — do not load-balance approvals
-  across replicas.
+- **State is in-memory by default.** A restart drops pending requests and
+  grants; callers re-submit. Set `approval.persist: true` to keep pending
+  requests, grants, and capability links across restarts (SQLite under
+  `approval.stateDir`). Either way this is a single-instance feature — do not
+  load-balance approvals across replicas.
 
 ## See also
 

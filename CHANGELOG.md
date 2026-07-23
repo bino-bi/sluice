@@ -9,6 +9,13 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Added
 
+- **Syslog and S3 audit sinks** — `audit.syslog` (RFC 5424 over udp/tcp/unix/unixgram) and `audit.s3` (batched JSONL objects, optional Object Lock `governance`/`compliance` retention, minio-go client with env/IAM credential chain or `credentialsRef`). Both are best-effort secondaries: the hash-chained file sink remains the durable record and the only sink that gates queries; secondary failures are metered (`sluice_audit_write_errors_total`, `sluice_audit_dropped_total`) and never break the chain. AuditSink manifests declaring `s3`/`syslog` now point at the server-config keys instead of "unimplemented".
+- **Approval persistence** — `approval.persist: true` stores pending requests and unconsumed grants in SQLite under `approval.stateDir`; capability links survive restarts (tokens at rest and in memory are SHA-256 hashes), grants stay single-use across the restart boundary, and restored requests fire no duplicate webhook.
+- **JWT bindings hot-reload** — the reload subscriber now re-applies `SubjectBinding` issuer sets, claim mappings, and per-issuer HMAC secrets (previously only API-key bindings hot-reloaded; JWT changes silently required a restart). A snapshot with duplicate issuers is rejected and the previous set stays live.
+- **Row-filter operators `StartsWith`, `EndsWith`, `Contains`, `Matches`** now execute — rendered as literal-safe DuckDB functions (`starts_with`/`ends_with`/`contains`/`regexp_matches`, partial-match regex semantics); previously they failed queries with `ERR_UNSUPPORTED_SYNTAX`. `Contains` is a new predicate op.
+- **Transport-level rate limiting** — `limits.globalRps`/`globalBurst` (default 500/1000) bound all `/v1/query` traffic before identity resolution; optional `limits.perIpRps` adds LRU-bounded per-IP buckets; `limits.defaultSubjectRps` applies a fallback per-subject rate to bindings without an explicit `rateLimit`. Denials are 429 `ERR_RATE_LIMITED`, counted in `sluice_rest_rate_limited_total{scope}`.
+- **Serve-embedded MCP stdio authentication** — `mcp.tokenRef` / `mcp.apiKeyRef` (secret refs) pin the stdio identity under `serve`, mirroring `sluice mcp --jwt/--api-key`; without a credential, stdio refuses to start unless `mcp.allowAnonymous: true` is set explicitly (also rejected by `sluice config validate`, exit 3). Previously serve-embedded stdio silently ran every tool call as the anonymous subject.
+
 - **Datasource health monitoring is real** — the health sweep now borrows a connection from the executor pool and runs each driver's `HealthCheck` (one immediate sweep at boot, then every `HealthInterval`, default 30 s). Previously the sweep was a placeholder with zero probe callers: `/v1/ready` returned 503 permanently once a DataSource was configured and MCP `list_catalogs` always reported `healthy:false`. Attach failures and unknown catalogs on the query path now return `ERR_DATASOURCE_UNAVAILABLE` (503) instead of `ERR_INTERNAL`.
 - **`audit.sqlSampleBytes`** (default `2048`) — audit records now carry a bounded `sql_sample`; it was always empty because the limit was never wired. Set `0` to disable sampling and restore the previous behavior.
 
@@ -31,6 +38,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **A Bearer token presented while zero SubjectBindings are configured is now rejected with 401** instead of falling through to anonymous — the JWT identifier is constructed even with an empty binding set so a reload can introduce the first issuer without a restart.
+- **The default deployment now has a global request-rate ceiling** (`limits.globalRps: 500`); set `0` to disable. Per-IP and default-subject rates ship disabled.
+- **`sluice config validate` cross-checks ApprovalPolicies against `approval.publicBaseUrl`** — a policy directory containing ApprovalPolicy objects without a configured base URL now exits 3 (serve already refused this combination at boot).
+- **`approval.New` returns `(*Broker, error)`** and the broker gained `Close` (store lifecycle).
 - **Unenforceable configuration now fails at load** — `rest.tls.clientCA`/`clientAuth`, `admin.tls`, `datasources.reload`, AuditSink types `s3`/`postgres`/`syslog`/`otlp`, and `secret://vault|aws-sm|gcp-sm` references parsed but silently did nothing; they are now rejected with a "parsed but unimplemented" error naming the field (`sluice config validate` exits 3, `serve`/`mcp` refuse to start). Guards drop as each feature lands.
 - **Approval webhook SQL sampling honors `approval.sqlSampleBytes`** — the knob was never read; a hardcoded 2048-byte fallback always won. `0` now disables the sample instead of silently reverting to 2048.
 - **QueryRewritePolicy `hint` entries and out-of-subset CEL expressions now fail at policy load** (previously inert/rejected-as-unsupported).
@@ -40,6 +51,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **CEL `startsWith`/`endsWith`/`contains` row-filter matchers mismatched on `%`, `_`, and `\`** — they lowered to `LIKE` with backslash-escaped patterns, but DuckDB's `LIKE` has no default escape character, so the escapes were matched literally (typically under-matching; over-matching inside `not:`). The matchers now lower to the literal-safe string operators and involve no pattern escaping at all.
 - **`limits.disableCrossCatalog` is enforced** — it parsed (and was documented as working) but had zero readers. Queries spanning more than one catalog are now rejected with `ERR_ACL_REJECTED` before policy evaluation and before the rewrite cache. Only three-part (`catalog.schema.table`) names carry a catalog — parity with the policy rule `size(query.catalogs) > 1`.
 - **CSV metadata delivered as HTTP trailers** — `X-Sluice-Row-Count`/`X-Sluice-Truncated` were set after the response body was committed, so clients never received them; they now arrive as declared trailers without breaking streaming.
 - **`truncated` was always `false`** in JSON response bodies and completion audit records: the executor flips its truncation flag during iteration, after the result envelope was built, and nothing synced it back.

@@ -5,6 +5,7 @@ package audit_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -109,7 +110,7 @@ func TestSyslogSink_DeliveryFailureIsSwallowed(t *testing.T) {
 	if err := sink.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if err := sink.Record(context.Background(), rec); err != audit.ErrClosed {
+	if err := sink.Record(context.Background(), rec); !errors.Is(err, audit.ErrClosed) {
 		t.Fatalf("Record after Close = %v, want ErrClosed", err)
 	}
 }

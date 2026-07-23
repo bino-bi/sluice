@@ -85,7 +85,7 @@ curl -s -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
 ## What is not there yet
 
 !!! warning "Not yet implemented"
-    There is no OpenTelemetry tracing — no spans are emitted. Audit sinks
-    other than `file` (`s3`, `postgres`, `syslog`, `otlp`) parse in an
-    `AuditSink` manifest but are not implemented; only the file sink
-    writes records.
+    There is no OpenTelemetry tracing — no spans are emitted. The
+    `postgres` and `otlp` audit sink types are not implemented; `syslog`
+    and `s3` forwarding are configured via the `audit.*` server config
+    (see [audit](../security/audit.md)), not via `AuditSink` manifests.
