@@ -67,6 +67,11 @@ type Deps struct {
 	// the authenticated status poll. Nil disables those routes.
 	Approvals ApprovalGateway
 
+	// GlobalLimiter and PerIPLimiter bound /v1/query traffic ahead of
+	// identity resolution. Nil disables the respective bucket.
+	GlobalLimiter keyLimiter
+	PerIPLimiter  keyLimiter
+
 	// Logger receives request/error logs. Nil uses slog.Default.
 	Logger *slog.Logger
 }

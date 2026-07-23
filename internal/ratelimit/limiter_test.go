@@ -46,6 +46,41 @@ func TestLimiter_UnconfiguredAndAnonymousAreUnlimited(t *testing.T) {
 	}
 }
 
+func TestLimiter_DefaultSpecForUnboundSubjects(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := ratelimit.New(func() time.Time { return now })
+	l.SetDefault(ratelimit.Spec{RPS: 1, Burst: 1})
+	l.SetSpecs(map[string]ratelimit.Spec{"alice": {RPS: 1, Burst: 3}}, nil)
+
+	// Unbound subject falls back to the default spec.
+	if !l.Allow("bob", "") {
+		t.Fatal("bob first request allowed under default spec")
+	}
+	if l.Allow("bob", "") {
+		t.Fatal("bob second request denied (default burst 1)")
+	}
+	// A binding-level spec overrides the default.
+	for i := range 3 {
+		if !l.Allow("alice", "") {
+			t.Fatalf("alice request %d within binding burst must be allowed", i+1)
+		}
+	}
+	// Anonymous stays unlimited even with a default set.
+	for range 10 {
+		if !l.Allow("", "") {
+			t.Fatal("anonymous must stay unlimited")
+		}
+	}
+	// A reload (SetSpecs) preserves the default.
+	l.SetSpecs(nil, nil)
+	if !l.Allow("carol", "") {
+		t.Fatal("carol first request allowed under default spec")
+	}
+	if l.Allow("carol", "") {
+		t.Fatal("default spec must survive SetSpecs")
+	}
+}
+
 func TestLimiter_PerIssuerAppliesPerSubject(t *testing.T) {
 	now := time.Unix(0, 0)
 	l := ratelimit.New(func() time.Time { return now })

@@ -137,7 +137,13 @@ type IdentityConfig struct {
 	APIKeyPepper string `mapstructure:"apiKeyPepper"` // secret:// ref
 }
 
-// LimitsConfig bundles request-size / concurrency / cross-catalog switches.
+// LimitsConfig bundles request-size / concurrency / rate / cross-catalog
+// switches. The rate fields are token buckets: RPS refills, Burst caps.
+// GlobalRPS bounds all /v1/query traffic before identity resolution;
+// PerIPRPS adds a per-remote-IP bucket on the same path (off by default —
+// behind a load balancer every request shares the LB's address);
+// DefaultSubjectRPS applies to authenticated subjects whose binding has no
+// explicit rateLimit. Zero RPS disables the respective bucket.
 type LimitsConfig struct {
 	MaxRows             int64         `mapstructure:"maxRows"`
 	MaxRowsCeiling      int64         `mapstructure:"maxRowsCeiling"`
@@ -146,6 +152,13 @@ type LimitsConfig struct {
 	MaxQueryTimeout     time.Duration `mapstructure:"maxQueryTimeout"`
 	MaxConcurrent       int           `mapstructure:"maxConcurrent"`
 	DisableCrossCatalog bool          `mapstructure:"disableCrossCatalog"`
+	GlobalRPS           float64       `mapstructure:"globalRps"`
+	GlobalBurst         int           `mapstructure:"globalBurst"`
+	PerIPRPS            float64       `mapstructure:"perIpRps"`
+	PerIPBurst          int           `mapstructure:"perIpBurst"`
+	PerIPMaxBuckets     int           `mapstructure:"perIpMaxBuckets"`
+	DefaultSubjectRPS   float64       `mapstructure:"defaultSubjectRps"`
+	DefaultSubjectBurst int           `mapstructure:"defaultSubjectBurst"`
 }
 
 // CacheConfig configures the optional rewrite/decision cache.
@@ -253,6 +266,9 @@ func DefaultServerConfig() ServerConfig {
 			QueryTimeout:    30 * time.Second,
 			MaxQueryTimeout: 30 * time.Second,
 			MaxConcurrent:   100,
+			GlobalRPS:       500,
+			GlobalBurst:     1000,
+			PerIPMaxBuckets: 10_000,
 		},
 		Cache: CacheConfig{
 			Rewrite: RewriteCacheConfig{
@@ -365,6 +381,13 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 	v.SetDefault("limits.maxQueryTimeout", d.Limits.MaxQueryTimeout)
 	v.SetDefault("limits.maxConcurrent", d.Limits.MaxConcurrent)
 	v.SetDefault("limits.disableCrossCatalog", d.Limits.DisableCrossCatalog)
+	v.SetDefault("limits.globalRps", d.Limits.GlobalRPS)
+	v.SetDefault("limits.globalBurst", d.Limits.GlobalBurst)
+	v.SetDefault("limits.perIpRps", d.Limits.PerIPRPS)
+	v.SetDefault("limits.perIpBurst", d.Limits.PerIPBurst)
+	v.SetDefault("limits.perIpMaxBuckets", d.Limits.PerIPMaxBuckets)
+	v.SetDefault("limits.defaultSubjectRps", d.Limits.DefaultSubjectRPS)
+	v.SetDefault("limits.defaultSubjectBurst", d.Limits.DefaultSubjectBurst)
 
 	v.SetDefault("cache.rewrite.enabled", d.Cache.Rewrite.Enabled)
 	v.SetDefault("cache.rewrite.size", d.Cache.Rewrite.Size)

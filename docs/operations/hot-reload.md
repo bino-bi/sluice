@@ -55,8 +55,9 @@ A successful swap updates, atomically:
 
 `sluice.yaml` is read once at boot. Listener addresses (`rest.listen`,
 `mcp.listen`, `admin.listen`), the policy engine selection
-(`policies.engine`), limits, DuckDB pool settings, and audit configuration
-all require a restart. `DataSource` attachments are also built at boot —
+(`policies.engine`), limits (including the transport-level `globalRps` /
+`perIpRps` buckets and `defaultSubjectRps`), DuckDB pool settings, and
+audit configuration all require a restart. `DataSource` attachments are also built at boot —
 the reload path does not re-attach catalogs, so restart after changing a
 `DataSource` manifest.
 

@@ -72,8 +72,10 @@ flowchart LR
 | Stolen API key | Peppered HMAC hashes (no key material at rest), rate limits and budgets bound the blast radius, the audit chain shows exactly what the key did | Contained + attributable |
 | Audit log tampering | Hash chain + `sluice audit verify --anchor` | Detected at the exact line |
 
-Rate limiting and budgets are enforced today, per `SubjectBinding` — see
-[Subjects, keys & budgets](../policies/subjects.md).
+Rate limiting is enforced at two levels: transport-level global and per-IP token buckets ahead
+of authentication (`limits.globalRps`, `limits.perIpRps`), and per-subject buckets from
+`SubjectBinding.spec.rateLimit` with an optional `limits.defaultSubjectRps` fallback. Budgets
+are enforced per `SubjectBinding` — see [Subjects, keys & budgets](../policies/subjects.md).
 
 ## Residual risks
 

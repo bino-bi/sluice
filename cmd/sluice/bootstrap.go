@@ -240,8 +240,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		return nil, fmt.Errorf("identity: %w", err)
 	}
 
-	// 14. Per-subject rate limiter (from SubjectBinding.spec.rateLimit).
+	// 14. Per-subject rate limiter (from SubjectBinding.spec.rateLimit,
+	// falling back to limits.defaultSubjectRps for bindings without one).
 	deps.rateLimiter = ratelimit.New(nil)
+	deps.rateLimiter.SetDefault(ratelimit.Spec{
+		RPS:   scfg.Limits.DefaultSubjectRPS,
+		Burst: scfg.Limits.DefaultSubjectBurst,
+	})
 	{
 		bySub, byIss := buildRateSpecs(snap)
 		deps.rateLimiter.SetSpecs(bySub, byIss)
@@ -316,13 +321,25 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if t := scfg.REST.TLS; t != nil && t.CertFile != "" && t.KeyFile != "" {
 		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
 	}
-	deps.rest = rest.New(restCfg, rest.Deps{
+	restDeps := rest.Deps{
 		Service:    deps.service,
 		Identifier: deps.identifier,
 		Registry:   deps.sourceReg,
 		Approvals:  approvalGateway(deps.approvals),
 		Logger:     deps.log,
-	})
+	}
+	// Transport-level buckets sit ahead of identity on /v1/query; zero RPS
+	// disables them (limits.* is restart-only, like the other limits).
+	if scfg.Limits.GlobalRPS > 0 {
+		restDeps.GlobalLimiter = ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: scfg.Limits.GlobalRPS, Burst: scfg.Limits.GlobalBurst}, 1, nil)
+	}
+	if scfg.Limits.PerIPRPS > 0 {
+		restDeps.PerIPLimiter = ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: scfg.Limits.PerIPRPS, Burst: scfg.Limits.PerIPBurst},
+			scfg.Limits.PerIPMaxBuckets, nil)
+	}
+	deps.rest = rest.New(restCfg, restDeps)
 
 	if scfg.MCP.Enabled {
 		deps.mcp, err = mcp.New(mcp.Config{

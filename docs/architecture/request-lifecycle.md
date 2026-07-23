@@ -38,10 +38,14 @@ sequenceDiagram
 
 ## Admission
 
+0. **Transport buckets.** Before identity resolution, `limits.globalRps` bounds all `/v1/query`
+   traffic and `limits.perIpRps` (optional) bounds each remote IP; over either is a 429
+   `ERR_RATE_LIMITED` that never reaches the identity layer.
 1. **Concurrency slot.** `limits.maxConcurrent` caps in-flight requests; a saturated service
    returns `ERR_RATE_LIMITED` after a short grace wait.
-2. **Per-subject rate limit.** A token bucket keyed on the subject (falling back to the issuer)
-   enforces the SubjectBinding's `rateLimit{rps, burst}`; over the limit is `ERR_RATE_LIMITED`.
+2. **Per-subject rate limit.** A token bucket keyed on the subject (falling back to the issuer,
+   then to `limits.defaultSubjectRps`) enforces the SubjectBinding's `rateLimit{rps, burst}`;
+   over the limit is `ERR_RATE_LIMITED`.
 3. **Daily budget.** If budgets are enabled, the subject's CPU-seconds and rows-served ledger is
    checked before any work; an exhausted budget returns `ERR_BUDGET_EXCEEDED`.
 4. **Input caps.** SQL larger than `limits.maxSqlBytes` returns `ERR_PAYLOAD_TOO_LARGE`. The

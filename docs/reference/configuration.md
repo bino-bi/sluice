@@ -63,6 +63,13 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `limits.maxQueryTimeout` | `Duration` | `30s` | `SLUICE_LIMITS__MAXQUERYTIMEOUT` |
 | `limits.maxConcurrent` | `int` | `100` | `SLUICE_LIMITS__MAXCONCURRENT` |
 | `limits.disableCrossCatalog` | `bool` | `false` | `SLUICE_LIMITS__DISABLECROSSCATALOG` |
+| `limits.globalRps` | `float64` | `500` | `SLUICE_LIMITS__GLOBALRPS` |
+| `limits.globalBurst` | `int` | `1000` | `SLUICE_LIMITS__GLOBALBURST` |
+| `limits.perIpRps` | `float64` | `0` | `SLUICE_LIMITS__PERIPRPS` |
+| `limits.perIpBurst` | `int` | `0` | `SLUICE_LIMITS__PERIPBURST` |
+| `limits.perIpMaxBuckets` | `int` | `10000` | `SLUICE_LIMITS__PERIPMAXBUCKETS` |
+| `limits.defaultSubjectRps` | `float64` | `0` | `SLUICE_LIMITS__DEFAULTSUBJECTRPS` |
+| `limits.defaultSubjectBurst` | `int` | `0` | `SLUICE_LIMITS__DEFAULTSUBJECTBURST` |
 | `cache.rewrite.enabled` | `bool` | `false` | `SLUICE_CACHE__REWRITE__ENABLED` |
 | `cache.rewrite.size` | `int` | `4096` | `SLUICE_CACHE__REWRITE__SIZE` |
 | `cache.rewrite.ttl` | `Duration` | `1m0s` | `SLUICE_CACHE__REWRITE__TTL` |
