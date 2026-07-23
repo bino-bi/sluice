@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -72,6 +73,10 @@ type JWTIdentifier struct {
 	algSet   map[string]struct{}
 	log      *slog.Logger
 	clock    func() time.Time
+
+	// hmacSecrets holds the live issuer→secret map; swapped atomically by
+	// SetHMACSecrets on config reload while VerifyToken reads lock-free.
+	hmacSecrets atomic.Pointer[map[string][]byte]
 }
 
 // NewJWTIdentifier constructs the identifier. Requires a non-nil
@@ -107,7 +112,7 @@ func NewJWTIdentifier(opts JWTOptions) (*JWTIdentifier, error) {
 		jwt.WithExpirationRequired(),
 	)
 
-	return &JWTIdentifier{
+	j := &JWTIdentifier{
 		opts:     opts,
 		bindings: opts.Bindings,
 		jwks:     jwks,
@@ -115,7 +120,17 @@ func NewJWTIdentifier(opts JWTOptions) (*JWTIdentifier, error) {
 		algSet:   algSet,
 		log:      log,
 		clock:    clock,
-	}, nil
+	}
+	j.hmacSecrets.Store(&opts.HMACSecrets)
+	return j, nil
+}
+
+// SetHMACSecrets atomically replaces the issuer→secret map. Safe to call
+// from any goroutine; concurrent VerifyToken calls see either the old or
+// the new map in full. Called by the config-reload subscriber alongside
+// BindingRegistry.Apply.
+func (j *JWTIdentifier) SetHMACSecrets(secrets map[string][]byte) {
+	j.hmacSecrets.Store(&secrets)
 }
 
 // Name implements Identifier.
@@ -229,8 +244,10 @@ func (j *JWTIdentifier) allowedAlgs() []string {
 
 func (j *JWTIdentifier) keyFor(ctx context.Context, alg, kid string, binding *apitypes.SubjectBinding) (any, error) {
 	if strings.HasPrefix(alg, "HS") {
-		if secret, ok := j.opts.HMACSecrets[binding.Spec.Issuer]; ok {
-			return secret, nil
+		if m := j.hmacSecrets.Load(); m != nil {
+			if secret, ok := (*m)[binding.Spec.Issuer]; ok {
+				return secret, nil
+			}
 		}
 		return nil, fmt.Errorf("%w: no HMAC secret for issuer %q", ErrInvalidCredential, binding.Spec.Issuer)
 	}

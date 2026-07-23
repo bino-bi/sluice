@@ -61,6 +61,8 @@ type runtimeDeps struct {
 	auditSinks   []audit.Sink
 	identifier   identity.Identifier
 	apikey       *identity.APIKeyIdentifier
+	jwtID        *identity.JWTIdentifier
+	jwtBindings  *identity.BindingRegistry
 	service      *queryservice.Service
 	rateLimiter  *ratelimit.Limiter
 	rewriteCache *policycache.Cache
@@ -235,10 +237,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 
 	// 13. Identity — JWT via SubjectBindings + optional API-key pepper.
-	deps.identifier, deps.apikey, err = buildIdentity(ctx, scfg, deps.resolver, snap, deps.log)
+	ids, err := buildIdentity(ctx, scfg, deps.resolver, snap, deps.log)
 	if err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
+	deps.identifier = ids.identifier
+	deps.apikey = ids.apikey
+	deps.jwtID = ids.jwt
+	deps.jwtBindings = ids.bindings
 
 	// 14. Per-subject rate limiter (from SubjectBinding.spec.rateLimit,
 	// falling back to limits.defaultSubjectRps for bindings without one).
@@ -379,40 +385,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			if cur == nil {
 				return
 			}
-			if err := deps.policyEngine.ApplySnapshot(ctx, cur); err != nil {
-				deps.log.Warn("reload: policy engine rejected snapshot",
-					slog.String("error", err.Error()))
-			}
-			if deps.apikey != nil {
-				// Invalidate cached secrets so rotated hashRef URIs
-				// return the new value on resolve.
-				deps.resolver.Invalidate()
-				bindings, err := buildAPIKeyBindings(ctx, deps.resolver, cur, deps.log)
-				if err != nil {
-					deps.log.Warn("reload: api-key bindings build failed",
-						slog.String("error", err.Error()))
-				} else {
-					deps.apikey.SetBindings(bindings)
-				}
-			}
-			if deps.rateLimiter != nil {
-				bySub, byIss := buildRateSpecs(cur)
-				deps.rateLimiter.SetSpecs(bySub, byIss)
-			}
-			if deps.budget != nil {
-				deps.budget.SetSpecs(buildBudgetSpecs(cur))
-			}
-			if deps.rewriteCache != nil {
-				deps.rewriteCache.Purge()
-			}
-			// ApprovalPolicies added on reload without a configured public
-			// base URL cannot be honoured (the broker was not built).
-			// Fail-closed: queries will pend and expire; log loudly.
-			if deps.approvals == nil && len(cur.ByKind[apitypes.KindApprovalPolicy]) > 0 {
-				deps.log.Error("reload added ApprovalPolicies but no approval broker is configured; " +
-					"set approval.publicBaseUrl and restart — matching queries will pend and expire")
-			}
-			deps.schemaCache.InvalidateAll()
+			deps.applyReload(ctx, cur)
 		})
 	}
 
@@ -433,6 +406,68 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 
 	return deps, nil
+}
+
+// applyReload applies a published snapshot to every hot-swappable
+// component. Never fatal: each failure logs and keeps the previous state,
+// so a bad reload cannot take the gateway down. Nil guards on every dep
+// keep the method usable from minimal test fixtures.
+func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
+	if d.resolver != nil {
+		// Invalidate cached secrets so rotated hashRef / hmacSecretRef
+		// URIs return the new value on resolve.
+		d.resolver.Invalidate()
+	}
+	if d.policyEngine != nil {
+		if err := d.policyEngine.ApplySnapshot(ctx, cur); err != nil {
+			d.log.Warn("reload: policy engine rejected snapshot",
+				slog.String("error", err.Error()))
+		}
+	}
+	if d.apikey != nil {
+		bindings, err := buildAPIKeyBindings(ctx, d.resolver, cur, d.log)
+		if err != nil {
+			d.log.Warn("reload: api-key bindings build failed",
+				slog.String("error", err.Error()))
+		} else {
+			d.apikey.SetBindings(bindings)
+		}
+	}
+	if d.jwtID != nil && d.jwtBindings != nil {
+		// Secrets resolve before Apply so a resolution failure never
+		// half-applies; the swap order leaves at most a brief window of
+		// new bindings with old secrets, never the reverse.
+		hmac, err := buildHMACSecrets(ctx, d.resolver, cur)
+		if err != nil {
+			d.log.Warn("reload: hmac secret resolve failed; keeping previous jwt bindings",
+				slog.String("error", err.Error()))
+		} else if err := d.jwtBindings.Apply(derefBindings(cur.SubjectBindings)); err != nil {
+			d.log.Warn("reload: jwt bindings rejected; keeping previous",
+				slog.String("error", err.Error()))
+		} else {
+			d.jwtID.SetHMACSecrets(hmac)
+		}
+	}
+	if d.rateLimiter != nil {
+		bySub, byIss := buildRateSpecs(cur)
+		d.rateLimiter.SetSpecs(bySub, byIss)
+	}
+	if d.budget != nil {
+		d.budget.SetSpecs(buildBudgetSpecs(cur))
+	}
+	if d.rewriteCache != nil {
+		d.rewriteCache.Purge()
+	}
+	// ApprovalPolicies added on reload without a configured public base
+	// URL cannot be honoured (the broker was not built). Fail-closed:
+	// queries will pend and expire; log loudly.
+	if d.approvals == nil && len(cur.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+		d.log.Error("reload added ApprovalPolicies but no approval broker is configured; " +
+			"set approval.publicBaseUrl and restart — matching queries will pend and expire")
+	}
+	if d.schemaCache != nil {
+		d.schemaCache.InvalidateAll()
+	}
 }
 
 // reloaderFromWatcher adapts the config.Watcher.Reload signature to the
@@ -523,56 +558,66 @@ func resolveGenesisSeed(ctx context.Context, r *secrets.Resolver, file *config.F
 // come from SubjectBinding.Spec.APIKeys in the snapshot. The returned
 // *APIKeyIdentifier is non-nil only when the API-key branch is active,
 // so the caller can hand it to the registry subscription for reload.
-func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Resolver, snap *config.Snapshot, log *slog.Logger) (identity.Identifier, *identity.APIKeyIdentifier, error) {
-	var (
-		children []identity.Identifier
-		apikeyID *identity.APIKeyIdentifier
-	)
+// identityStack bundles the composite identifier with the handles the
+// reload subscriber needs to hot-swap JWT bindings, HMAC secrets, and
+// API-key bindings.
+type identityStack struct {
+	identifier identity.Identifier
+	apikey     *identity.APIKeyIdentifier
+	jwt        *identity.JWTIdentifier
+	bindings   *identity.BindingRegistry
+}
 
-	if len(snap.SubjectBindings) > 0 {
-		bindReg, err := identity.NewBindingRegistry(derefBindings(snap.SubjectBindings))
-		if err != nil {
-			return nil, nil, fmt.Errorf("binding registry: %w", err)
-		}
-		hmacSecrets, err := buildHMACSecrets(ctx, r, snap)
-		if err != nil {
-			return nil, nil, err
-		}
-		jwtID, err := identity.NewJWTIdentifier(identity.JWTOptions{
-			Bindings:    bindReg,
-			HMACSecrets: hmacSecrets,
-			Logger:      log,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("jwt identifier: %w", err)
-		}
-		children = append(children, jwtID)
+func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Resolver, snap *config.Snapshot, log *slog.Logger) (identityStack, error) {
+	var stack identityStack
+
+	// The JWT identifier is built even with zero SubjectBindings so a
+	// reload can introduce the first binding without a restart. An empty
+	// registry rejects every Bearer token with unknown-issuer (fail-closed)
+	// and requests without one fall through to the API-key child.
+	bindReg, err := identity.NewBindingRegistry(derefBindings(snap.SubjectBindings))
+	if err != nil {
+		return identityStack{}, fmt.Errorf("binding registry: %w", err)
 	}
+	hmacSecrets, err := buildHMACSecrets(ctx, r, snap)
+	if err != nil {
+		return identityStack{}, err
+	}
+	jwtID, err := identity.NewJWTIdentifier(identity.JWTOptions{
+		Bindings:    bindReg,
+		HMACSecrets: hmacSecrets,
+		Logger:      log,
+	})
+	if err != nil {
+		return identityStack{}, fmt.Errorf("jwt identifier: %w", err)
+	}
+	stack.jwt = jwtID
+	stack.bindings = bindReg
+	children := []identity.Identifier{jwtID}
 
 	if scfg.Identity.APIKeyPepper != "" {
 		pepper, err := r.Resolve(ctx, scfg.Identity.APIKeyPepper)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve apiKeyPepper: %w", err)
+			return identityStack{}, fmt.Errorf("resolve apiKeyPepper: %w", err)
 		}
 		bindings, err := buildAPIKeyBindings(ctx, r, snap, log)
 		if err != nil {
-			return nil, nil, fmt.Errorf("api-key bindings: %w", err)
+			return identityStack{}, fmt.Errorf("api-key bindings: %w", err)
 		}
-		apikeyID = identity.NewAPIKeyIdentifier(identity.APIKeyOptions{
+		stack.apikey = identity.NewAPIKeyIdentifier(identity.APIKeyOptions{
 			Pepper:   pepper,
 			Bindings: bindings,
 			Logger:   log,
 		})
-		children = append(children, apikeyID)
+		children = append(children, stack.apikey)
 	}
 
-	if len(children) == 0 {
-		// Allow-anonymous composite: every request becomes anonymous.
-		// The policy engine still applies default-deny.
-		log.Warn("identity: no identifiers configured — requests will be anonymous")
-		return identity.NewComposite(), nil, nil
+	if len(snap.SubjectBindings) == 0 && scfg.Identity.APIKeyPepper == "" {
+		// The policy engine still applies default-deny to anonymous.
+		log.Warn("identity: no credentials configured — requests are anonymous until a reload adds SubjectBindings")
 	}
-	return identity.NewComposite(children...), apikeyID, nil
+	stack.identifier = identity.NewComposite(children...)
+	return stack, nil
 }
 
 // buildRateSpecs extracts per-subject and per-issuer rate-limit specs from

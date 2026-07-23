@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // newConfigCmd wires `sluice config validate`. `sluice config` itself is a
@@ -44,15 +45,17 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
+			var scfg *config.ServerConfig
 			if serverPath != "" {
-				scfg, err := config.LoadServer(serverPath, nil)
+				loaded, err := config.LoadServer(serverPath, nil)
 				if err != nil {
 					return &exitError{Code: 1, Err: fmt.Errorf("server config: %w", err)}
 				}
-				if verr := scfg.Validate(); verr != nil {
+				if verr := loaded.Validate(); verr != nil {
 					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), verr.Error())
 					return &exitError{Code: 3}
 				}
+				scfg = loaded
 				_, _ = fmt.Fprintf(out, "server config OK: %s\n", serverPath)
 			}
 
@@ -75,6 +78,16 @@ Exit codes:
 					return &exitError{Code: 3}
 				}
 				return &exitError{Code: 1, Err: err}
+			}
+
+			// Cross-check: ApprovalPolicies need approval.publicBaseUrl or
+			// the broker cannot mint capability URLs — serve refuses this
+			// combination at boot, so catch it here too.
+			if scfg != nil && scfg.Approval.PublicBaseURL == "" &&
+				len(snap.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
+					"approval.publicBaseUrl: required — the policy directory contains ApprovalPolicy objects, and without a public base URL matching queries pend until expiry")
+				return &exitError{Code: 3}
 			}
 
 			_, _ = fmt.Fprintf(out, "policies OK: %s (%d objects, digest %s)\n",

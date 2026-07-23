@@ -47,17 +47,28 @@ A successful swap updates, atomically:
   recompiled from `policies.opa.moduleDir`),
 - API-key bindings — rebuilt, with the secret cache invalidated first so
   rotated `hashRef` values are re-read,
+- JWT subject bindings — issuer set, audience, claim mappings, clock skew,
+  and per-issuer HMAC secrets (the secret cache invalidation also re-reads
+  rotated `hmacSecretRef` values; RS/ES keys refresh via each binding's
+  JWKS cache TTL). A snapshot with duplicate issuers is rejected and the
+  previous binding set stays live,
 - rate-limit and budget specs from `SubjectBinding` manifests,
 - the rewrite cache (purged — no decision outlives its snapshot),
 - the schema cache (invalidated).
+
+`ApprovalPolicy` objects hot-reload like every other policy kind. The
+broker that serves them exists whenever `approval.publicBaseUrl` is set —
+configure it even before the first ApprovalPolicy lands so a reload can
+introduce one without a restart. Reload-added ApprovalPolicies without a
+configured base URL log an error and matching queries pend until expiry.
 
 ## What does not hot-reload
 
 `sluice.yaml` is read once at boot. Listener addresses (`rest.listen`,
 `mcp.listen`, `admin.listen`), the policy engine selection
 (`policies.engine`), limits (including the transport-level `globalRps` /
-`perIpRps` buckets and `defaultSubjectRps`), DuckDB pool settings, and
-audit configuration all require a restart. `DataSource` attachments are also built at boot —
+`perIpRps` buckets and `defaultSubjectRps`), `approval.publicBaseUrl`,
+DuckDB pool settings, and audit configuration all require a restart. `DataSource` attachments are also built at boot —
 the reload path does not re-attach catalogs, so restart after changing a
 `DataSource` manifest.
 
