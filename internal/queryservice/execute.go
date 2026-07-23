@@ -102,6 +102,21 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.SQLFingerprint = ast.Fingerprint()
 	}
 
+	// 1b. Cross-catalog gate. Runs before the rewrite cache and policy so
+	// a memoised Allow cannot bypass it. Only three-part
+	// (catalog.schema.table) names carry a catalog, matching the policy
+	// rule size(query.catalogs) > 1.
+	if s.opts.Limits.DisableCrossCatalog {
+		if cats := catalogsFromTables(tables); len(cats) > 1 {
+			rec.Decision = audit.DecisionReject
+			rec.Message = "cross-catalog queries are disabled (limits.disableCrossCatalog)"
+			s.emit(ctx, rec, start)
+			releaseSlot()
+			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).
+				WithMessage("cross-catalog queries are disabled (limits.disableCrossCatalog)")
+		}
+	}
+
 	// 2. Policy evaluation + rewrite, memoised when the cache is enabled.
 	// The key binds the raw SQL text and full identity to the active
 	// snapshot; a hit skips both Evaluate and Rewrite. Everything else

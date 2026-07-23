@@ -274,12 +274,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Keys:            secrets.NewKeyStore(deps.resolver),
 		Salts:           secrets.NewSaltStore(deps.resolver),
 		Limits: queryservice.Limits{
-			DefaultMaxRows: scfg.Limits.MaxRows,
-			MaxRowsCeiling: scfg.Limits.MaxRowsCeiling,
-			DefaultTimeout: scfg.Limits.QueryTimeout,
-			MaxTimeout:     scfg.Limits.MaxQueryTimeout,
-			MaxSQLBytes:    scfg.Limits.MaxSQLBytes,
-			MaxConcurrent:  scfg.Limits.MaxConcurrent,
+			DefaultMaxRows:      scfg.Limits.MaxRows,
+			MaxRowsCeiling:      scfg.Limits.MaxRowsCeiling,
+			DefaultTimeout:      scfg.Limits.QueryTimeout,
+			MaxTimeout:          scfg.Limits.MaxQueryTimeout,
+			MaxSQLBytes:         scfg.Limits.MaxSQLBytes,
+			MaxConcurrent:       scfg.Limits.MaxConcurrent,
+			DisableCrossCatalog: scfg.Limits.DisableCrossCatalog,
 		},
 	}
 	if deps.rewriteCache != nil {

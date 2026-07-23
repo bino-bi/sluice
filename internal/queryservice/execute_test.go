@@ -435,6 +435,84 @@ func TestExecute_RejectEmitsOnce(t *testing.T) {
 	}
 }
 
+func TestExecute_CrossCatalogGate(t *testing.T) {
+	twoCatalogs := []parser.TableRef{
+		{Catalog: "pg", Schema: "public", Table: "orders"},
+		{Catalog: "ref", Schema: "public", Table: "regions"},
+	}
+	oneCatalog := []parser.TableRef{
+		{Catalog: "pg", Schema: "public", Table: "orders"},
+		{Catalog: "pg", Schema: "public", Table: "customers"},
+	}
+	// Two-part names carry no catalog; the gate cannot see them (parity
+	// with the policy rule size(query.catalogs) > 1).
+	twoPart := []parser.TableRef{
+		{Schema: "sales", Table: "orders"},
+		{Schema: "crm", Table: "contacts"},
+	}
+
+	cases := []struct {
+		name    string
+		disable bool
+		tables  []parser.TableRef
+		reject  bool
+	}{
+		{"two catalogs, flag on", true, twoCatalogs, true},
+		{"one catalog, flag on", true, oneCatalog, false},
+		{"two catalogs, flag off", false, twoCatalogs, false},
+		{"two-part names, flag on", true, twoPart, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeAudit{}
+			ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{ast: &fakeAST{tables: tc.tables, stmt: parser.StmtSelect, fingerprint: "fp-in"}},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: ex,
+				Audit:    a,
+				Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+				Limits:   queryservice.Limits{DisableCrossCatalog: tc.disable},
+			})
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+				SQL:    "SELECT 1",
+				Origin: queryservice.OriginREST,
+			})
+			if !tc.reject {
+				if err != nil {
+					t.Fatalf("execute: %v", err)
+				}
+				_ = res.Rows.Close()
+				if ex.execCount != 1 {
+					t.Fatalf("execCount = %d, want 1", ex.execCount)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected cross-catalog reject")
+			}
+			ae := pkgerr.FromError(err)
+			if ae.Code != pkgerr.CodeACLRejected {
+				t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeACLRejected)
+			}
+			if ex.execCount != 0 {
+				t.Fatalf("executor must not run on reject, got %d calls", ex.execCount)
+			}
+			recs := a.all()
+			if len(recs) != 1 {
+				t.Fatalf("reject must emit exactly 1 audit record, got %d", len(recs))
+			}
+			if recs[0].Decision != audit.DecisionReject {
+				t.Fatalf("decision = %s, want reject", recs[0].Decision)
+			}
+			if recs[0].Message == "" {
+				t.Fatalf("reject audit record must carry a message")
+			}
+		})
+	}
+}
+
 func TestExecute_ParseErrorWithAllow(t *testing.T) {
 	a := &fakeAudit{}
 	svc := buildService(t,
