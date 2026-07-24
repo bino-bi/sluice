@@ -124,9 +124,9 @@ in the audit log under the pinned subject.
 !!! warning "Not yet implemented"
     Prompt-side niceties like schema descriptions from your own metadata store
     are not part of the tool surface; `describe_table` returns column names,
-    types, and nullability only. There is also no OpenTelemetry tracing of
-    tool calls yet —
-    the audit log is the source of truth for agent activity.
+    types, and nullability only. The audit log is the source of truth for
+    agent activity; OTel spans (when `tracing` is enabled) add latency
+    context on top.
 
 ## Pitfall: an empty table list is a policy gap, not a bug
 

@@ -38,6 +38,6 @@ an engineering-level map, not evidence.
       replicated across instances. Durability across restarts is opt-in
       (`approval.persist: true`, SQLite-backed); without it a restart
       drops pending requests.
-    - **No OTel tracing.** Observability is structured logs plus
-      Prometheus metrics on the admin listener; see
+    - **DB-driver-level tracing.** OTel tracing covers HTTP requests and
+      the query pipeline; driver-internal spans (otelsql) are pending. See
       [observability](../operations/observability.md).

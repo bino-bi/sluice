@@ -15,7 +15,7 @@ Request body:
 | `max_rows` | int | Row cap for this request; clamped to the server limit. |
 | `timeout_ms` | int | Per-request timeout; clamped to the server maximum. |
 | `format` | string | `json` (default) or `csv`. |
-| `meta` | object | Free-form key/values. Accepted, but not yet written to the audit record. |
+| `meta` | object | Free-form key/values, recorded on the audit access record as `client_meta` (size-capped). |
 
 Response body (`format: json`): `query_id` (the ULID of this request's audit records), `columns`, `rows`, `row_count`, `truncated`. Two headers accompany every response: `X-Query-Id` and `X-Sluice-Applied-Policies`, a comma-separated list of the policies that shaped the result.
 

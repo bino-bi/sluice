@@ -14,9 +14,9 @@ snapshot atomically.
 | `SIGHUP` | `systemctl reload sluice`, or a one-off `kill -HUP` after copying files. |
 | `POST /admin/reload` | Automation and operator tooling, via the admin listener. |
 
-All three triggers require `policies.reload: true` (the default): with
-`policies.reload: false`, the watcher is never built, `SIGHUP` becomes a
-no-op, and `POST /admin/reload` returns `501` ("reload not enabled").
+`policies.reload` (default `true`) gates only the fsnotify watcher.
+`SIGHUP` and `POST /admin/reload` always work under `sluice serve` —
+disabling filesystem watching does not take manual reload with it.
 
 ```bash
 curl -X POST \
@@ -25,8 +25,11 @@ curl -X POST \
 ```
 
 A successful call returns `{"ok": true, "digest": "..."}`; a failed one
-returns an `ERR_CONFIG_INVALID` error and leaves the running snapshot
-untouched.
+returns `ERR_CONFIG_INVALID` (load/decode failure) or
+`ERR_POLICY_INVALID` (policy compile failure) and leaves the running
+snapshot untouched. A snapshot that fails compilation is rejected
+*before* it is published, on every reload path — no component sees a
+half-applied state.
 
 The watcher covers the policy directory tree recursively, reacts only to
 `.yaml`/`.yml` files (dotfiles and editor swap files are ignored), and

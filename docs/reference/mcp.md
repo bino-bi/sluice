@@ -47,12 +47,17 @@ same codes as REST (for example `ACL_DENIED`, `ERR_APPROVAL_PENDING`).
 ### list_catalogs
 
 Input: none. Result: `{catalogs: [{name, type, healthy}]}` — the attached
-data sources.
+data sources. Not paginated: catalog counts are operator-bounded and
+small.
 
 ### list_tables
 
-Input: `catalog` (required), `schema` (optional).
-Result: `{tables: ["catalog.schema.table", …]}`.
+Input: `catalog` (required), `schema` (optional), `limit` (optional, max
+tables per page — default 500, max 1000), `cursor` (optional, opaque
+cursor from a previous `next_cursor`).
+Result: `{tables: ["catalog.schema.table", …], next_cursor?}`. Tables
+come in stable lexicographic order; `next_cursor` is present while more
+pages exist — pass it back as `cursor` to continue.
 
 ### describe_table
 
@@ -75,7 +80,8 @@ a query on a deny.
 
 ### list_accessible_tables
 
-Input: `catalog` (optional restriction). Result: `{tables: […]}` — the
+Input: `catalog` (optional restriction), `limit` / `cursor` (same paging
+contract as `list_tables`). Result: `{tables: […], next_cursor?}` — the
 tables the current identity is allowed to query.
 
 ### check_approval
@@ -91,6 +97,23 @@ Input: `approval_id`, `timeout_seconds` — blocks until the request is
 decided or the timeout elapses, then returns the same shape as
 `check_approval`. The timeout is capped at 55 seconds (values ≤ 0 or > 55
 become 55); prefer this over polling `check_approval` in a loop.
+
+## Visibility semantics
+
+The metadata tools filter every candidate table through the policy
+engine, with three deliberate nuances:
+
+- **Only an explicit Deny hides a table.** Tables behind a
+  `QueryReject` shape rule or an approval gate still list: they are
+  legitimately reachable (a conforming or approved query succeeds), and
+  hiding them would make the approval flow undiscoverable.
+- **`describe_table` returns every column, including mask targets.**
+  Column names and types are the metadata an agent needs to write a
+  valid query; the *values* of masked columns are masked at execution.
+- **Catalogs with no known tables stay visible** in `list_catalogs`.
+  The operator attached them; without table metadata there is no basis
+  to prove they are off-limits, and hiding them would strand
+  legitimately empty catalogs.
 
 ## Claude Desktop configuration
 

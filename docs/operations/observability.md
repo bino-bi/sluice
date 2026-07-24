@@ -82,10 +82,39 @@ curl -s -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
 | `GET /admin/healthz` | admin | Admin-plane health (token required). |
 | `GET /admin/version` | admin | Version, for fleet inventory. |
 
+## Tracing
+
+OpenTelemetry tracing is opt-in via the `tracing` config block:
+
+```yaml
+tracing:
+  enabled: true
+  endpoint: otel-collector:4317
+  protocol: grpc        # or http
+  insecure: false       # plaintext export, for local collectors
+  sampleRatio: 1.0      # parent-based ratio sampler
+```
+
+Spans are exported over OTLP with W3C `traceparent` propagation. Each
+HTTP request on the REST and MCP (streamable) listeners gets a server
+span named after its route; the query pipeline emits a `query` span with
+`query.parse`, `query.policy`, `query.rewrite`, `query.execute`, and
+`query.mask` children. Over MCP stdio the pipeline spans are the trace
+roots.
+
+Attribute policy: spans carry the query id, origin, decision, SQL
+fingerprint, catalog names, and error code — **never raw SQL and never
+secret bytes** (the same redaction posture as logs and metrics). The
+`query` span ends when the pipeline hands the row stream to the
+transport; row-streaming time is not included — the audit
+`query-result` record remains the source of truth for full duration.
+DB-driver-level spans (otelsql) are still on the roadmap; `query.execute`
+bounds DB time meanwhile.
+
 ## What is not there yet
 
 !!! warning "Not yet implemented"
-    There is no OpenTelemetry tracing — no spans are emitted. The
-    `postgres` and `otlp` audit sink types are not implemented; `syslog`
-    and `s3` forwarding are configured via the `audit.*` server config
-    (see [audit](../security/audit.md)), not via `AuditSink` manifests.
+    The `postgres` and `otlp` audit sink types are not implemented;
+    `syslog` and `s3` forwarding are configured via the `audit.*` server
+    config (see [audit](../security/audit.md)), not via `AuditSink`
+    manifests.

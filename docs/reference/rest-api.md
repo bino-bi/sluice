@@ -32,7 +32,7 @@ A missing or invalid credential yields `401` with
 | `max_rows` | int | Row cap for this query (default `limits.maxRows`, clamped to `limits.maxRowsCeiling`) |
 | `timeout_ms` | int | Query timeout in milliseconds (clamped to `limits.maxQueryTimeout`) |
 | `format` | string | `json` (default), `csv`, or `arrow` (rejected — see below) |
-| `meta` | object | String map attached to the request |
+| `meta` | object | String map recorded on the audit access record as `client_meta` (capped: 16 keys, 64-byte keys, 256-byte values) |
 
 When `format` is absent, the `Accept` header is consulted:
 `application/json` (or `*/*`) selects JSON, `text/csv` selects CSV.
@@ -49,11 +49,19 @@ When `format` is absent, the `Accept` header is consulted:
 }
 ```
 
+When a row cap stopped the stream, the trailer additionally carries a
+warning object alongside `"truncated": true`:
+
+```json
+  "warning": {"code": "ERR_RESULT_TRUNCATED", "message": "result truncated"}
+```
+
 **CSV variant** — `Content-Type: text/csv` with a header row. Row count and
 truncation ride on the `X-Sluice-Row-Count` and `X-Sluice-Truncated` **HTTP
 trailers** (the body has no place for them, and buffering to count first
-would break streaming). The trailers are declared in the `Trailer` response
-header and sent after the last row.
+would break streaming); a truncated result also sets the `X-Sluice-Warning`
+trailer to `ERR_RESULT_TRUNCATED`. The trailers are declared in the
+`Trailer` response header and sent after the last row.
 
 !!! note "Trailers need a trailer-aware client"
     Trailers require HTTP/1.1 chunked transfer encoding or HTTP/2, and a

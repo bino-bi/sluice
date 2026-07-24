@@ -83,13 +83,14 @@ decision is `deny` with no matched policies, no allow rule covers the table
 
 Triggers a validate-then-swap policy reload — the cross-platform equivalent
 of `SIGHUP`. Success returns `{"ok": true, "digest": "…"}`; a failed reload
-returns `ERR_CONFIG_INVALID` and the previous snapshot stays active.
+returns `ERR_CONFIG_INVALID` (load/decode failure) or `ERR_POLICY_INVALID`
+(policy compile failure) and the previous snapshot stays active. Works
+regardless of `policies.reload`, which gates only the fsnotify watcher.
 
 ```console
 $ curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:9091/admin/reload
 ```
 
-Returns `501` when no config watcher is wired (`policies.reload: false`).
 See [Configuration reload](../operations/hot-reload.md).
 
 ## GET /admin/audit/tail?n=
@@ -101,11 +102,10 @@ defaults to 100 and is capped at 1000; `n` below 1 is a `400`.
 $ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:9091/admin/audit/tail?n=20"
 ```
 
-!!! warning "Not yet wired in `sluice serve`"
-    The endpoint responds `501 Not Implemented` when no audit tailer is
-    wired — and the current composition root does not wire one, so today
-    this endpoint always returns `501`. Tail the JSONL files in the `file`
-    sink's directory directly instead. See [Audit trail](../security/audit.md).
+Records come back in chronological order (oldest → newest), read across
+the file sink's rotated JSONL files. Buffered writes are flushed first,
+so just-recorded entries are visible; a partial line being appended
+concurrently is skipped. See [Audit trail](../security/audit.md).
 
 ## GET /admin/approvals
 
@@ -143,7 +143,9 @@ The metric catalogue is generated into [Metrics](metrics.md).
 
 ## Endpoints that can return 501
 
-`POST /admin/reload` (no watcher), `GET /admin/audit/tail` (no tailer —
-currently always, see above), and `GET /admin/approvals` (no approval
-broker) respond `501 Not Implemented` when their dependency is not wired,
-so clients can distinguish "not enabled in this deployment" from an error.
+`GET /admin/approvals` (no approval broker) responds `501 Not
+Implemented` when its dependency is not wired, so clients can distinguish
+"not enabled in this deployment" from an error. `POST /admin/reload` and
+`GET /admin/audit/tail` are always wired under `sluice serve`; their
+`501` paths remain only for embedders composing the admin server without
+a reloader or file sink.
