@@ -67,6 +67,29 @@ func TestRewriter_StarColumnMaskApplies(t *testing.T) {
 	}
 }
 
+// TestRewriter_MaskSubstitutesInAllExpressionContexts guards the generic
+// expression walk: a masked column must be substituted wherever it
+// appears — sort keys, IN left-hand sides, function args — not only in
+// bare target-list refs and comparison operands. Before the generic walk
+// these contexts silently returned the raw column (a PII leak).
+func TestRewriter_MaskSubstitutesInAllExpressionContexts(t *testing.T) {
+	rw := buildRewriter(t)
+	m := maskPolicy("mask-ssn", "emp", []string{"ssn"}, apitypes.MaskSpec{Type: apitypes.MaskNull})
+	sql := "SELECT upper(ssn) AS u FROM pg.hr.emp WHERE ssn IN (SELECT ssn FROM pg.hr.emp) ORDER BY ssn"
+	dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, allowAll(0), m)
+
+	res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if strings.Contains(res.SQL, "ssn)") || strings.HasSuffix(res.SQL, "ssn") {
+		t.Errorf("raw masked column survives in rewritten SQL: %q", res.SQL)
+	}
+	if !strings.Contains(res.SQL, "upper(NULL)") {
+		t.Errorf("mask not substituted inside function arg: %q", res.SQL)
+	}
+}
+
 // TestRewriter_ExpandStarShortMaskNoPanic guards the expand-star slice-
 // bounds panic: a mask decision key shorter than a FROM table key must not
 // crash fromNeedsExpansion. Here the mask is on a short-named table `t`

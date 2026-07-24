@@ -1,0 +1,18 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1 AND region = $2) orders",
+  "changed": true,
+  "params": [
+    "t-42",
+    "eu"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/region-lock",
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "bcf63f800a431a8a",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

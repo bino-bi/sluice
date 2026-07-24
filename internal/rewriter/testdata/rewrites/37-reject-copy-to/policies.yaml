@@ -1,0 +1,11 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]

@@ -1,0 +1,1 @@
+pg.public.orders: [id, tenant_id, amount]

@@ -54,6 +54,24 @@ gauges, schema cache) is generated from source in the
 `sluice_policy_denials_total`, and `sluice_audit_queue_depth` near
 capacity.
 
+The audit-drop alert deserves a page, not a ticket: any non-zero increase
+means audit records were lost (the `sink`/`reason` labels say where — s3
+`buffer_full`/`write_error`, syslog `write_error`), which undermines the
+fail-closed audit posture:
+
+```yaml
+# fragment — prometheus alert rule
+groups:
+  - name: sluice
+    rules:
+      - alert: SluiceAuditRecordsDropped
+        expr: increase(sluice_audit_dropped_total[5m]) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "sluice dropped audit records ({{ $labels.sink }}/{{ $labels.reason }})"
+```
+
 ## Audit trail
 
 Every query produces hash-chained JSONL records — decision, subject,

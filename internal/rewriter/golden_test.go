@@ -22,7 +22,9 @@ import (
 	"github.com/bino-bi/sluice/internal/pgquery"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -144,10 +146,34 @@ func runGoldenFixture(t *testing.T, dir string) {
 		t.Fatalf("evaluate: %v", err)
 	}
 
+	// Optional schema.yaml provides a static table→columns fixture so
+	// SELECT-* expansion scenarios run without a live datasource.
+	var schemaCache schema.Cache
+	if data, err := os.ReadFile(filepath.Join(dir, "schema.yaml")); err == nil {
+		var tables map[string][]string
+		if err := yaml.Unmarshal(data, &tables); err != nil {
+			t.Fatalf("decode schema.yaml: %v", err)
+		}
+		entries := make([]*schema.Entry, 0, len(tables))
+		for fqn, cols := range tables {
+			parts := strings.Split(fqn, ".")
+			if len(parts) != 3 {
+				t.Fatalf("schema.yaml key %q is not a catalog.schema.table name", fqn)
+			}
+			e := &schema.Entry{Key: schema.Key{Catalog: parts[0], Schema: parts[1], Table: parts[2]}}
+			for _, c := range cols {
+				e.Columns = append(e.Columns, pkgds.Column{Name: c})
+			}
+			entries = append(entries, e)
+		}
+		schemaCache = schema.NewStatic(entries)
+	}
+
 	rw := rewriter.New(rewriter.Options{
 		Parser:         p,
 		DefaultCatalog: "pg",
 		Salts:          goldenSaltStore{},
+		Schema:         schemaCache,
 	})
 
 	req := rewriter.RewriteRequest{

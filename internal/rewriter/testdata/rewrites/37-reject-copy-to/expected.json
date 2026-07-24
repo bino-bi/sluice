@@ -1,0 +1,8 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_UNSUPPORTED_SYNTAX",
+  "applied_policies": [
+    "SqlAccessPolicy/allow-all"
+  ]
+}

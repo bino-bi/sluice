@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT (SELECT NULL AS ssn FROM pg.hr.emp LIMIT 1) AS first_ssn",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-ssn",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "e5071e55641c6f49",
+  "masks": [
+    "pg.hr.emp.ssn=null"
+  ]
+}

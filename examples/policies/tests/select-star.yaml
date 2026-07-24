@@ -1,0 +1,13 @@
+# SELECT * combined with a column mask needs a schema fixture: the runner
+# has no live datasource, so the suite declares the table's columns.
+schema:
+  pg.public.customers: [id, email, tenant_id]
+
+cases:
+  - name: star expands and masks email via schema fixture
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT * FROM pg.public.customers"
+    expect:
+      outcome: allow
+      masks: ["pg.public.customers.email=partial"]
+      rewrittenSqlContains: ["substr(customers.email", "customers.tenant_id FROM pg.public.customers"]

@@ -4,6 +4,7 @@ package pgquery
 
 import (
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/parser"
 )
@@ -180,7 +181,41 @@ func (w *tableWalker) walkNode(n *pg.Node) {
 			w.walkNode(v.AExpr.Lexpr)
 			w.walkNode(v.AExpr.Rexpr)
 		}
+	default:
+		// Any other node kind can still nest statements or relations
+		// (ResTarget values, CASE arms, function args, COALESCE, …).
+		// Descend generically so no table reference can hide from
+		// policy evaluation.
+		w.walkGeneric(n.ProtoReflect())
 	}
+}
+
+// walkGeneric descends into every populated message field looking for
+// nested *pg.Node values and routes each back through walkNode, so node
+// kinds without explicit cases cannot conceal table references.
+func (w *tableWalker) walkGeneric(m protoreflect.Message) {
+	m.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() {
+			return true
+		}
+		if fd.IsList() {
+			list := val.List()
+			for i := 0; i < list.Len(); i++ {
+				w.walkMessage(list.Get(i).Message())
+			}
+			return true
+		}
+		w.walkMessage(val.Message())
+		return true
+	})
+}
+
+func (w *tableWalker) walkMessage(m protoreflect.Message) {
+	if node, ok := m.Interface().(*pg.Node); ok {
+		w.walkNode(node)
+		return
+	}
+	w.walkGeneric(m)
 }
 
 // walkNodes walks a slice of Node.
@@ -254,6 +289,11 @@ func (w *tableWalker) walkSelect(s *pg.SelectStmt) {
 	w.walkNodes(s.GroupClause)
 	w.walkNode(s.HavingClause)
 	w.walkNodes(s.TargetList)
+	w.walkNodes(s.SortClause)
+	w.walkNodes(s.DistinctClause)
+	w.walkNodes(s.WindowClause)
+	w.walkNode(s.LimitCount)
+	w.walkNode(s.LimitOffset)
 	if hadWith {
 		w.popCTEScope()
 	}

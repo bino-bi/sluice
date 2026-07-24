@@ -62,10 +62,29 @@ How assertions compare:
 - `errorCode` asserts the error a failing rewrite raises — see the
   [error code reference](../reference/error-codes.md).
 
-!!! warning "No schema cache — no `SELECT *`"
-    The test runner has no live datasource, so it cannot expand `SELECT *` against a schema.
-    Write explicit column lists in test SQL; a `SELECT *` case combined with a column mask cannot
-    be resolved and will fail for the wrong reason.
+### Schema fixtures for `SELECT *`
+
+The test runner has no live datasource, so by itself it cannot expand `SELECT *` against a
+schema — a star case combined with a column mask would fail with a schema-missing rewrite error.
+A suite that needs star expansion declares its tables in an optional top-level `schema:` block:
+
+```yaml
+schema:
+  pg.public.customers: [id, email, tenant_id]   # catalog.schema.table: column list
+
+cases:
+  - name: star expands and masks email
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT * FROM pg.public.customers"
+    expect:
+      outcome: allow
+      masks: ["pg.public.customers.email=partial"]
+      rewrittenSqlContains: ["substr(customers.email"]
+```
+
+Keys must be fully-qualified three-part `catalog.schema.table` names, matching the three-part
+table names in the test SQL. The block is static fixture data, never introspection — keep it in
+sync with the real table by hand. Suites without a `schema:` block behave exactly as before.
 
 ## Running suites
 
@@ -85,8 +104,9 @@ instead of passing it.
 ## A worked example
 
 The repository ships a runnable example in `examples/policies/`: an allow for the `analysts`
-group, a tenant row filter on `orders`, and a partial mask on `customers.email`. Its suite,
-`examples/policies/tests/basic.yaml`:
+group, a tenant row filter on `orders`, and a partial mask on `customers.email`. Its main suite,
+`examples/policies/tests/basic.yaml` (a second suite, `select-star.yaml`, demonstrates the
+`schema:` fixture block):
 
 ```yaml
 cases:
@@ -119,8 +139,9 @@ $ sluice policy test examples/policies
 PASS  analyst reads orders with tenant filter
 PASS  non-analyst is denied by default
 PASS  email is partially masked
+PASS  star expands and masks email via schema fixture
 
-3 passed, 0 failed, 3 total
+4 passed, 0 failed, 4 total
 ```
 
 Note the second case: default-deny needs no deny policy, only the absence of a matching allow.

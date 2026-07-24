@@ -46,6 +46,14 @@ func (s *state) injectInNode(n *pg.Node) error {
 				return err
 			}
 		}
+	case *pg.Node_ExplainStmt:
+		// Policies match tables inside EXPLAIN bodies (the table walker
+		// descends into them), so the rewrite must too.
+		if v.ExplainStmt != nil {
+			if err := s.injectInNode(v.ExplainStmt.Query); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

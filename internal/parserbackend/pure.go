@@ -15,6 +15,10 @@ import (
 // until the cockroachdb-parser implementation lands (v2 roadmap).
 var errPureNotImplemented = errors.New("parser: pure_parser backend not yet implemented — build without -tags=pure_parser")
 
+// Implemented reports whether this build's parser backend can actually
+// parse SQL; false for the pure_parser stub.
+const Implemented = false
+
 type stub struct{}
 
 func (stub) Parse(context.Context, string) (parser.AST, error) { return nil, errPureNotImplemented }

@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT a, b + NULL AS total FROM pg.public.t",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-c",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "54e89534d8671be5",
+  "masks": [
+    "pg.public.t.c=null"
+  ]
+}

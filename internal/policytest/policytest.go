@@ -23,13 +23,20 @@ import (
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/internal/secrets"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
-// Suite is a file of test cases.
+// Suite is a file of test cases. Schema optionally maps fully-qualified
+// "catalog.schema.table" names to column lists so SELECT-* expansion works
+// without a live datasource; it is static fixture data, never
+// introspection.
 type Suite struct {
-	Cases []Case `json:"cases" yaml:"cases"`
+	Cases  []Case              `json:"cases" yaml:"cases"`
+	Schema map[string][]string `json:"schema,omitempty" yaml:"schema,omitempty"`
 }
 
 // Identity is the subset of identity.UserCtx a case can specify.
@@ -75,13 +82,16 @@ type Runner struct {
 	engine *policy.Engine
 	rw     *rewriter.Rewriter
 	parser parser.Parser
+	salts  pkgmask.SaltStore
 }
 
 // NewRunner loads the policy directory, compiles it, and wires the
-// parser + rewriter. It uses no schema cache, so SELECT-* combined with a
-// column mask is out of scope for suites (documented) — write explicit
-// column lists in test SQL.
+// parser + rewriter. It has no live schema cache; a suite that needs
+// SELECT-* expansion declares its tables in the `schema:` block instead.
 func NewRunner(ctx context.Context, policyDir string, strict bool) (*Runner, error) {
+	if !parserbackend.Implemented {
+		return nil, fmt.Errorf("parser backend %q is a non-functional stub in this build (compiled with -tags=pure_parser); rebuild without the tag", parserbackend.Name())
+	}
 	snap, err := config.LoadDirectory(ctx, config.LoadOptions{
 		Strict:  strict,
 		Sources: []config.SourceDir{{Path: policyDir}},
@@ -94,11 +104,36 @@ func NewRunner(ctx context.Context, policyDir string, strict bool) (*Runner, err
 		return nil, fmt.Errorf("compile snapshot: %w", err)
 	}
 	p := parserbackend.New(parser.Options{})
-	rw := rewriter.New(rewriter.Options{
-		Parser: p,
-		Salts:  secrets.NewSaltStore(secrets.NewResolver(secrets.ResolverOptions{})),
-	})
-	return &Runner{engine: eng, rw: rw, parser: p}, nil
+	salts := secrets.NewSaltStore(secrets.NewResolver(secrets.ResolverOptions{}))
+	rw := rewriter.New(rewriter.Options{Parser: p, Salts: salts})
+	return &Runner{engine: eng, rw: rw, parser: p, salts: salts}, nil
+}
+
+// suiteRewriter returns the rewriter for s: the shared one when the suite
+// declares no schema, or a per-suite rewriter over a static schema cache
+// built from the `schema:` block. Keys must be 3-part
+// "catalog.schema.table" names.
+func (r *Runner) suiteRewriter(s *Suite) (*rewriter.Rewriter, error) {
+	if len(s.Schema) == 0 {
+		return r.rw, nil
+	}
+	entries := make([]*schema.Entry, 0, len(s.Schema))
+	for fqn, cols := range s.Schema {
+		parts := strings.Split(fqn, ".")
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return nil, fmt.Errorf("schema: key %q is not a catalog.schema.table name", fqn)
+		}
+		e := &schema.Entry{Key: schema.Key{Catalog: parts[0], Schema: parts[1], Table: parts[2]}}
+		for _, c := range cols {
+			e.Columns = append(e.Columns, pkgds.Column{Name: c})
+		}
+		entries = append(entries, e)
+	}
+	return rewriter.New(rewriter.Options{
+		Parser: r.parser,
+		Salts:  r.salts,
+		Schema: schema.NewStatic(entries),
+	}), nil
 }
 
 // Report is the aggregate result.
@@ -126,7 +161,11 @@ func (r *Runner) RunFile(ctx context.Context, path string) (*Report, error) {
 	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return r.Run(ctx, &s), nil
+	rep, err := r.Run(ctx, &s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return rep, nil
 }
 
 // RunDir runs every *.yaml/*.yml suite under dir and merges the reports.
@@ -157,10 +196,14 @@ func (r *Runner) RunDir(ctx context.Context, dir string) (*Report, error) {
 }
 
 // Run evaluates every case in s.
-func (r *Runner) Run(ctx context.Context, s *Suite) *Report {
+func (r *Runner) Run(ctx context.Context, s *Suite) (*Report, error) {
+	rw, err := r.suiteRewriter(s)
+	if err != nil {
+		return nil, err
+	}
 	rep := &Report{Total: len(s.Cases)}
 	for _, c := range s.Cases {
-		cr := r.runCase(ctx, c)
+		cr := r.runCase(ctx, rw, c)
 		if cr.Passed {
 			rep.Passed++
 		} else {
@@ -168,10 +211,10 @@ func (r *Runner) Run(ctx context.Context, s *Suite) *Report {
 		}
 		rep.Cases = append(rep.Cases, cr)
 	}
-	return rep
+	return rep, nil
 }
 
-func (r *Runner) runCase(ctx context.Context, c Case) CaseResult {
+func (r *Runner) runCase(ctx context.Context, rw *rewriter.Rewriter, c Case) CaseResult {
 	cr := CaseResult{Name: c.Name, Passed: true}
 	fail := func(format string, args ...any) {
 		cr.Passed = false
@@ -227,7 +270,7 @@ func (r *Runner) runCase(ctx context.Context, c Case) CaseResult {
 			fail("rewrite requested but SQL did not parse: %v", parseErr)
 			return cr
 		}
-		res, rerr := r.rw.Rewrite(ctx, rewriter.RewriteRequest{AST: ast, Decision: dec, User: user, Facts: facts, Raw: c.SQL})
+		res, rerr := rw.Rewrite(ctx, rewriter.RewriteRequest{AST: ast, Decision: dec, User: user, Facts: facts, Raw: c.SQL})
 		if rerr != nil {
 			if c.Expect.ErrorCode != "" {
 				if code := errorCode(rerr); code != c.Expect.ErrorCode {
