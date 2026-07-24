@@ -7,6 +7,10 @@ import (
 	stderrors "errors"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
@@ -32,6 +36,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	start := s.opts.Clock()
 	qid := pkgerr.NewQueryID()
 
+	// Enclosing pipeline span. Attributes carry identifiers and codes
+	// only — never raw SQL, never secret bytes. finalRec is stamped onto
+	// the span at End so every exit path reports its decision.
+	ctx, span := s.tracer.Start(ctx, "query", trace.WithAttributes(
+		attribute.String("sluice.query.id", qid),
+		attribute.String("sluice.query.origin", string(req.Origin)),
+	))
+	var finalRec *audit.Record
+	defer func() { endQuerySpan(span, finalRec) }()
+
 	// 0. Concurrency + input caps.
 	if err := s.acquireSlot(ctx); err != nil {
 		return nil, err
@@ -42,6 +56,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if s.opts.RateLimiter != nil && req.User != nil {
 		if !s.opts.RateLimiter.Allow(req.User.Subject, req.User.Issuer) {
 			rec := s.buildAuditBase(req, qid, nil)
+			finalRec = rec
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeRateLimited)
 			s.emit(ctx, rec, start)
@@ -57,6 +72,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if s.opts.Budget != nil && req.User != nil {
 		if err := s.opts.Budget.Check(ctx, req.User.Subject, req.User.Issuer); err != nil {
 			rec := s.buildAuditBase(req, qid, nil)
+			finalRec = rec
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeBudgetExceeded)
 			s.emit(ctx, rec, start)
@@ -67,6 +83,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 
 	if len(req.SQL) > s.opts.Limits.MaxSQLBytes {
 		rec := s.buildAuditBase(req, qid, nil)
+		finalRec = rec
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodePayloadTooLarge)
 		s.emit(ctx, rec, start)
@@ -88,7 +105,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 
 	// 1. Parse (best-effort; the regex fallback carries us when the
 	// parser fails but tables are still extractable).
-	ast, parseErr := s.opts.Parser.Parse(ctx, req.SQL)
+	parseCtx, parseSpan := s.tracer.Start(ctx, "query.parse")
+	ast, parseErr := s.opts.Parser.Parse(parseCtx, req.SQL)
 	var shape parser.QueryShape
 	var tables []parser.TableRef
 	if parseErr == nil {
@@ -97,8 +115,10 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	} else {
 		tables = parser.ExtractTablesRegex(req.SQL)
 	}
+	parseSpan.End()
 
 	rec := s.buildAuditBase(req, qid, tables)
+	finalRec = rec
 	if ast != nil {
 		rec.SQLFingerprint = ast.Fingerprint()
 	}
@@ -137,11 +157,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 	}
 	if dec == nil {
+		polCtx, polSpan := s.tracer.Start(ctx, "query.policy")
 		var polErr error
-		dec, polErr = s.opts.Policy.Evaluate(ctx, policy.Input{
+		dec, polErr = s.opts.Policy.Evaluate(polCtx, policy.Input{
 			User: req.User, AST: ast, Shape: shape, Tables: tables,
 			Request: req.Facts, Now: start,
 		})
+		polSpan.End()
 		if polErr != nil {
 			setErrorCode(rec, polErr)
 			rec.Decision = audit.DecisionError
@@ -219,10 +241,12 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 
 	// 4. Rewrite (skipped on a cache hit, which already carries the result).
 	if rewriteResp == nil {
+		rwCtx, rwSpan := s.tracer.Start(ctx, "query.rewrite")
 		var reErr error
-		rewriteResp, reErr = s.opts.Rewriter.Rewrite(ctx, rewriter.RewriteRequest{
+		rewriteResp, reErr = s.opts.Rewriter.Rewrite(rwCtx, rewriter.RewriteRequest{
 			AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
 		})
+		rwSpan.End()
 		if reErr != nil {
 			// Never cache error paths.
 			setErrorCode(rec, reErr)
@@ -267,7 +291,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		Timeout: req.Timeout,
 		Format:  req.Format,
 	}
-	resp, execErr := s.opts.Executor.Execute(ctx, execReq)
+	execCtx, execSpan := s.tracer.Start(ctx, "query.execute")
+	resp, execErr := s.opts.Executor.Execute(execCtx, execReq)
+	execSpan.End()
 	if execErr != nil {
 		setErrorCode(rec, execErr)
 		rec.Decision = audit.DecisionError
@@ -280,7 +306,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	// before the audit gate so a construction failure refuses the query
 	// with nothing served and nothing falsely audited as allowed.
 	if len(rewriteResp.PostMasks) > 0 {
-		masked, mErr := s.buildMaskedRows(ctx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		maskCtx, maskSpan := s.tracer.Start(ctx, "query.mask")
+		masked, mErr := s.buildMaskedRows(maskCtx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		maskSpan.End()
 		if mErr != nil {
 			_ = resp.Rows.Close()
 			setErrorCode(rec, mErr)
@@ -467,6 +495,28 @@ func parseErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid)
+}
+
+// endQuerySpan stamps the finished pipeline's outcome onto the span and
+// ends it. Only identifiers, fingerprints, and error codes — never raw
+// SQL or secret bytes.
+func endQuerySpan(span trace.Span, rec *audit.Record) {
+	if rec != nil {
+		if rec.Decision != "" {
+			span.SetAttributes(attribute.String("sluice.query.decision", rec.Decision))
+		}
+		if rec.SQLFingerprint != "" {
+			span.SetAttributes(attribute.String("sluice.sql.fingerprint", rec.SQLFingerprint))
+		}
+		if len(rec.Catalogs) > 0 {
+			span.SetAttributes(attribute.StringSlice("sluice.query.catalogs", rec.Catalogs))
+		}
+		if rec.ErrorCode != "" {
+			span.SetAttributes(attribute.String("sluice.query.error_code", rec.ErrorCode))
+			span.SetStatus(codes.Error, rec.ErrorCode)
+		}
+	}
+	span.End()
 }
 
 func execErrToAPI(err error, qid string) error {

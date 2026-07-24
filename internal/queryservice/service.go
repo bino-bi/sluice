@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
@@ -120,8 +123,9 @@ type Limits struct {
 // Service is the orchestrator. One instance is shared across all
 // transports.
 type Service struct {
-	opts Options
-	sem  chan struct{}
+	opts   Options
+	sem    chan struct{}
+	tracer trace.Tracer
 }
 
 // New builds a Service. Panics on missing required dependencies — a
@@ -164,7 +168,9 @@ func New(opts Options) *Service {
 	if opts.Limits.MaxSQLBytes <= 0 {
 		opts.Limits.MaxSQLBytes = parser.DefaultMaxSQLBytes
 	}
-	s := &Service{opts: opts}
+	// The global provider is a noop unless telemetry.Init installed a real
+	// one, so tracing costs nothing when disabled.
+	s := &Service{opts: opts, tracer: otel.Tracer("sluice/queryservice")}
 	if opts.Limits.MaxConcurrent > 0 {
 		s.sem = make(chan struct{}, opts.Limits.MaxConcurrent)
 	}

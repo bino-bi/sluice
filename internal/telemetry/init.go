@@ -13,11 +13,11 @@ import (
 	"github.com/bino-bi/sluice/internal/version"
 )
 
-// Init configures the slog default logger and, if MetricsConfig.Enabled, the
-// sluice_build_info gauge. Returns a shutdown function; in this slice it is a
-// no-op but callers are expected to defer it so OTel/flush integration lands
-// cleanly in a later slice.
-func Init(_ context.Context, cfg Config) (shutdown func(context.Context) error, err error) {
+// Init configures the slog default logger, the sluice_build_info gauge
+// (when metrics are enabled), and the OTel tracer provider (when tracing
+// is enabled). The returned shutdown flushes pending spans; callers must
+// defer it.
+func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error, err error) {
 	slog.SetDefault(slog.New(newSlogHandler(cfg.Logging)))
 
 	if cfg.Metrics.Enabled {
@@ -26,6 +26,9 @@ func Init(_ context.Context, cfg Config) (shutdown func(context.Context) error, 
 		}
 	}
 
+	if cfg.Tracing.Enabled {
+		return initTracing(ctx, cfg.Service, cfg.Tracing)
+	}
 	return noopShutdown, nil
 }
 

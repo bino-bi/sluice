@@ -42,6 +42,10 @@ type Config struct {
 	// ShutdownTimeout bounds graceful-shutdown drain. Zero falls back to
 	// 10 s.
 	ShutdownTimeout time.Duration
+
+	// Tracing wraps the handler chain in an otel server span. Gated here
+	// so disabled deployments pay no wrapping cost.
+	Tracing bool
 }
 
 // TLSConfig holds the cert/key pair for HTTPS. A non-empty ClientCA

@@ -94,7 +94,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 	deps.server = scfg
 
-	// 2. Telemetry (slog + optional prom gauge).
+	// 2. Telemetry (slog + optional prom gauge + optional otel tracing).
 	telCfg := telemetry.DefaultConfig(telemetry.ServiceInfo{
 		Name:    "sluice",
 		Version: version.Current().Version,
@@ -103,6 +103,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	telCfg.Logging.Level = parseLogLevel(scfg.Logging.Level)
 	telCfg.Logging.Format = strings.ToLower(scfg.Logging.Format)
 	telCfg.Metrics.Enabled = scfg.Admin.Enabled
+	telCfg.Tracing = telemetry.TracingConfig{
+		Enabled:     scfg.Tracing.Enabled,
+		Endpoint:    scfg.Tracing.Endpoint,
+		Protocol:    scfg.Tracing.Protocol,
+		Insecure:    scfg.Tracing.Insecure,
+		SampleRatio: scfg.Tracing.SampleRatio,
+	}
 	shutdown, err := telemetry.Init(ctx, telCfg)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry init: %w", err)
@@ -307,6 +314,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Listen:         scfg.REST.Listen,
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
 		RequestTimeout: scfg.REST.RequestTimeout,
+		Tracing:        scfg.Tracing.Enabled,
 	}
 	// Validate guarantees cert+key are both set when the block exists.
 	if t := scfg.REST.TLS; t != nil {
@@ -343,6 +351,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			HTTPListen:     scfg.MCP.Listen,
 			SessionIdleMax: scfg.MCP.SessionIdleMax,
 			AllowAnonymous: scfg.MCP.AllowAnonymous,
+			Tracing:        scfg.Tracing.Enabled,
 		}, mcp.Deps{
 			Service:    deps.service,
 			Identifier: deps.identifier,

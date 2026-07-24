@@ -79,6 +79,37 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"admin.tls", "certFile and keyFile"},
 		},
 		{
+			name: "tracing enabled without endpoint rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+			},
+			wantErr: []string{"tracing.endpoint"},
+		},
+		{
+			name: "tracing bad protocol rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+				c.Tracing.Endpoint = "otel:4317"
+				c.Tracing.Protocol = "udp"
+			},
+			wantErr: []string{"tracing.protocol", "unknown protocol"},
+		},
+		{
+			name: "tracing sampleRatio out of range rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.SampleRatio = 1.5
+			},
+			wantErr: []string{"tracing.sampleRatio"},
+		},
+		{
+			name: "tracing enabled with endpoint valid",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+				c.Tracing.Endpoint = "otel:4317"
+				c.Tracing.Insecure = true
+			},
+		},
+		{
 			name: "datasources.reload rejected",
 			mutate: func(c *ServerConfig) {
 				c.DataSources.Reload = true

@@ -19,6 +19,17 @@ func (c *ServerConfig) Validate() error {
 	var errs []error
 	errs = append(errs, validateTLSBlock("rest.tls", c.REST.TLS)...)
 	errs = append(errs, validateTLSBlock("admin.tls", c.Admin.TLS)...)
+	if c.Tracing.Enabled && c.Tracing.Endpoint == "" {
+		errs = append(errs, errors.New("tracing.endpoint: required when tracing is enabled"))
+	}
+	switch c.Tracing.Protocol {
+	case "", "grpc", "http":
+	default:
+		errs = append(errs, fmt.Errorf("tracing.protocol: unknown protocol %q (grpc, http)", c.Tracing.Protocol))
+	}
+	if c.Tracing.SampleRatio < 0 || c.Tracing.SampleRatio > 1 {
+		errs = append(errs, fmt.Errorf("tracing.sampleRatio: %v out of range [0, 1]", c.Tracing.SampleRatio))
+	}
 	if c.DataSources.Reload {
 		errs = append(errs, errors.New(
 			"datasources.reload: parsed but unimplemented — DataSource manifest changes require a restart (docs/operations/server-config.md)"))
