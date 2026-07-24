@@ -58,6 +58,7 @@ type runtimeDeps struct {
 	rewrite      *rewriter.Rewriter
 	auditDisp    *audit.Dispatcher
 	auditSinks   []audit.Sink
+	auditFile    *audit.FileSink
 	identifier   identity.Identifier
 	apikey       *identity.APIKeyIdentifier
 	jwtID        *identity.JWTIdentifier
@@ -199,7 +200,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	// 12. Audit dispatcher — file sink (chain primary) plus optional
 	// best-effort syslog / s3 secondaries.
-	deps.auditSinks, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
+	deps.auditSinks, deps.auditFile, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
 	if err != nil {
 		return nil, err
 	}
@@ -399,6 +400,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Catalogs:  registryCatalogLister{r: deps.sourceReg},
 			Logger:    deps.log,
 			Reloader:  reloaderFromWatcher(deps.watcher),
+			Audit:     auditTailer(deps.auditFile),
 		})
 	}
 
@@ -465,6 +467,16 @@ func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
 	if d.schemaCache != nil {
 		d.schemaCache.InvalidateAll()
 	}
+}
+
+// auditTailer adapts the concrete file sink to the admin.AuditTailer
+// interface. The typed-nil guard keeps a nil *FileSink from becoming a
+// non-nil interface that panics on use.
+func auditTailer(fs *audit.FileSink) admin.AuditTailer {
+	if fs == nil {
+		return nil
+	}
+	return fs
 }
 
 // reloaderFromWatcher adapts the config.Watcher.Reload signature to the
