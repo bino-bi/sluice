@@ -1,0 +1,13 @@
+{
+  "outcome": "reject",
+  "changed": false,
+  "deny_policy": "no-cross-catalog",
+  "rejections": [
+    "no-cross-catalog/no-cross-catalog"
+  ],
+  "error_code": "ACL_REJECTED",
+  "applied_policies": [
+    "QueryRejectPolicy/no-cross-catalog",
+    "SqlAccessPolicy/allow-all"
+  ]
+}

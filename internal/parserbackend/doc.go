@@ -6,5 +6,6 @@
 //
 // Default (no tag): the cgo-backed pg_query_go/v6 backend.
 // Tag `pure_parser`: a stub that will host the cockroachdb-parser backend
-// (v2 roadmap).
+// (v2 roadmap). The Implemented const tells callers whether the active
+// backend is functional; boot paths refuse to start on a stub build.
 package parserbackend

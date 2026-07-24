@@ -1,0 +1,18 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders JOIN (SELECT * FROM pg.public.customers WHERE tenant_id = $2) customers USING (customer_id)",
+  "changed": true,
+  "params": [
+    "t-42",
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "5ad752021031cce4",
+  "filters": [
+    "pg.public.customers",
+    "pg.public.orders"
+  ]
+}

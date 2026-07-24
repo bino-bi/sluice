@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT CASE WHEN NULL = '123' THEN 1 ELSE 0 END AS flagged FROM pg.hr.emp",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-ssn",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "83474ddb16f1c653",
+  "masks": [
+    "pg.hr.emp.ssn=null"
+  ]
+}

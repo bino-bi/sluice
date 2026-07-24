@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT count(DISTINCT NULL) FROM pg.hr.emp",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-ssn",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "7908e4338c07a2f3",
+  "masks": [
+    "pg.hr.emp.ssn=null"
+  ]
+}

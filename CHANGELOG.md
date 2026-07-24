@@ -9,6 +9,8 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Added
 
+- **`sluice policy test` schema fixtures** — suites accept an optional top-level `schema:` block mapping `catalog.schema.table` names to column lists, so `SELECT *` combined with a column mask is testable without a live datasource; previously such cases failed with a schema-missing rewrite error.
+- **Golden rewrite fixtures for the concept §4.11 edge-case catalog** — 18 new fixtures (star expansion under row filters, JOIN/UNION/CTE/recursive-CTE wrapping, mask substitution in aggregates/aliases/subqueries/expressions/CASE, COPY rejection, cross-catalog wrap and CEL reject) plus per-fixture `schema.yaml` star-expansion support in the harness; scenarios enforced outside the rewriter (INSTALL/ATTACH/PIVOT parse rejection, SET via `lock_configuration`) are documented as covered in their own layers (`internal/rewriter/testdata/rewrites/README.md`).
 - **Mutual TLS on the REST and admin listeners** — a non-empty `rest.tls.clientCA` now requires clients to present a certificate signed by that CA (`RequireAndVerifyClientCert`, TLS 1.2 floor); the admin listener gains full TLS support (`admin.tls.certFile`/`keyFile`, optional `clientCA`) on top of its bearer token. Transport-level gating only: client certificates are not mapped to a subject identity.
 - **OpenTelemetry tracing** — new `tracing` config block (disabled by default; `endpoint`, `protocol: grpc|http`, `insecure`, `sampleRatio`). OTLP export with W3C propagation, server spans on REST and MCP streamable HTTP, and pipeline spans `query` → `query.parse`/`query.policy`/`query.rewrite`/`query.execute`/`query.mask` carrying query id, decision, SQL fingerprint, and error code — never raw SQL. Driver-level spans (otelsql) remain roadmap.
 - **`GET /admin/audit/tail` is wired** — the file sink now implements the tailer: last-N records as NDJSON in chronological order across rotated files, with buffered writes flushed first. Previously the endpoint always answered `501`.
@@ -46,6 +48,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **Builds with `-tags=pure_parser` now refuse to start** — `serve`, `mcp`, and `sluice policy test` exit 1 at boot with a clear stub-backend error (`parserbackend.Implemented`) instead of failing every query at parse time. `policy explain --table` still works under the stub.
 - **TLS blocks are validated structurally instead of rejected** — `rest.tls.clientCA`/`clientAuth` and `admin.tls` now activate enforcement rather than failing `config validate`; a `tls` block must carry both `certFile` and `keyFile` (a partial block used to silently serve plain HTTP), and `clientAuth` accepts only `require_and_verify`.
 - **MCP table listings are bounded** — previously unbounded responses now default to 500 tables per page; agents follow `next_cursor` for the remainder.
 - **A Bearer token presented while zero SubjectBindings are configured is now rejected with 401** instead of falling through to anonymous — the JWT identifier is constructed even with an empty binding set so a reload can introduce the first issuer without a restart.
@@ -61,6 +64,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **Tables nested in expressions no longer hide from policy** — the table extractor treated node kinds without explicit cases (target-list entries, CASE arms, function args, …) as leaves, so `SELECT (SELECT ssn FROM hr.emp …) FROM other` was authorized, filtered, masked, cross-catalog-gated, and audited as if it only touched `other` — explicit deny policies on the nested table never fired. The walker now descends generically (protobuf reflection) into every node, and `ORDER BY`/`DISTINCT ON`/window/limit clauses are walked too.
+- **Column masks now substitute in every expression context** — SQL-stage masks applied only to bare target-list refs and simple comparison operands; a masked column inside a function call (`upper(ssn)`, `count(DISTINCT ssn)`), CASE, cast, sort key, or IN left-hand side passed through raw while the decision and audit record claimed it was masked. The mask walker now descends generically, delegating nested scopes so alias resolution stays correct.
+- **Row filters and column masks apply inside `EXPLAIN`** — policies matched tables in `EXPLAIN` bodies but the rewrite walkers skipped `ExplainStmt` nodes, so the unrewritten plan ran (concept §4.11 scenario 14 expects the wrap inside EXPLAIN).
+- **Row-filter predicates no longer duplicate per table reference** — a self-join or recursive CTE ANDed the same policy predicate once per occurrence of the table (`tenant_id = $1 AND tenant_id = $2`); a policy's predicate now folds in once per table.
 - **Manual reload works with `policies.reload: false`** — `SIGHUP` and `POST /admin/reload` no longer die with the fsnotify watcher; the flag now gates only filesystem watching.
 - **Invalid policy snapshots no longer half-apply on reload** — a snapshot that fails policy compilation is rejected before publish on every reload path; previously the policy engine kept the old state while bindings, rate specs, and budgets applied the new one. `/admin/reload` reports compile failures as `ERR_POLICY_INVALID` (load/decode failures stay `ERR_CONFIG_INVALID`).
 - **Connection-pool failures return `ERR_DATASOURCE_UNAVAILABLE` (503)** — drawing a connection from a dead pool surfaced as `ERR_INTERNAL` (500); context cancellations and deadlines keep their codes.

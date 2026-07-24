@@ -1,0 +1,43 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: tenant-isolation
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["orders"]
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenant_id }}"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: region-lock
+  priority: 40
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["orders"]
+  filter:
+    predicate:
+      column: region
+      op: Equals
+      value: "eu"

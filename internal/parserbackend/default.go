@@ -9,6 +9,10 @@ import (
 	"github.com/bino-bi/sluice/internal/pgquery"
 )
 
+// Implemented reports whether this build's parser backend can actually
+// parse SQL; false for the pure_parser stub.
+const Implemented = true
+
 // New returns the parser backend selected by the current build tags.
 func New(opts parser.Options) parser.Parser {
 	return pgquery.New(opts)

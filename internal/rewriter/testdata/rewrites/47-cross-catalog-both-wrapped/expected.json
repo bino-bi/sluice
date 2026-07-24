@@ -1,0 +1,19 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT p.name, m.salary FROM (SELECT * FROM pg.hr.person WHERE tenant_id = $1) p JOIN (SELECT * FROM mysql_erp.hr.compensation WHERE tenant_id = $2) m ON p.id = m.person_id",
+  "changed": true,
+  "params": [
+    "t-42",
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/rls-compensation",
+    "RowFilterPolicy/rls-person",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "b879ad879b7fc796",
+  "filters": [
+    "mysql_erp.hr.compensation",
+    "pg.hr.person"
+  ]
+}

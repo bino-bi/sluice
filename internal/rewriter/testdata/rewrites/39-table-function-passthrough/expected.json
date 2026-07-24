@@ -1,0 +1,6 @@
+{
+  "outcome": "deny",
+  "changed": false,
+  "deny_code": "ACL_DENIED",
+  "error_code": "ACL_DENIED"
+}

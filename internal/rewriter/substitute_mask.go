@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
@@ -57,6 +58,12 @@ func (s *state) maskInNode(n *pg.Node, aliases aliasMap) error {
 	case *pg.Node_RangeSubselect:
 		if v.RangeSubselect != nil {
 			return s.maskInNode(v.RangeSubselect.Subquery, aliases)
+		}
+	case *pg.Node_ExplainStmt:
+		// Policies match tables inside EXPLAIN bodies (the table walker
+		// descends into them), so the rewrite must too.
+		if v.ExplainStmt != nil {
+			return s.maskInNode(v.ExplainStmt.Query, aliases)
 		}
 	}
 	return nil
@@ -113,7 +120,9 @@ func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 		}
 	}
 
-	// TargetList.
+	// TargetList. A bare column ref is substituted in place (preserving
+	// the column alias); anything else — function calls, CASE, casts,
+	// arithmetic — is walked so refs nested inside it are substituted too.
 	for i, t := range sel.TargetList {
 		rt, ok := t.Node.(*pg.Node_ResTarget)
 		if !ok || rt.ResTarget == nil {
@@ -124,6 +133,9 @@ func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 			return err
 		}
 		if newVal == nil {
+			if err := s.maskInExpr(rt.ResTarget.Val, aliases); err != nil {
+				return err
+			}
 			continue
 		}
 		// Preserve column alias so the client sees the expected name.
@@ -134,24 +146,46 @@ func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 		sel.TargetList[i] = t
 	}
 
-	// WHERE, HAVING, GROUP BY, ORDER BY expressions.
-	if sel.WhereClause != nil {
-		if err := s.maskInExpr(sel.WhereClause, aliases); err != nil {
+	// Every other expression-bearing clause.
+	if err := s.maskExprSlot(&sel.WhereClause, aliases); err != nil {
+		return err
+	}
+	if err := s.maskExprSlot(&sel.HavingClause, aliases); err != nil {
+		return err
+	}
+	for _, list := range [][]*pg.Node{
+		sel.GroupClause, sel.SortClause, sel.DistinctClause, sel.WindowClause,
+	} {
+		if err := s.maskExprList(list, aliases); err != nil {
 			return err
 		}
 	}
-	if sel.HavingClause != nil {
-		if err := s.maskInExpr(sel.HavingClause, aliases); err != nil {
-			return err
-		}
+	if err := s.maskExprSlot(&sel.LimitCount, aliases); err != nil {
+		return err
 	}
-	for _, g := range sel.GroupClause {
-		if err := s.maskInExpr(g, aliases); err != nil {
-			return err
-		}
+	return s.maskExprSlot(&sel.LimitOffset, aliases)
+}
+
+// maskExprSlot offers the node itself for substitution (a bare masked
+// column ref) and otherwise walks its expression tree.
+func (s *state) maskExprSlot(slot **pg.Node, aliases aliasMap) error {
+	if slot == nil || *slot == nil {
+		return nil
 	}
-	for _, o := range sel.SortClause {
-		if err := s.maskInExpr(o, aliases); err != nil {
+	repl, _, err := s.maybeSubstituteColumnRef(*slot, aliases)
+	if err != nil {
+		return err
+	}
+	if repl != nil {
+		*slot = repl
+		return nil
+	}
+	return s.maskInExpr(*slot, aliases)
+}
+
+func (s *state) maskExprList(list []*pg.Node, aliases aliasMap) error {
+	for i := range list {
+		if err := s.maskExprSlot(&list[i], aliases); err != nil {
 			return err
 		}
 	}
@@ -162,69 +196,104 @@ func (s *state) maskInJoin(j *pg.JoinExpr, aliases aliasMap) error {
 	if j == nil {
 		return nil
 	}
-	if rs, ok := j.Larg.GetNode().(*pg.Node_RangeSubselect); ok && rs.RangeSubselect != nil {
-		if err := s.maskInNode(rs.RangeSubselect.Subquery, aliases); err != nil {
-			return err
+	for _, arg := range []*pg.Node{j.Larg, j.Rarg} {
+		switch v := arg.GetNode().(type) {
+		case *pg.Node_RangeSubselect:
+			if v.RangeSubselect != nil {
+				if err := s.maskInNode(v.RangeSubselect.Subquery, aliases); err != nil {
+					return err
+				}
+			}
+		case *pg.Node_JoinExpr:
+			if err := s.maskInJoin(v.JoinExpr, aliases); err != nil {
+				return err
+			}
 		}
 	}
-	if rs, ok := j.Rarg.GetNode().(*pg.Node_RangeSubselect); ok && rs.RangeSubselect != nil {
-		if err := s.maskInNode(rs.RangeSubselect.Subquery, aliases); err != nil {
-			return err
-		}
-	}
-	if j.Quals != nil {
-		return s.maskInExpr(j.Quals, aliases)
-	}
-	return nil
+	return s.maskExprSlot(&j.Quals, aliases)
 }
 
 // maskInExpr performs in-place substitution anywhere inside an
-// expression tree. It replaces the inner ColumnRef with the mask
-// expression via a parent-slot update.
+// expression tree. Nested query scopes re-enter the structured walk so
+// alias maps rebuild; every other node is descended generically via
+// protobuf reflection, so no expression context (function args, CASE
+// arms, casts, sort keys, …) can carry a masked column unsubstituted.
 func (s *state) maskInExpr(n *pg.Node, aliases aliasMap) error {
 	if n == nil {
 		return nil
 	}
 	switch v := n.Node.(type) {
-	case *pg.Node_AExpr:
-		if v.AExpr == nil {
-			return nil
-		}
-		if replaced, _, err := s.maybeSubstituteColumnRef(v.AExpr.Lexpr, aliases); err != nil {
-			return err
-		} else if replaced != nil {
-			v.AExpr.Lexpr = replaced
-		} else if err := s.maskInExpr(v.AExpr.Lexpr, aliases); err != nil {
-			return err
-		}
-		if replaced, _, err := s.maybeSubstituteColumnRef(v.AExpr.Rexpr, aliases); err != nil {
-			return err
-		} else if replaced != nil {
-			v.AExpr.Rexpr = replaced
-		} else if err := s.maskInExpr(v.AExpr.Rexpr, aliases); err != nil {
-			return err
-		}
-	case *pg.Node_BoolExpr:
-		if v.BoolExpr == nil {
-			return nil
-		}
-		for i, a := range v.BoolExpr.Args {
-			if replaced, _, err := s.maybeSubstituteColumnRef(a, aliases); err != nil {
-				return err
-			} else if replaced != nil {
-				v.BoolExpr.Args[i] = replaced
-				continue
-			}
-			if err := s.maskInExpr(a, aliases); err != nil {
-				return err
-			}
-		}
+	case *pg.Node_SelectStmt, *pg.Node_RangeSubselect, *pg.Node_ExplainStmt:
+		return s.maskInNode(n, aliases)
 	case *pg.Node_SubLink:
-		if v.SubLink != nil {
-			return s.maskInNode(v.SubLink.Subselect, aliases)
+		if v.SubLink == nil {
+			return nil
 		}
+		if err := s.maskInNode(v.SubLink.Subselect, aliases); err != nil {
+			return err
+		}
+		// The test expression (left-hand side of IN/ANY) belongs to the
+		// enclosing scope, not the subselect.
+		return s.maskExprSlot(&v.SubLink.Testexpr, aliases)
 	}
-	return nil
+	return s.maskWalkMessage(n.ProtoReflect(), aliases)
+}
+
+// maskWalkMessage descends into every populated message field looking
+// for *pg.Node slots. A node that is a masked bare column ref is
+// replaced in place; anything else recurses through maskInExpr so
+// nested scopes keep their delegation.
+func (s *state) maskWalkMessage(m protoreflect.Message, aliases aliasMap) error {
+	var walkErr error
+	m.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() {
+			return true
+		}
+		if fd.IsList() {
+			list := val.List()
+			for i := 0; i < list.Len(); i++ {
+				item := list.Get(i).Message()
+				node, ok := item.Interface().(*pg.Node)
+				if !ok {
+					if walkErr = s.maskWalkMessage(item, aliases); walkErr != nil {
+						return false
+					}
+					continue
+				}
+				repl, _, err := s.maybeSubstituteColumnRef(node, aliases)
+				if err != nil {
+					walkErr = err
+					return false
+				}
+				if repl != nil {
+					list.Set(i, protoreflect.ValueOfMessage(repl.ProtoReflect()))
+					continue
+				}
+				if walkErr = s.maskInExpr(node, aliases); walkErr != nil {
+					return false
+				}
+			}
+			return true
+		}
+		msg := val.Message()
+		node, ok := msg.Interface().(*pg.Node)
+		if !ok {
+			walkErr = s.maskWalkMessage(msg, aliases)
+			return walkErr == nil
+		}
+		repl, _, err := s.maybeSubstituteColumnRef(node, aliases)
+		if err != nil {
+			walkErr = err
+			return false
+		}
+		if repl != nil {
+			m.Set(fd, protoreflect.ValueOfMessage(repl.ProtoReflect()))
+			return true
+		}
+		walkErr = s.maskInExpr(node, aliases)
+		return walkErr == nil
+	})
+	return walkErr
 }
 
 // maybeSubstituteColumnRef inspects n; if it is a ColumnRef that

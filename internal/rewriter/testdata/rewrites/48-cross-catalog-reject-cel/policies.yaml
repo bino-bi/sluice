@@ -1,0 +1,28 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: no-cross-catalog
+  priority: 200
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+  reject:
+    rules:
+      - name: no-cross-catalog
+        expression: 'size(query.catalogs) > 1'
+        message: "queries must stay within one catalog"
+        code: ACL_REJECTED

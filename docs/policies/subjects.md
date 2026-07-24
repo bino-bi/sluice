@@ -75,7 +75,9 @@ gate instead. Over-limit requests get `ERR_RATE_LIMITED` (HTTP 429). Limits are
 zero field leaves that dimension unlimited. Usage (CPU milliseconds and rows served) is recorded
 as each query completes, held in memory, and flushed to an embedded SQLite store so restarts
 resume near where they left off. Counters reset at UTC midnight. An exhausted budget returns
-`ERR_BUDGET_EXCEEDED` (HTTP 429).
+`ERR_BUDGET_EXCEEDED` (HTTP 429). Accounting is post-execution — the budget is checked before a
+query runs and charged after it completes — so a single very large query can overshoot the daily
+cap before it is counted; treat budgets as a daily backstop, not a per-query limit.
 
 Budgets are opt-in on the server side:
 

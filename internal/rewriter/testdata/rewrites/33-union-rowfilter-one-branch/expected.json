@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT orders.id, orders.tenant_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders UNION SELECT * FROM mysql_erp.archive.orders",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "8934f3691db59b14",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

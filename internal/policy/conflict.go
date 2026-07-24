@@ -161,8 +161,16 @@ func collectRowFilters(matched []*CompiledPolicy, tables []parser.TableRef, user
 			}
 			tableRefs = kept
 		}
+		// A query can reference the same table more than once (self-join,
+		// recursive CTE); the policy's predicate applies to the table, not
+		// to each reference.
+		seen := map[string]bool{}
 		for _, t := range tableRefs {
 			key := tableKey(t)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			existing, ok := dec.RowFilters[key]
 			if !ok {
 				dec.RowFilters[key] = &CompiledFilter{

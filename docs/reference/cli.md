@@ -30,7 +30,9 @@ override, with `.` mapped to `__` (`SLUICE_REST__LISTEN=:9000` overrides
 
 Starts the REST transport (always), plus the MCP and admin transports when
 enabled in config. `SIGINT`/`SIGTERM` shut down gracefully; `SIGHUP` triggers
-a policy reload. Exits 1 on startup failure, 2 on a transport error. See
+a policy reload. Exits 1 on startup failure, 2 on a transport error. Binaries
+compiled with `-tags=pure_parser` refuse to start (exit 1): the stub parser
+backend cannot parse SQL, so every query would fail. See
 [Deployment](../operations/deployment.md).
 
 | Flag | Default | Meaning |

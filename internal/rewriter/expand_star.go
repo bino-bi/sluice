@@ -36,9 +36,20 @@ func (s *state) expandStarInNode(n *pg.Node) error {
 	if n == nil {
 		return nil
 	}
-	if v, ok := n.Node.(*pg.Node_SelectStmt); ok && v.SelectStmt != nil {
-		if err := s.expandStarInSelect(v.SelectStmt); err != nil {
-			return err
+	switch v := n.Node.(type) {
+	case *pg.Node_SelectStmt:
+		if v.SelectStmt != nil {
+			if err := s.expandStarInSelect(v.SelectStmt); err != nil {
+				return err
+			}
+		}
+	case *pg.Node_ExplainStmt:
+		// Policies match tables inside EXPLAIN bodies (the table walker
+		// descends into them), so the rewrite must too.
+		if v.ExplainStmt != nil {
+			if err := s.expandStarInNode(v.ExplainStmt.Query); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

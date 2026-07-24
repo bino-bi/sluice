@@ -158,6 +158,42 @@ func TestEngine_RowFilterTemplate(t *testing.T) {
 	}
 }
 
+func TestEngine_RowFilterDuplicateTableRef(t *testing.T) {
+	rf := &apitypes.RowFilterPolicy{
+		TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindRowFilterPolicy},
+		Metadata: apitypes.ObjectMeta{Name: "tenant-filter"},
+		Spec: apitypes.RowFilterSpec{
+			Match: apitypes.Selector{Any: []apitypes.Clause{
+				{Resources: &apitypes.ResourceSelector{Tables: []string{"orders"}}},
+			}},
+			Filter: apitypes.FilterSpec{
+				Predicate: &apitypes.Predicate{
+					Column: "tenant_id", Op: apitypes.PredOpEquals, Value: "{{ subject.tenant_id }}",
+				},
+			},
+		},
+	}
+	snap := makeSnapshot(allowAll(0), rf)
+	eng := New(Options{})
+	if err := eng.ApplySnapshot(context.Background(), snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// Same table referenced twice (self-join, recursive CTE): the policy's
+	// predicate must fold in once, not once per reference.
+	ref := parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"}
+	dec, _ := eng.Evaluate(context.Background(), Input{
+		User:   &identity.UserCtx{Subject: "u", Claims: map[string]any{"tenant_id": "t-1"}},
+		Tables: []parser.TableRef{ref, ref},
+	})
+	filter := dec.RowFilters["pg.public.orders"]
+	if filter == nil {
+		t.Fatalf("row filter missing; got keys %v", dec.RowFilters)
+	}
+	if filter.Predicate == nil || !filter.Predicate.IsLeaf() {
+		t.Fatalf("predicate folded more than once: %+v", filter.Predicate)
+	}
+}
+
 func TestEngine_ColumnMaskConstant(t *testing.T) {
 	mask := &apitypes.ColumnMaskPolicy{
 		TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindColumnMaskPolicy},

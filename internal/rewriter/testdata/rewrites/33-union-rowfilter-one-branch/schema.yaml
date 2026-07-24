@@ -1,0 +1,2 @@
+pg.public.orders: [id, tenant_id]
+mysql_erp.archive.orders: [id, tenant_id]

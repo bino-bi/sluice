@@ -80,6 +80,9 @@ type runtimeDeps struct {
 // wrapped with a context-specific prefix so the caller can exit with the
 // right code.
 func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtimeDeps, error) {
+	if !parserbackend.Implemented {
+		return nil, fmt.Errorf("parser backend %q is a non-functional stub in this build (compiled with -tags=pure_parser); rebuild without the tag", parserbackend.Name())
+	}
 	deps := &runtimeDeps{}
 
 	// 1. Server config. Validate refuses settings this build cannot
