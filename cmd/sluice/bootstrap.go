@@ -356,30 +356,31 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	// 16. Config watcher — fsnotify + SIGHUP + admin /reload all funnel
 	//     through here, republishing the snapshot to subscribers on change.
-	if scfg.Policies.Reload {
-		deps.watcher, err = config.NewWatcher(config.WatchOptions{
-			Dir:      dir,
-			Registry: deps.registry,
-			Logger:   deps.log,
-			// Dry-run compile before publish: a snapshot the policy
-			// engine would reject must not reach the other subscribers
-			// (bindings, limits, budgets) or the gateway ends up
-			// half-applied.
-			Validate: func(ctx context.Context, snap *config.Snapshot) error {
-				_, err := policy.Compile(ctx, snap)
-				return err
-			},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("config watcher: %w", err)
-		}
-		deps.registry.Subscribe(func(_ *config.Snapshot, cur *config.Snapshot) {
-			if cur == nil {
-				return
-			}
-			deps.applyReload(ctx, cur)
-		})
+	//     Always constructed: policies.reload gates only the fsnotify loop
+	//     (Start, in serve.go); the synchronous Reload path backing SIGHUP
+	//     and POST /admin/reload works without it.
+	deps.watcher, err = config.NewWatcher(config.WatchOptions{
+		Dir:      dir,
+		Registry: deps.registry,
+		Logger:   deps.log,
+		// Dry-run compile before publish: a snapshot the policy
+		// engine would reject must not reach the other subscribers
+		// (bindings, limits, budgets) or the gateway ends up
+		// half-applied.
+		Validate: func(ctx context.Context, snap *config.Snapshot) error {
+			_, err := policy.Compile(ctx, snap)
+			return err
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("config watcher: %w", err)
 	}
+	deps.registry.Subscribe(func(_ *config.Snapshot, cur *config.Snapshot) {
+		if cur == nil {
+			return
+		}
+		deps.applyReload(ctx, cur)
+	})
 
 	if scfg.Admin.Enabled {
 		adminCfg := admin.Config{

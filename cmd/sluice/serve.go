@@ -52,7 +52,12 @@ Signals:
 			}()
 
 			if deps.watcher != nil {
-				deps.watcher.Start(ctx)
+				// fsnotify watching is opt-in; SIGHUP and /admin/reload
+				// stay available regardless via the watcher's synchronous
+				// Reload path.
+				if deps.server.Policies.Reload {
+					deps.watcher.Start(ctx)
+				}
 				// SIGHUP: block-level reload handler. Unix-only; the admin
 				// /admin/reload endpoint is the cross-platform fallback.
 				hupCh := make(chan os.Signal, 1)
@@ -77,7 +82,7 @@ Signals:
 				"rest", deps.server.REST.Listen,
 				"mcp_enabled", deps.server.MCP.Enabled,
 				"admin_enabled", deps.server.Admin.Enabled,
-				"hot_reload", deps.watcher != nil,
+				"hot_reload", deps.server.Policies.Reload,
 			)
 
 			g, gctx := errgroup.WithContext(ctx)
