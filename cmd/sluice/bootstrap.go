@@ -307,8 +307,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
 		RequestTimeout: scfg.REST.RequestTimeout,
 	}
-	if t := scfg.REST.TLS; t != nil && t.CertFile != "" && t.KeyFile != "" {
-		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
+	// Validate guarantees cert+key are both set when the block exists.
+	if t := scfg.REST.TLS; t != nil {
+		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
 	}
 	restDeps := rest.Deps{
 		Service:    deps.service,
@@ -381,11 +382,15 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 
 	if scfg.Admin.Enabled {
-		deps.admin = admin.New(admin.Config{
+		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
 			Token:   scfg.Admin.Token,
-		}, admin.Deps{
+		}
+		if t := scfg.Admin.TLS; t != nil {
+			adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
+		}
+		deps.admin = admin.New(adminCfg, admin.Deps{
 			Service:   deps.service,
 			Approvals: adminPendingLister(deps.approvals),
 			Policies:  deps.policyEng,

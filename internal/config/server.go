@@ -258,7 +258,10 @@ type RewriteCacheConfig struct {
 	TTL     time.Duration `mapstructure:"ttl"`
 }
 
-// TLSConfig holds server TLS material. Client-auth (mTLS) is v1.
+// TLSConfig holds server TLS material. A non-empty ClientCA enables
+// mutual TLS (clients must present a certificate signed by that CA).
+// ClientAuth optionally spells the only supported mode,
+// "require_and_verify", explicitly; a set ClientCA already implies it.
 type TLSConfig struct {
 	CertFile   string `mapstructure:"certFile"`
 	KeyFile    string `mapstructure:"keyFile"`
