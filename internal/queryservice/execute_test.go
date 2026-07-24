@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -486,6 +487,41 @@ func TestExecute_AuditSQLSample(t *testing.T) {
 				t.Fatalf("sql_sample = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExecute_ClientMetaAudited(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+		Metadata: map[string]string{
+			"dashboard": "revenue-daily",
+			"user":      "alice@example.com",
+			"oversized": strings.Repeat("x", 5000),
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	_ = res.Rows.Close()
+	recs := a.all()
+	if len(recs) == 0 {
+		t.Fatalf("no audit records")
+	}
+	cm := recs[0].ClientMeta
+	if cm["dashboard"] != "revenue-daily" || cm["user"] != "alice@example.com" {
+		t.Fatalf("client_meta = %v", cm)
+	}
+	if len(cm["oversized"]) >= 5000 {
+		t.Fatalf("oversized value not capped: %d bytes", len(cm["oversized"]))
 	}
 }
 

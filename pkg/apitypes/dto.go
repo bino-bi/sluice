@@ -4,12 +4,15 @@ package apitypes
 
 // QueryRequest is the REST + MCP wire shape for a query.
 type QueryRequest struct {
-	SQL       string            `json:"sql"`
-	Params    []any             `json:"params,omitempty"`
-	MaxRows   int               `json:"max_rows,omitempty"`
-	TimeoutMS int               `json:"timeout_ms,omitempty"`
-	Format    ResponseFormat    `json:"format,omitempty"`
-	Meta      map[string]string `json:"meta,omitempty"`
+	SQL       string         `json:"sql"`
+	Params    []any          `json:"params,omitempty"`
+	MaxRows   int            `json:"max_rows,omitempty"`
+	TimeoutMS int            `json:"timeout_ms,omitempty"`
+	Format    ResponseFormat `json:"format,omitempty"`
+	// Meta carries free-form correlation key/values (dashboard id,
+	// upstream user, ticket ref). Recorded on the audit access record as
+	// client_meta, size-capped server-side.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // ResponseFormat names the response encoding. FormatJSON is the default

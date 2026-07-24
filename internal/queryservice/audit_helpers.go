@@ -5,6 +5,7 @@ package queryservice
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/audit"
@@ -39,7 +40,52 @@ func (s *Service) buildAuditBase(req QueryRequest, qid string, tables []parser.T
 	}
 	rec.Tables = tablesToStrings(tables)
 	rec.Catalogs = catalogsFromTables(tables)
+	rec.ClientMeta = clientMetaFor(req.Metadata)
 	return rec
+}
+
+// Caps on caller-supplied request metadata copied into the audit record,
+// bounding record growth against hostile or careless clients.
+const (
+	maxClientMetaEntries    = 16
+	maxClientMetaKeyBytes   = 64
+	maxClientMetaValueBytes = 256
+)
+
+// clientMetaFor copies and caps caller metadata for the audit record.
+// Deterministic: keys are sorted, the first maxClientMetaEntries kept,
+// oversized keys/values byte-truncated. Map iteration order must never
+// decide what gets audited.
+func clientMetaFor(meta map[string]string) map[string]string {
+	if len(meta) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(meta))
+	for k := range meta {
+		if k == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	if len(keys) > maxClientMetaEntries {
+		keys = keys[:maxClientMetaEntries]
+	}
+	out := make(map[string]string, len(keys))
+	for _, k := range keys {
+		v := meta[k]
+		if len(v) > maxClientMetaValueBytes {
+			v = v[:maxClientMetaValueBytes]
+		}
+		if len(k) > maxClientMetaKeyBytes {
+			k = k[:maxClientMetaKeyBytes]
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // applyDecisionToAudit stamps the policy decision onto rec. Applied

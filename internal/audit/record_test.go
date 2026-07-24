@@ -183,3 +183,72 @@ func TestGenesisPriorHash(t *testing.T) {
 		t.Fatalf("genesis hash wrong length: %d", len(a))
 	}
 }
+
+func TestCanonicalJSON_ClientMetaDeterministic(t *testing.T) {
+	r := sampleRecord()
+	r.ClientMeta = map[string]string{"zz": "1", "aa": "two", "mm": "x"}
+
+	var a, b bytes.Buffer
+	if err := audit.CanonicalJSON(&a, r); err != nil {
+		t.Fatalf("canonical a: %v", err)
+	}
+	r2 := *r
+	r2.ClientMeta = map[string]string{"mm": "x", "aa": "two", "zz": "1"}
+	if err := audit.CanonicalJSON(&b, &r2); err != nil {
+		t.Fatalf("canonical b: %v", err)
+	}
+	if !bytes.Equal(a.Bytes(), b.Bytes()) {
+		t.Fatalf("client_meta canonicalization non-deterministic:\n a=%s\n b=%s", a.Bytes(), b.Bytes())
+	}
+	if !strings.Contains(a.String(), `"client_meta":{"aa":"two","mm":"x","zz":"1"}`) {
+		t.Fatalf("client_meta not sorted/present: %s", a.String())
+	}
+}
+
+func TestCanonicalJSON_EmptyClientMetaOmitted(t *testing.T) {
+	// A record with a nil map and one with an empty map must canonicalize
+	// byte-identically to a record that never had the field — existing
+	// chains must keep verifying.
+	base := sampleRecord()
+	var want bytes.Buffer
+	if err := audit.CanonicalJSON(&want, base); err != nil {
+		t.Fatalf("canonical base: %v", err)
+	}
+	withEmpty := *base
+	withEmpty.ClientMeta = map[string]string{}
+	var got bytes.Buffer
+	if err := audit.CanonicalJSON(&got, &withEmpty); err != nil {
+		t.Fatalf("canonical empty: %v", err)
+	}
+	if !bytes.Equal(want.Bytes(), got.Bytes()) {
+		t.Fatalf("empty client_meta changed canonical bytes:\n want=%s\n got=%s", want.Bytes(), got.Bytes())
+	}
+}
+
+func TestComputeHash_ChainsWithClientMeta(t *testing.T) {
+	r1 := sampleRecord()
+	h1, err := audit.ComputeHash("prior-1", r1)
+	if err != nil {
+		t.Fatalf("hash r1: %v", err)
+	}
+	r2 := sampleRecord()
+	r2.ClientMeta = map[string]string{"dashboard": "revenue-daily"}
+	r2.PriorHash = h1
+	h2, err := audit.ComputeHash(h1, r2)
+	if err != nil {
+		t.Fatalf("hash r2: %v", err)
+	}
+	if h2 == "" || h2 == h1 {
+		t.Fatalf("chained hash with client_meta: got %q", h2)
+	}
+	// Same record without client_meta must hash differently.
+	r3 := sampleRecord()
+	r3.PriorHash = h1
+	h3, err := audit.ComputeHash(h1, r3)
+	if err != nil {
+		t.Fatalf("hash r3: %v", err)
+	}
+	if h3 == h2 {
+		t.Fatal("client_meta not included in hash input")
+	}
+}
