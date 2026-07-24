@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -191,9 +192,12 @@ func TestHandleReload_NotWired501(t *testing.T) {
 	}
 }
 
-type fakeReloader struct{ called int }
+type fakeReloader struct {
+	called int
+	err    error
+}
 
-func (f *fakeReloader) Reload(context.Context) error { f.called++; return nil }
+func (f *fakeReloader) Reload(context.Context) error { f.called++; return f.err }
 
 func TestHandleReload_Wired200(t *testing.T) {
 	t.Parallel()
@@ -209,6 +213,40 @@ func TestHandleReload_Wired200(t *testing.T) {
 	}
 	if rl.called != 1 {
 		t.Fatalf("reloader called %d times, want 1", rl.called)
+	}
+}
+
+func TestHandleReload_PolicyErrorReturnsPolicyInvalid(t *testing.T) {
+	t.Parallel()
+	rl := &fakeReloader{err: fmt.Errorf("reload: %w", policy.ErrSnapshotInvalid)}
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{
+		Reloader: rl,
+	})
+	r := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400: body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "ERR_POLICY_INVALID") {
+		t.Fatalf("body missing ERR_POLICY_INVALID: %s", w.Body.String())
+	}
+}
+
+func TestHandleReload_GenericErrorReturnsConfigInvalid(t *testing.T) {
+	t.Parallel()
+	rl := &fakeReloader{err: fmt.Errorf("directory unreadable")}
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{
+		Reloader: rl,
+	})
+	r := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400: body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "ERR_CONFIG_INVALID") {
+		t.Fatalf("body missing ERR_CONFIG_INVALID: %s", w.Body.String())
 	}
 }
 

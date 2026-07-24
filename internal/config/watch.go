@@ -37,6 +37,12 @@ type WatchOptions struct {
 	// Strict is forwarded to LoadDirectory.
 	Strict bool
 
+	// Validate, when set, vets a freshly loaded Snapshot before it is
+	// published. A validation error aborts the reload and the previous
+	// snapshot stays live everywhere. Wired to policy compilation by the
+	// composition root (config cannot import policy).
+	Validate func(ctx context.Context, snap *Snapshot) error
+
 	// Logger receives slog output. Nil uses slog.Default.
 	Logger *slog.Logger
 }
@@ -195,6 +201,13 @@ func (w *Watcher) reloadOnce(ctx context.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	if w.opts.Validate != nil {
+		// Returned unwrapped so callers can errors.Is against the
+		// validator's sentinels (e.g. policy.ErrSnapshotInvalid).
+		if err := w.opts.Validate(ctx, snap); err != nil {
+			return err
+		}
 	}
 	w.opts.Registry.Publish(snap)
 	w.mu.Lock()

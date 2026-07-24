@@ -4,6 +4,8 @@ package config_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -98,6 +100,76 @@ func TestWatcher_ManualReload(t *testing.T) {
 	w, err := config.NewWatcher(config.WatchOptions{
 		Dir:      dir,
 		Registry: reg,
+	})
+	if err != nil {
+		t.Fatalf("new watcher: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+
+	if err := w.Reload(context.Background()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if published.Load() != 1 {
+		t.Fatalf("expected 1 publish, got %d", published.Load())
+	}
+}
+
+func TestWatcher_ValidateRejectsPublish(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "allow.yaml"), []byte(minimalAllowYAML), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg := config.NewRegistry()
+	var published atomic.Int64
+	reg.Subscribe(func(_, cur *config.Snapshot) {
+		if cur != nil {
+			published.Add(1)
+		}
+	})
+
+	sentinel := errors.New("compile failed")
+	w, err := config.NewWatcher(config.WatchOptions{
+		Dir:      dir,
+		Registry: reg,
+		Validate: func(context.Context, *config.Snapshot) error {
+			return fmt.Errorf("policy: %w", sentinel)
+		},
+	})
+	if err != nil {
+		t.Fatalf("new watcher: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+
+	rerr := w.Reload(context.Background())
+	if !errors.Is(rerr, sentinel) {
+		t.Fatalf("reload err = %v; want wrapped sentinel", rerr)
+	}
+	if published.Load() != 0 {
+		t.Fatalf("invalid snapshot must not publish; got %d publishes", published.Load())
+	}
+}
+
+func TestWatcher_ValidateAcceptsPublish(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "allow.yaml"), []byte(minimalAllowYAML), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg := config.NewRegistry()
+	var published atomic.Int64
+	reg.Subscribe(func(_, cur *config.Snapshot) {
+		if cur != nil {
+			published.Add(1)
+		}
+	})
+
+	w, err := config.NewWatcher(config.WatchOptions{
+		Dir:      dir,
+		Registry: reg,
+		Validate: func(context.Context, *config.Snapshot) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("new watcher: %v", err)

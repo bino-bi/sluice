@@ -360,6 +360,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Dir:      dir,
 			Registry: deps.registry,
 			Logger:   deps.log,
+			// Dry-run compile before publish: a snapshot the policy
+			// engine would reject must not reach the other subscribers
+			// (bindings, limits, budgets) or the gateway ends up
+			// half-applied.
+			Validate: func(ctx context.Context, snap *config.Snapshot) error {
+				_, err := policy.Compile(ctx, snap)
+				return err
+			},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("config watcher: %w", err)
