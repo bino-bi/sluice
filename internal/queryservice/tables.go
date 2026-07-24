@@ -4,6 +4,7 @@ package queryservice
 
 import (
 	"context"
+	"sort"
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/identity"
@@ -123,36 +124,98 @@ func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *
 	return out, nil
 }
 
+// Page bounds a table listing. Limit <= 0 selects DefaultListLimit and
+// values above MaxListLimit are clamped. After is the qualified name of
+// the last table already seen ("" starts from the beginning).
+type Page struct {
+	Limit int
+	After string
+}
+
+// Listing bounds. Unbounded dumps are an agent-context hazard; callers
+// page with the returned cursor instead.
+const (
+	DefaultListLimit = 500
+	MaxListLimit     = 1000
+)
+
 // ListTables reports the tables in (catalog, schemaName) that user is
 // allowed to read. Backed by schema.Cache; each candidate is checked
 // against the policy engine so schema discovery respects access control.
-func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx) ([]parser.TableRef, error) {
-	if s.opts.Schema == nil {
-		return nil, pkgerr.New(pkgerr.CodeInternal).WithMessage("schema cache not configured")
-	}
-	all := s.opts.Schema.All()
-	out := make([]parser.TableRef, 0, len(all))
-	for _, e := range all {
-		if e == nil {
-			continue
-		}
+// The second return value is the cursor for the next page ("" when the
+// listing is exhausted).
+func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx, page Page) ([]parser.TableRef, string, error) {
+	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
 		if e.Key.Catalog != catalog {
+			return false
+		}
+		return schemaName == "" || e.Key.Schema == schemaName
+	})
+}
+
+// listVisible walks the schema cache in stable qualified-name order,
+// applies match and the policy visibility gate, and returns up to one
+// page. Pagination happens after visibility filtering so pages are dense
+// (a page of N is N tables the caller can actually query). The cursor is
+// the qualified name of the last returned table.
+func (s *Service) listVisible(ctx context.Context, user *identity.UserCtx, page Page, match func(*schema.Entry) bool) ([]parser.TableRef, string, error) {
+	if s.opts.Schema == nil {
+		return nil, "", pkgerr.New(pkgerr.CodeInternal).WithMessage("schema cache not configured")
+	}
+	limit := page.Limit
+	switch {
+	case limit <= 0:
+		limit = DefaultListLimit
+	case limit > MaxListLimit:
+		limit = MaxListLimit
+	}
+
+	candidates := make([]parser.TableRef, 0, 64)
+	for _, e := range s.opts.Schema.All() {
+		if e == nil || !match(e) {
 			continue
 		}
-		if schemaName != "" && e.Key.Schema != schemaName {
-			continue
-		}
-		ref := parser.TableRef{
+		candidates = append(candidates, parser.TableRef{
 			Catalog: e.Key.Catalog,
 			Schema:  e.Key.Schema,
 			Table:   e.Key.Table,
+		})
+	}
+	// All() is sorted by Key.String(); re-sort by the qualified rendering
+	// the cursor uses so the walk order and the cursor comparison can
+	// never disagree (they differ only around empty schema names).
+	sort.Slice(candidates, func(i, j int) bool {
+		return qualifiedName(candidates[i]) < qualifiedName(candidates[j])
+	})
+
+	out := make([]parser.TableRef, 0, min(limit, len(candidates)))
+	next := ""
+	for _, ref := range candidates {
+		if page.After != "" && qualifiedName(ref) <= page.After {
+			continue
 		}
 		if !s.tableVisible(ctx, user, ref) {
 			continue
 		}
+		if len(out) == limit {
+			// One more visible entry exists beyond the page: hand out a
+			// cursor pointing at the last returned table.
+			next = qualifiedName(out[len(out)-1])
+			break
+		}
 		out = append(out, ref)
 	}
-	return out, nil
+	return out, next, nil
+}
+
+// qualifiedName renders ref as catalog[.schema].table, collapsing an
+// empty schema. Must match the MCP transport's rendering: cursors are
+// compared against these strings.
+func qualifiedName(t parser.TableRef) string {
+	if t.Schema == "" {
+		return t.Catalog + "." + t.Table
+	}
+	return t.Catalog + "." + t.Schema + "." + t.Table
 }
 
 // DescribeTable returns the cached schema.Entry for ref, refreshing on
@@ -170,29 +233,15 @@ func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *
 	return s.opts.Schema.Get(ctx, key)
 }
 
-// AccessibleTables returns every table (optionally restricted to catalog)
-// that user is allowed to read, across all known catalogs. Backs the MCP
-// list_accessible_tables tool so an agent can discover what it may query
-// without probing by trial and error.
-func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, catalog string) ([]parser.TableRef, error) {
-	if s.opts.Schema == nil {
-		return nil, pkgerr.New(pkgerr.CodeInternal).WithMessage("schema cache not configured")
-	}
-	all := s.opts.Schema.All()
-	out := make([]parser.TableRef, 0, len(all))
-	for _, e := range all {
-		if e == nil {
-			continue
-		}
-		if catalog != "" && e.Key.Catalog != catalog {
-			continue
-		}
-		ref := parser.TableRef{Catalog: e.Key.Catalog, Schema: e.Key.Schema, Table: e.Key.Table}
-		if s.tableVisible(ctx, user, ref) {
-			out = append(out, ref)
-		}
-	}
-	return out, nil
+// AccessibleTables returns one page of the tables (optionally restricted
+// to catalog) that user is allowed to read, across all known catalogs.
+// Backs the MCP list_accessible_tables tool so an agent can discover what
+// it may query without probing by trial and error. The second return
+// value is the next-page cursor ("" when exhausted).
+func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, catalog string, page Page) ([]parser.TableRef, string, error) {
+	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
+		return catalog == "" || e.Key.Catalog == catalog
+	})
 }
 
 // tableVisible reports whether user may read ref — i.e. the policy engine
