@@ -15,10 +15,8 @@ codes. Codes never change silently; additions require a CHANGELOG entry.
 | `ERR_REWRITE_FAILED`            | 400   | policy rewrite failed                                                      |
 | `ERR_MASK_UNSUPPORTED_CONTEXT`  | 400   | a post-query masked column cannot appear in a filter, join, or expression  |
 | `ERR_UNAUTHORIZED`              | 401   | authentication required                                                    |
-| `ERR_FORBIDDEN`                 | 403   | access forbidden                                                           |
 | `ACL_DENIED`                    | 403   | access denied by policy                                                    |
 | `ACL_REJECTED`                  | 403   | query shape rejected by policy                                             |
-| `ERR_INSUFFICIENT_SCOPE`        | 403   | token lacks required scope                                                 |
 | `ERR_DATASOURCE_UNAVAILABLE`    | 503   | data source unavailable                                                    |
 | `ERR_CONFIG_INVALID`            | 400   | server configuration invalid                                               |
 | `ERR_POLICY_INVALID`            | 400   | policy document invalid                                                    |

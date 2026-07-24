@@ -21,11 +21,9 @@ const (
 	CodeMaskContext        Code = "ERR_MASK_UNSUPPORTED_CONTEXT"
 
 	// Identity / authorization
-	CodeUnauthorized      Code = "ERR_UNAUTHORIZED"
-	CodeForbidden         Code = "ERR_FORBIDDEN"
-	CodeACLDenied         Code = "ACL_DENIED"
-	CodeACLRejected       Code = "ACL_REJECTED"
-	CodeInsufficientScope Code = "ERR_INSUFFICIENT_SCOPE"
+	CodeUnauthorized Code = "ERR_UNAUTHORIZED"
+	CodeACLDenied    Code = "ACL_DENIED"
+	CodeACLRejected  Code = "ACL_REJECTED"
 
 	// Resource / configuration
 	CodeDataSourceUnavailable Code = "ERR_DATASOURCE_UNAVAILABLE"
@@ -67,10 +65,8 @@ var httpStatusByCode = map[Code]int{
 	CodeRewriteFailed:         http.StatusBadRequest,
 	CodeMaskContext:           http.StatusBadRequest,
 	CodeUnauthorized:          http.StatusUnauthorized,
-	CodeForbidden:             http.StatusForbidden,
 	CodeACLDenied:             http.StatusForbidden,
 	CodeACLRejected:           http.StatusForbidden,
-	CodeInsufficientScope:     http.StatusForbidden,
 	CodeDataSourceUnavailable: http.StatusServiceUnavailable,
 	CodeConfigInvalid:         http.StatusBadRequest,
 	CodePolicyInvalid:         http.StatusBadRequest,
@@ -97,10 +93,8 @@ var defaultMessage = map[Code]string{
 	CodeRewriteFailed:         "policy rewrite failed",
 	CodeMaskContext:           "a post-query masked column cannot appear in a filter, join, or expression",
 	CodeUnauthorized:          "authentication required",
-	CodeForbidden:             "access forbidden",
 	CodeACLDenied:             "access denied by policy",
 	CodeACLRejected:           "query shape rejected by policy",
-	CodeInsufficientScope:     "token lacks required scope",
 	CodeDataSourceUnavailable: "data source unavailable",
 	CodeConfigInvalid:         "server configuration invalid",
 	CodePolicyInvalid:         "policy document invalid",
@@ -144,10 +138,8 @@ func AllCodes() []Code {
 		CodeRewriteFailed,
 		CodeMaskContext,
 		CodeUnauthorized,
-		CodeForbidden,
 		CodeACLDenied,
 		CodeACLRejected,
-		CodeInsufficientScope,
 		CodeDataSourceUnavailable,
 		CodeConfigInvalid,
 		CodePolicyInvalid,
