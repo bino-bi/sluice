@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bino-bi/sluice/internal/queryservice"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 // renderCSV streams the result as RFC 4180 CSV with a header row. Row
@@ -19,7 +20,7 @@ import (
 // stream is drained.
 func renderCSV(w http.ResponseWriter, res *queryservice.QueryResult) error {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Trailer", "X-Sluice-Row-Count, X-Sluice-Truncated")
+	w.Header().Set("Trailer", "X-Sluice-Row-Count, X-Sluice-Truncated, X-Sluice-Warning")
 	flusher, _ := w.(http.Flusher)
 	writer := csv.NewWriter(w)
 
@@ -57,6 +58,9 @@ func renderCSV(w http.ResponseWriter, res *queryservice.QueryResult) error {
 	}
 	w.Header().Set("X-Sluice-Row-Count", strconv.FormatInt(rowCount(res), 10))
 	w.Header().Set("X-Sluice-Truncated", strconv.FormatBool(res.Truncated))
+	if res.Truncated {
+		w.Header().Set("X-Sluice-Warning", string(pkgerr.CodeResultTruncated))
+	}
 	if flusher != nil {
 		flusher.Flush()
 	}

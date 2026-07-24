@@ -222,6 +222,9 @@ func TestHandleQuery_CSVTrailers(t *testing.T) {
 	if got := trailer.Get("X-Sluice-Truncated"); got != "false" {
 		t.Fatalf("X-Sluice-Truncated trailer: got %q want false", got)
 	}
+	if got := trailer.Get("X-Sluice-Warning"); got != "" {
+		t.Fatalf("X-Sluice-Warning trailer: got %q want empty", got)
+	}
 }
 
 func TestHandleQuery_CSVTrailerTruncated(t *testing.T) {
@@ -247,6 +250,9 @@ func TestHandleQuery_CSVTrailerTruncated(t *testing.T) {
 	if got := trailer.Get("X-Sluice-Row-Count"); got != "1" {
 		t.Fatalf("X-Sluice-Row-Count trailer: got %q want 1", got)
 	}
+	if got := trailer.Get("X-Sluice-Warning"); got != "ERR_RESULT_TRUNCATED" {
+		t.Fatalf("X-Sluice-Warning trailer: got %q want ERR_RESULT_TRUNCATED", got)
+	}
 }
 
 func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {
@@ -267,6 +273,9 @@ func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {
 	var resp struct {
 		Truncated bool  `json:"truncated"`
 		RowCount  int64 `json:"row_count"`
+		Warning   *struct {
+			Code string `json:"code"`
+		} `json:"warning"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -276,6 +285,9 @@ func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {
 	}
 	if resp.RowCount != 1 {
 		t.Fatalf("row_count: got %d want 1", resp.RowCount)
+	}
+	if resp.Warning == nil || resp.Warning.Code != "ERR_RESULT_TRUNCATED" {
+		t.Fatalf("warning: got %+v want code ERR_RESULT_TRUNCATED", resp.Warning)
 	}
 }
 
@@ -303,6 +315,7 @@ func TestHandleQuery_JSONHappyPath(t *testing.T) {
 		Rows      [][]any  `json:"rows"`
 		RowCount  int64    `json:"row_count"`
 		Truncated bool     `json:"truncated"`
+		Warning   any      `json:"warning"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body2); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -312,6 +325,9 @@ func TestHandleQuery_JSONHappyPath(t *testing.T) {
 	}
 	if len(body2.Rows) != 1 {
 		t.Fatalf("rows: got %d want 1", len(body2.Rows))
+	}
+	if body2.Warning != nil {
+		t.Fatalf("warning: got %v want absent on non-truncated response", body2.Warning)
 	}
 }
 

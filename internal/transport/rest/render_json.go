@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/bino-bi/sluice/internal/queryservice"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 // renderJSON streams the result as a single JSON object:
@@ -86,9 +87,18 @@ func renderJSON(w http.ResponseWriter, res *queryservice.QueryResult) error {
 		return err
 	}
 
-	// Trailer: closing rows array + row_count + truncated.
-	if _, err := fmt.Fprintf(w, `],"row_count":%d,"truncated":%t}`,
+	// Trailer: closing rows array + row_count + truncated (+ warning).
+	if _, err := fmt.Fprintf(w, `],"row_count":%d,"truncated":%t`,
 		rowCount(res), res.Truncated); err != nil {
+		return err
+	}
+	if res.Truncated {
+		if _, err := fmt.Fprintf(w, `,"warning":{"code":%q,"message":%q}`,
+			pkgerr.CodeResultTruncated, pkgerr.Message(pkgerr.CodeResultTruncated)); err != nil {
+			return err
+		}
+	}
+	if _, err := w.Write([]byte{'}'}); err != nil {
 		return err
 	}
 	if flusher != nil {

@@ -29,6 +29,16 @@ type QueryResponse struct {
 	Rows      [][]any  `json:"rows"`
 	RowCount  int64    `json:"row_count"`
 	Truncated bool     `json:"truncated"`
+	// Warning is set on 200 responses that completed with a caveat,
+	// e.g. ERR_RESULT_TRUNCATED when a row cap stopped the stream.
+	Warning *QueryWarning `json:"warning,omitempty"`
+}
+
+// QueryWarning carries a non-fatal error-catalog code alongside a
+// successful response body.
+type QueryWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // HealthStatus is the body of /v1/health.
