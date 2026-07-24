@@ -25,6 +25,7 @@ type ServerConfig struct {
 	Policies    PoliciesConfig    `mapstructure:"policies"`
 	Audit       AuditConfig       `mapstructure:"audit"`
 	Logging     LoggingConfig     `mapstructure:"logging"`
+	Tracing     TracingConfig     `mapstructure:"tracing"`
 	Identity    IdentityConfig    `mapstructure:"identity"`
 	Limits      LimitsConfig      `mapstructure:"limits"`
 	Cache       CacheConfig       `mapstructure:"cache"`
@@ -176,6 +177,16 @@ type LoggingConfig struct {
 	Format string `mapstructure:"format"` // json/text
 }
 
+// TracingConfig controls OpenTelemetry span export. Disabled by default;
+// when enabled, an OTLP endpoint is required.
+type TracingConfig struct {
+	Enabled     bool    `mapstructure:"enabled"`
+	Endpoint    string  `mapstructure:"endpoint"`    // OTLP host:port
+	Protocol    string  `mapstructure:"protocol"`    // grpc (default) / http
+	Insecure    bool    `mapstructure:"insecure"`    // plaintext export (dev)
+	SampleRatio float64 `mapstructure:"sampleRatio"` // 0..1, parent-based; default 1.0
+}
+
 // IdentityConfig holds process-wide identity settings. SubjectBinding
 // manifests live alongside policies.
 type IdentityConfig struct {
@@ -258,7 +269,10 @@ type RewriteCacheConfig struct {
 	TTL     time.Duration `mapstructure:"ttl"`
 }
 
-// TLSConfig holds server TLS material. Client-auth (mTLS) is v1.
+// TLSConfig holds server TLS material. A non-empty ClientCA enables
+// mutual TLS (clients must present a certificate signed by that CA).
+// ClientAuth optionally spells the only supported mode,
+// "require_and_verify", explicitly; a set ClientCA already implies it.
 type TLSConfig struct {
 	CertFile   string `mapstructure:"certFile"`
 	KeyFile    string `mapstructure:"keyFile"`
@@ -306,6 +320,10 @@ func DefaultServerConfig() ServerConfig {
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "json",
+		},
+		Tracing: TracingConfig{
+			Protocol:    "grpc",
+			SampleRatio: 1.0,
 		},
 		Audit: AuditConfig{
 			FailClosed:     true,
@@ -428,6 +446,11 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 
 	v.SetDefault("logging.level", d.Logging.Level)
 	v.SetDefault("logging.format", d.Logging.Format)
+	v.SetDefault("tracing.enabled", d.Tracing.Enabled)
+	v.SetDefault("tracing.endpoint", d.Tracing.Endpoint)
+	v.SetDefault("tracing.protocol", d.Tracing.Protocol)
+	v.SetDefault("tracing.insecure", d.Tracing.Insecure)
+	v.SetDefault("tracing.sampleRatio", d.Tracing.SampleRatio)
 
 	v.SetDefault("audit.failClosed", d.Audit.FailClosed)
 	v.SetDefault("audit.sqlSampleBytes", d.Audit.SQLSampleBytes)

@@ -58,6 +58,7 @@ type runtimeDeps struct {
 	rewrite      *rewriter.Rewriter
 	auditDisp    *audit.Dispatcher
 	auditSinks   []audit.Sink
+	auditFile    *audit.FileSink
 	identifier   identity.Identifier
 	apikey       *identity.APIKeyIdentifier
 	jwtID        *identity.JWTIdentifier
@@ -93,7 +94,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 	deps.server = scfg
 
-	// 2. Telemetry (slog + optional prom gauge).
+	// 2. Telemetry (slog + optional prom gauge + optional otel tracing).
 	telCfg := telemetry.DefaultConfig(telemetry.ServiceInfo{
 		Name:    "sluice",
 		Version: version.Current().Version,
@@ -102,6 +103,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	telCfg.Logging.Level = parseLogLevel(scfg.Logging.Level)
 	telCfg.Logging.Format = strings.ToLower(scfg.Logging.Format)
 	telCfg.Metrics.Enabled = scfg.Admin.Enabled
+	telCfg.Tracing = telemetry.TracingConfig{
+		Enabled:     scfg.Tracing.Enabled,
+		Endpoint:    scfg.Tracing.Endpoint,
+		Protocol:    scfg.Tracing.Protocol,
+		Insecure:    scfg.Tracing.Insecure,
+		SampleRatio: scfg.Tracing.SampleRatio,
+	}
 	shutdown, err := telemetry.Init(ctx, telCfg)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry init: %w", err)
@@ -199,7 +207,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	// 12. Audit dispatcher — file sink (chain primary) plus optional
 	// best-effort syslog / s3 secondaries.
-	deps.auditSinks, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
+	deps.auditSinks, deps.auditFile, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
 	if err != nil {
 		return nil, err
 	}
@@ -306,9 +314,11 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Listen:         scfg.REST.Listen,
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
 		RequestTimeout: scfg.REST.RequestTimeout,
+		Tracing:        scfg.Tracing.Enabled,
 	}
-	if t := scfg.REST.TLS; t != nil && t.CertFile != "" && t.KeyFile != "" {
-		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
+	// Validate guarantees cert+key are both set when the block exists.
+	if t := scfg.REST.TLS; t != nil {
+		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
 	}
 	restDeps := rest.Deps{
 		Service:    deps.service,
@@ -341,6 +351,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			HTTPListen:     scfg.MCP.Listen,
 			SessionIdleMax: scfg.MCP.SessionIdleMax,
 			AllowAnonymous: scfg.MCP.AllowAnonymous,
+			Tracing:        scfg.Tracing.Enabled,
 		}, mcp.Deps{
 			Service:    deps.service,
 			Identifier: deps.identifier,
@@ -355,29 +366,42 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	// 16. Config watcher — fsnotify + SIGHUP + admin /reload all funnel
 	//     through here, republishing the snapshot to subscribers on change.
-	if scfg.Policies.Reload {
-		deps.watcher, err = config.NewWatcher(config.WatchOptions{
-			Dir:      dir,
-			Registry: deps.registry,
-			Logger:   deps.log,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("config watcher: %w", err)
-		}
-		deps.registry.Subscribe(func(_ *config.Snapshot, cur *config.Snapshot) {
-			if cur == nil {
-				return
-			}
-			deps.applyReload(ctx, cur)
-		})
+	//     Always constructed: policies.reload gates only the fsnotify loop
+	//     (Start, in serve.go); the synchronous Reload path backing SIGHUP
+	//     and POST /admin/reload works without it.
+	deps.watcher, err = config.NewWatcher(config.WatchOptions{
+		Dir:      dir,
+		Registry: deps.registry,
+		Logger:   deps.log,
+		// Dry-run compile before publish: a snapshot the policy
+		// engine would reject must not reach the other subscribers
+		// (bindings, limits, budgets) or the gateway ends up
+		// half-applied.
+		Validate: func(ctx context.Context, snap *config.Snapshot) error {
+			_, err := policy.Compile(ctx, snap)
+			return err
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("config watcher: %w", err)
 	}
+	deps.registry.Subscribe(func(_ *config.Snapshot, cur *config.Snapshot) {
+		if cur == nil {
+			return
+		}
+		deps.applyReload(ctx, cur)
+	})
 
 	if scfg.Admin.Enabled {
-		deps.admin = admin.New(admin.Config{
+		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
 			Token:   scfg.Admin.Token,
-		}, admin.Deps{
+		}
+		if t := scfg.Admin.TLS; t != nil {
+			adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
+		}
+		deps.admin = admin.New(adminCfg, admin.Deps{
 			Service:   deps.service,
 			Approvals: adminPendingLister(deps.approvals),
 			Policies:  deps.policyEng,
@@ -385,6 +409,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Catalogs:  registryCatalogLister{r: deps.sourceReg},
 			Logger:    deps.log,
 			Reloader:  reloaderFromWatcher(deps.watcher),
+			Audit:     auditTailer(deps.auditFile),
 		})
 	}
 
@@ -451,6 +476,16 @@ func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
 	if d.schemaCache != nil {
 		d.schemaCache.InvalidateAll()
 	}
+}
+
+// auditTailer adapts the concrete file sink to the admin.AuditTailer
+// interface. The typed-nil guard keeps a nil *FileSink from becoming a
+// non-nil interface that panics on use.
+func auditTailer(fs *audit.FileSink) admin.AuditTailer {
+	if fs == nil {
+		return nil
+	}
+	return fs
 }
 
 // reloaderFromWatcher adapts the config.Watcher.Reload signature to the

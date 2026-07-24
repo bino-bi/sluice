@@ -8,9 +8,9 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/telemetry"
 )
 
 // routes composes the HTTP handler: middleware stack + route table. The
@@ -47,9 +47,15 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /v1/approvals/{id}", authMW(http.HandlerFunc(s.handleApprovalStatus)))
 	}
 
-	// Outermost wrapping: request-id → body-cap → timeout → panic recovery
-	// → metric tagging (placeholder until telemetry.HTTPMiddleware lands).
+	// Outermost wrapping: request-id → body-cap → timeout → panic
+	// recovery → otel span (when tracing). The otel handler sits directly
+	// on the mux: ServeMux stamps Request.Pattern on the request it was
+	// handed, and any WithContext clone in between would hide the pattern
+	// from the span-renaming pass.
 	var h http.Handler = mux
+	if s.cfg.Tracing {
+		h = telemetry.HTTPMiddleware("rest")(h)
+	}
 	h = s.panicRecovery(h)
 	h = s.requestTimeout(h)
 	h = s.bodyCap(h)
@@ -58,8 +64,8 @@ func (s *Server) routes() http.Handler {
 }
 
 // requestID attaches an X-Request-Id response header and a ULID-ish token
-// for logs. A real telemetry.HTTPMiddleware will replace this once the
-// OTel initialisation slice (deferred) lands.
+// for logs. Kept alongside tracing: the id is echoed in responses, while
+// the otel trace id lives in the span.
 func (s *Server) requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rid := r.Header.Get("X-Request-Id")
@@ -111,8 +117,7 @@ func (s *Server) panicRecovery(next http.Handler) http.Handler {
 	})
 }
 
-// newRequestID returns a short random hex token. When the telemetry
-// middleware lands it will supersede this with an OTel trace ID.
+// newRequestID returns a short random hex token.
 func newRequestID() string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])
@@ -132,8 +137,3 @@ func RequestIDFromContext(ctx context.Context) string {
 func acceptHeader(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get("Accept"))
 }
-
-// Ensure the rest package's time import survives gofmt when future
-// middlewares are added. The telemetry.HTTPMiddleware landing here will
-// restore explicit use.
-var _ = time.Second

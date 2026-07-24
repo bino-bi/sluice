@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 )
 
 // Config controls the admin listener. The MVP intentionally keeps the
@@ -42,6 +43,19 @@ type Config struct {
 
 	// MaxBodyBytes caps any request body. Zero → 256 KiB.
 	MaxBodyBytes int64
+
+	// TLS enables HTTPS when non-nil; a ClientCA additionally requires
+	// client certificates (mutual TLS).
+	TLS *TLSConfig
+}
+
+// TLSConfig holds the admin listener's TLS material. A non-empty
+// ClientCA enables mutual TLS. Client certificates gate the transport
+// only — the bearer token is still required.
+type TLSConfig struct {
+	CertFile string
+	KeyFile  string
+	ClientCA string
 }
 
 // Deps wires the admin server dependencies.
@@ -119,8 +133,32 @@ func (s *Server) Addr() string {
 
 // ListenAndServe serves until ctx is done or a fatal error occurs.
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if s.cfg.TLS != nil {
+		tc, err := tlsutil.Build(tlsutil.Config{
+			CertFile: s.cfg.TLS.CertFile,
+			KeyFile:  s.cfg.TLS.KeyFile,
+			ClientCA: s.cfg.TLS.ClientCA,
+		})
+		if err != nil {
+			return fmt.Errorf("admin: tls: %w", err)
+		}
+		s.srv.TLSConfig = tc
+		if s.cfg.TLS.ClientCA != "" {
+			s.lg.InfoContext(ctx, "admin: mTLS enabled — client certificates required",
+				slog.String("client_ca", s.cfg.TLS.ClientCA))
+		}
+	} else {
+		s.lg.WarnContext(ctx, "admin: serving plain HTTP (no TLS configured)",
+			slog.String("listen", s.cfg.Listen))
+	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.srv.ListenAndServe() }()
+	go func() {
+		if s.cfg.TLS != nil {
+			errCh <- s.srv.ListenAndServeTLS("", "")
+			return
+		}
+		errCh <- s.srv.ListenAndServe()
+	}()
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {

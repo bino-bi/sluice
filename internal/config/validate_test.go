@@ -24,25 +24,90 @@ func TestServerConfigValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "rest mTLS fields rejected",
+			name: "rest mTLS via clientCA is valid",
 			mutate: func(c *ServerConfig) {
 				c.REST.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem", ClientCA: "ca.pem"}
 			},
-			wantErr: []string{"rest.tls.clientCA"},
 		},
 		{
-			name: "rest clientAuth rejected",
+			name: "rest explicit clientAuth with clientCA is valid",
 			mutate: func(c *ServerConfig) {
-				c.REST.TLS = &TLSConfig{ClientAuth: "require"}
+				c.REST.TLS = &TLSConfig{
+					CertFile: "cert.pem", KeyFile: "key.pem",
+					ClientCA: "ca.pem", ClientAuth: "require_and_verify",
+				}
 			},
-			wantErr: []string{"rest.tls.clientCA/clientAuth"},
 		},
 		{
-			name: "admin.tls rejected",
+			name: "unknown clientAuth mode rejected",
+			mutate: func(c *ServerConfig) {
+				c.REST.TLS = &TLSConfig{
+					CertFile: "cert.pem", KeyFile: "key.pem",
+					ClientCA: "ca.pem", ClientAuth: "request",
+				}
+			},
+			wantErr: []string{"rest.tls.clientAuth", "unknown mode"},
+		},
+		{
+			name: "clientAuth without clientCA rejected",
+			mutate: func(c *ServerConfig) {
+				c.REST.TLS = &TLSConfig{
+					CertFile: "cert.pem", KeyFile: "key.pem",
+					ClientAuth: "require_and_verify",
+				}
+			},
+			wantErr: []string{"rest.tls.clientAuth", "requires rest.tls.clientCA"},
+		},
+		{
+			name: "partial tls block rejected",
+			mutate: func(c *ServerConfig) {
+				c.REST.TLS = &TLSConfig{CertFile: "cert.pem"}
+			},
+			wantErr: []string{"rest.tls", "certFile and keyFile"},
+		},
+		{
+			name: "admin.tls with cert and key is valid",
 			mutate: func(c *ServerConfig) {
 				c.Admin.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}
 			},
-			wantErr: []string{"admin.tls"},
+		},
+		{
+			name: "admin.tls missing keyFile rejected",
+			mutate: func(c *ServerConfig) {
+				c.Admin.TLS = &TLSConfig{CertFile: "cert.pem"}
+			},
+			wantErr: []string{"admin.tls", "certFile and keyFile"},
+		},
+		{
+			name: "tracing enabled without endpoint rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+			},
+			wantErr: []string{"tracing.endpoint"},
+		},
+		{
+			name: "tracing bad protocol rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+				c.Tracing.Endpoint = "otel:4317"
+				c.Tracing.Protocol = "udp"
+			},
+			wantErr: []string{"tracing.protocol", "unknown protocol"},
+		},
+		{
+			name: "tracing sampleRatio out of range rejected",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.SampleRatio = 1.5
+			},
+			wantErr: []string{"tracing.sampleRatio"},
+		},
+		{
+			name: "tracing enabled with endpoint valid",
+			mutate: func(c *ServerConfig) {
+				c.Tracing.Enabled = true
+				c.Tracing.Endpoint = "otel:4317"
+				c.Tracing.Insecure = true
+			},
 		},
 		{
 			name: "datasources.reload rejected",
@@ -179,7 +244,7 @@ func TestServerConfigValidate(t *testing.T) {
 		{
 			name: "multiple violations all reported",
 			mutate: func(c *ServerConfig) {
-				c.Admin.TLS = &TLSConfig{}
+				c.Admin.TLS = &TLSConfig{CertFile: "cert.pem"} // missing keyFile
 				c.DataSources.Reload = true
 				c.Identity.APIKeyPepper = "secret://vault/p"
 			},

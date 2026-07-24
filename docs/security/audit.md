@@ -20,6 +20,7 @@ log a precondition for serving data, not an afterthought.
 | `tables`, `catalogs` | Resources the statement touched |
 | `policies_applied`, `decision`, `error_code` | Which policies fired, the outcome (`allow`, `deny`, `reject`, `error`), and the error code if any |
 | `row_count`, `truncated`, `duration_ms` | Result metadata, only on the `query-result` record written when the stream closes |
+| `client_meta` | The caller's `meta` request pairs, capped server-side (16 keys, 64-byte keys, 256-byte values). Recorded verbatim inside the operator trust domain, like `sql_sample` — clients should not put secrets in `meta` |
 | `sluice_version`, `duckdb_version`, `parser_version` | Build provenance |
 | `prior_hash`, `hash` | The chain links (see below) |
 

@@ -83,6 +83,10 @@ type Record struct {
 	BindingName          string                   `json:"binding_name,omitempty"`
 	Message              string                   `json:"message,omitempty"`
 	Extras               map[string]any           `json:"extras,omitempty"`
+	// ClientMeta echoes the caller-supplied QueryRequest.Meta pairs,
+	// capped by the queryservice. Recorded verbatim: treat as
+	// operator-trust-domain data, like sql_sample.
+	ClientMeta map[string]string `json:"client_meta,omitempty"`
 
 	PriorHash string `json:"prior_hash"`
 	Hash      string `json:"hash,omitempty"`
@@ -266,6 +270,12 @@ func canonicalFields(r *Record) ([]canonicalField, error) {
 	}
 	if len(r.Extras) > 0 {
 		if err := addExtras(r.Extras, add); err != nil {
+			return nil, err
+		}
+	}
+	if len(r.ClientMeta) > 0 {
+		// json.Marshal sorts string-keyed maps, so this is canonical.
+		if err := addJSON("client_meta", r.ClientMeta); err != nil {
 			return nil, err
 		}
 	}

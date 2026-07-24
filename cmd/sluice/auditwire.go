@@ -23,9 +23,13 @@ import (
 // (chain primary — it carries the hash chain and seeds it across
 // restarts), then the optional best-effort syslog and s3 sinks. A missing
 // file config falls back to a temp directory with a loud warning so the
-// server still boots.
-func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *secrets.Resolver, log *slog.Logger) ([]audit.Sink, error) {
-	var sinks []audit.Sink
+// server still boots. The concrete *FileSink is returned alongside the
+// chain so the admin audit tailer can read it back.
+func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *secrets.Resolver, log *slog.Logger) ([]audit.Sink, *audit.FileSink, error) {
+	var (
+		sinks    []audit.Sink
+		fileSink *audit.FileSink
+	)
 
 	if scfg.Audit.File != nil && scfg.Audit.File.Path != "" {
 		sink, err := audit.NewFileSink(audit.FileOptions{
@@ -34,16 +38,18 @@ func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *s
 			RotateSizeMB: scfg.Audit.File.RotateSizeMB,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("audit file sink: %w", err)
+			return nil, nil, fmt.Errorf("audit file sink: %w", err)
 		}
+		fileSink = sink
 		sinks = append(sinks, sink)
 	} else {
 		tmp := filepath.Join(os.TempDir(), "sluice-audit")
 		log.Warn("audit: no sink configured; defaulting to temp directory", slog.String("path", tmp))
 		sink, err := audit.NewFileSink(audit.FileOptions{Dir: tmp, RotateDaily: true})
 		if err != nil {
-			return nil, fmt.Errorf("audit fallback sink: %w", err)
+			return nil, nil, fmt.Errorf("audit fallback sink: %w", err)
 		}
+		fileSink = sink
 		sinks = append(sinks, sink)
 	}
 
@@ -56,7 +62,7 @@ func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *s
 			Logger:   log,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("audit syslog sink: %w", err)
+			return nil, nil, fmt.Errorf("audit syslog sink: %w", err)
 		}
 		sinks = append(sinks, sink)
 	}
@@ -64,7 +70,7 @@ func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *s
 	if sc := scfg.Audit.S3; sc != nil {
 		client, err := buildS3Client(ctx, sc, resolver)
 		if err != nil {
-			return nil, fmt.Errorf("audit s3 sink: %w", err)
+			return nil, nil, fmt.Errorf("audit s3 sink: %w", err)
 		}
 		sink, err := audit.NewS3Sink(audit.S3Options{
 			Store:          client,
@@ -78,7 +84,7 @@ func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *s
 			Logger:         log,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("audit s3 sink: %w", err)
+			return nil, nil, fmt.Errorf("audit s3 sink: %w", err)
 		}
 		// Best-effort reachability probe: an unreachable bucket must not
 		// abort boot (records buffer and the metrics/logs make it
@@ -95,7 +101,7 @@ func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *s
 		sinks = append(sinks, sink)
 	}
 
-	return sinks, nil
+	return sinks, fileSink, nil
 }
 
 // buildS3Client assembles the minio client. Credentials come from

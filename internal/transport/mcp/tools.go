@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -234,14 +235,21 @@ func (s *Server) toolExplainAccess(ctx context.Context, _ *sdkmcp.CallToolReques
 	}, out, nil
 }
 
-// ListAccessibleTablesArgs optionally restricts to one catalog.
+// ListAccessibleTablesArgs optionally restricts to one catalog, plus one
+// page.
 type ListAccessibleTablesArgs struct {
 	Catalog string `json:"catalog,omitempty" jsonschema:"optional catalog to restrict to"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max tables per page (default 500, max 1000)"`
+	Cursor  string `json:"cursor,omitempty" jsonschema:"opaque cursor from a previous next_cursor"`
 }
 
 func (s *Server) toolListAccessibleTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListAccessibleTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
 	user, _ := userFrom(ctx)
-	tables, err := s.deps.Service.AccessibleTables(ctx, user, in.Catalog)
+	page, err := decodePage(in.Limit, in.Cursor)
+	if err != nil {
+		return toolErrorResult(err), ListTablesOutput{}, nil
+	}
+	tables, next, err := s.deps.Service.AccessibleTables(ctx, user, in.Catalog, page)
 	if err != nil {
 		return toolErrorResult(err), ListTablesOutput{}, nil
 	}
@@ -249,9 +257,42 @@ func (s *Server) toolListAccessibleTables(ctx context.Context, _ *sdkmcp.CallToo
 	for _, t := range tables {
 		out.Tables = append(out.Tables, qualified(t))
 	}
+	out.NextCursor = encodeCursor(next)
 	return &sdkmcp.CallToolResult{
-		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: fmt.Sprintf("%d accessible table(s)", len(out.Tables))}},
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: listSummary(len(out.Tables), "accessible table(s)", out.NextCursor)}},
 	}, out, nil
+}
+
+// decodePage validates the caller's paging args. The cursor is opaque
+// base64url of the service-level qualified-name cursor; a malformed one
+// is rejected before any service work.
+func decodePage(limit int, cursor string) (queryservice.Page, error) {
+	page := queryservice.Page{Limit: limit}
+	if cursor == "" {
+		return page, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return queryservice.Page{}, pkgerr.New(pkgerr.CodeSyntax).WithMessage("invalid cursor")
+	}
+	page.After = string(raw)
+	return page, nil
+}
+
+// encodeCursor renders the service cursor opaque; "" stays "".
+func encodeCursor(next string) string {
+	if next == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(next))
+}
+
+// listSummary renders the tool text line, flagging when more pages exist.
+func listSummary(n int, noun, nextCursor string) string {
+	if nextCursor == "" {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %s (more available; pass cursor=next_cursor)", n, noun)
 }
 
 // renderExplain produces a compact human/LLM-readable summary of an access
@@ -379,20 +420,27 @@ func (s *Server) toolListCatalogs(ctx context.Context, _ *sdkmcp.CallToolRequest
 	}, out, nil
 }
 
-// ListTablesArgs identifies a catalog (+ optional schema).
+// ListTablesArgs identifies a catalog (+ optional schema) and one page.
 type ListTablesArgs struct {
 	Catalog string `json:"catalog" jsonschema:"catalog name"`
 	Schema  string `json:"schema,omitempty" jsonschema:"schema within the catalog (optional)"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max tables per page (default 500, max 1000)"`
+	Cursor  string `json:"cursor,omitempty" jsonschema:"opaque cursor from a previous next_cursor"`
 }
 
-// ListTablesOutput carries the table list.
+// ListTablesOutput carries one page of the table list.
 type ListTablesOutput struct {
-	Tables []string `json:"tables"`
+	Tables     []string `json:"tables"`
+	NextCursor string   `json:"next_cursor,omitempty"`
 }
 
 func (s *Server) toolListTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
 	user, _ := userFrom(ctx)
-	tables, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user)
+	page, err := decodePage(in.Limit, in.Cursor)
+	if err != nil {
+		return toolErrorResult(err), ListTablesOutput{}, nil
+	}
+	tables, next, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user, page)
 	if err != nil {
 		return toolErrorResult(err), ListTablesOutput{}, nil
 	}
@@ -400,9 +448,10 @@ func (s *Server) toolListTables(ctx context.Context, _ *sdkmcp.CallToolRequest, 
 	for _, t := range tables {
 		out.Tables = append(out.Tables, qualified(t))
 	}
+	out.NextCursor = encodeCursor(next)
 	return &sdkmcp.CallToolResult{
 		Content: []sdkmcp.Content{
-			&sdkmcp.TextContent{Text: fmt.Sprintf("%d table(s)", len(out.Tables))},
+			&sdkmcp.TextContent{Text: listSummary(len(out.Tables), "table(s)", out.NextCursor)},
 		},
 	}, out, nil
 }

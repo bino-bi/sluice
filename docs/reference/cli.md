@@ -79,8 +79,8 @@ $ sluice version --json
 `sluice config validate [<policy-dir>]` validates the server config (when
 `--config` is given) and every policy manifest under `<policy-dir>`,
 surfacing all decoding and structural errors. Server-config settings this
-build cannot enforce (mTLS fields, `admin.tls`, `datasources.reload`,
-unimplemented `secret://` providers) are rejected with exit 3 — the same
+build cannot enforce (`datasources.reload`, unimplemented `secret://`
+providers) are rejected with exit 3 — the same
 check that makes `sluice serve` refuse to start. Exits 0/1/3. See
 [Server config & secrets](../operations/server-config.md).
 
@@ -110,10 +110,12 @@ $ sluice policy validate ./policies.d --strict
 
 ## policy explain
 
-Builds a synthetic subject and reports which policies match the target
-table: the effective decision, row filters, and column masks. `--user` plus
-one of `--table`/`--sql` are required. Exits 0, 1 (bad flags or load
-failure), or 3 (compile failure). See
+Builds a synthetic subject and reports which policies match the target:
+the effective decision, row filters, and column masks. The target is a
+`--table`, a simulated `--sql` statement, or both (the explicit table is
+added to the tables extracted from the SQL). `--user` plus one of
+`--table`/`--sql` are required. Exits 0, 1 (bad flags, load failure, or a
+`--sql` parse error), or 3 (compile failure). See
 [Matching & precedence](../policies/matching.md).
 
 | Flag | Default | Meaning |
@@ -125,15 +127,13 @@ failure), or 3 (compile failure). See
 | `--groups` | (none) | Subject groups, comma-separated |
 | `--claims` | (none) | Extra claims as `key=value`, comma-separated |
 | `--table` | (none) | Target table as `catalog.schema.table` |
-| `--sql` | (none) | Reserved — see below |
+| `--sql` | (none) | Simulated SQL; parsed with the real parser, so shape- and CEL-dependent policies explain exactly as the live path would |
 | `--json` | `false` | Emit the explain result as JSON |
-
-!!! warning "Not yet implemented"
-    `--sql` is accepted but reserved — SQL simulation is not wired into
-    this command yet. Use `--table`.
 
 ```console
 $ sluice policy explain --user alice --groups analytics --table shop.main.customers
+$ sluice policy explain --user alice --groups analytics \
+    --sql 'SELECT email FROM shop.main.customers WHERE country = $1'
 ```
 
 ## policy test

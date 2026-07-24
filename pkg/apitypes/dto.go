@@ -4,12 +4,15 @@ package apitypes
 
 // QueryRequest is the REST + MCP wire shape for a query.
 type QueryRequest struct {
-	SQL       string            `json:"sql"`
-	Params    []any             `json:"params,omitempty"`
-	MaxRows   int               `json:"max_rows,omitempty"`
-	TimeoutMS int               `json:"timeout_ms,omitempty"`
-	Format    ResponseFormat    `json:"format,omitempty"`
-	Meta      map[string]string `json:"meta,omitempty"`
+	SQL       string         `json:"sql"`
+	Params    []any          `json:"params,omitempty"`
+	MaxRows   int            `json:"max_rows,omitempty"`
+	TimeoutMS int            `json:"timeout_ms,omitempty"`
+	Format    ResponseFormat `json:"format,omitempty"`
+	// Meta carries free-form correlation key/values (dashboard id,
+	// upstream user, ticket ref). Recorded on the audit access record as
+	// client_meta, size-capped server-side.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // ResponseFormat names the response encoding. FormatJSON is the default
@@ -29,6 +32,16 @@ type QueryResponse struct {
 	Rows      [][]any  `json:"rows"`
 	RowCount  int64    `json:"row_count"`
 	Truncated bool     `json:"truncated"`
+	// Warning is set on 200 responses that completed with a caveat,
+	// e.g. ERR_RESULT_TRUNCATED when a row cap stopped the stream.
+	Warning *QueryWarning `json:"warning,omitempty"`
+}
+
+// QueryWarning carries a non-fatal error-catalog code alongside a
+// successful response body.
+type QueryWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // HealthStatus is the body of /v1/health.

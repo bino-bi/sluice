@@ -17,13 +17,18 @@ import (
 // path (refuse to start).
 func (c *ServerConfig) Validate() error {
 	var errs []error
-	if c.REST.TLS != nil && (c.REST.TLS.ClientCA != "" || c.REST.TLS.ClientAuth != "") {
-		errs = append(errs, errors.New(
-			"rest.tls.clientCA/clientAuth: parsed but unimplemented — mTLS lands in a later release; terminate mTLS at a proxy for now (docs/security/hardening.md)"))
+	errs = append(errs, validateTLSBlock("rest.tls", c.REST.TLS)...)
+	errs = append(errs, validateTLSBlock("admin.tls", c.Admin.TLS)...)
+	if c.Tracing.Enabled && c.Tracing.Endpoint == "" {
+		errs = append(errs, errors.New("tracing.endpoint: required when tracing is enabled"))
 	}
-	if c.Admin.TLS != nil {
-		errs = append(errs, errors.New(
-			"admin.tls: parsed but unimplemented — the admin listener serves plain HTTP; terminate TLS in front of it (docs/reference/admin-api.md)"))
+	switch c.Tracing.Protocol {
+	case "", "grpc", "http":
+	default:
+		errs = append(errs, fmt.Errorf("tracing.protocol: unknown protocol %q (grpc, http)", c.Tracing.Protocol))
+	}
+	if c.Tracing.SampleRatio < 0 || c.Tracing.SampleRatio > 1 {
+		errs = append(errs, fmt.Errorf("tracing.sampleRatio: %v out of range [0, 1]", c.Tracing.SampleRatio))
 	}
 	if c.DataSources.Reload {
 		errs = append(errs, errors.New(
@@ -103,4 +108,29 @@ func checkSecretRef(field, ref string) error {
 		return fmt.Errorf("%s: %w", field, err)
 	}
 	return nil
+}
+
+// validateTLSBlock enforces the structure of a tls block: certFile and
+// keyFile must both be set (a partial block would silently serve plain
+// HTTP — fail-open), clientAuth accepts only the supported
+// require_and_verify mode, and clientAuth without a clientCA is
+// unenforceable. File readability is checked at listener start, not here:
+// Validate stays I/O-free.
+func validateTLSBlock(field string, t *TLSConfig) []error {
+	if t == nil {
+		return nil
+	}
+	var errs []error
+	if t.CertFile == "" || t.KeyFile == "" {
+		errs = append(errs, fmt.Errorf("%s: certFile and keyFile are both required when a tls block is set", field))
+	}
+	switch t.ClientAuth {
+	case "", "require_and_verify":
+	default:
+		errs = append(errs, fmt.Errorf("%s.clientAuth: unknown mode %q (only require_and_verify is supported; a set clientCA implies it)", field, t.ClientAuth))
+	}
+	if t.ClientAuth != "" && t.ClientCA == "" {
+		errs = append(errs, fmt.Errorf("%s.clientAuth: requires %s.clientCA", field, field))
+	}
+	return errs
 }

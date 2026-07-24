@@ -3,8 +3,10 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/bino-bi/sluice/internal/policy"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -23,7 +25,13 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.Reloader.Reload(r.Context()); err != nil {
-		writeAPIError(w, pkgerr.Wrap(pkgerr.CodeConfigInvalid, err))
+		// Policy-document failures get their own code so callers can
+		// tell "fix the policy file" apart from a broken config load.
+		code := pkgerr.CodeConfigInvalid
+		if errors.Is(err, policy.ErrSnapshotInvalid) {
+			code = pkgerr.CodePolicyInvalid
+		}
+		writeAPIError(w, pkgerr.Wrap(code, err))
 		return
 	}
 	resp := reloadResponse{Ok: true}

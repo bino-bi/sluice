@@ -60,6 +60,11 @@ can be overridden through the environment using the `SLUICE_` prefix.
 | `audit.sqlSampleBytes` | `int` | `2048` | `SLUICE_AUDIT__SQLSAMPLEBYTES` |
 | `logging.level` | `string` | `info` | `SLUICE_LOGGING__LEVEL` |
 | `logging.format` | `string` | `json` | `SLUICE_LOGGING__FORMAT` |
+| `tracing.enabled` | `bool` | `false` | `SLUICE_TRACING__ENABLED` |
+| `tracing.endpoint` | `string` | `""` | `SLUICE_TRACING__ENDPOINT` |
+| `tracing.protocol` | `string` | `grpc` | `SLUICE_TRACING__PROTOCOL` |
+| `tracing.insecure` | `bool` | `false` | `SLUICE_TRACING__INSECURE` |
+| `tracing.sampleRatio` | `float64` | `1` | `SLUICE_TRACING__SAMPLERATIO` |
 | `identity.apiKeyPepper` | `string` | `""` | `SLUICE_IDENTITY__APIKEYPEPPER` |
 | `limits.maxRows` | `int64` | `100000` | `SLUICE_LIMITS__MAXROWS` |
 | `limits.maxRowsCeiling` | `int64` | `100000` | `SLUICE_LIMITS__MAXROWSCEILING` |

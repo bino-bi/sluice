@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
+	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policy"
 )
 
@@ -150,7 +151,24 @@ Exit codes:
 				return &exitError{Code: 1, Err: err}
 			}
 
-			var tables []parser.TableRef
+			var (
+				ast    parser.AST
+				shape  parser.QueryShape
+				tables []parser.TableRef
+			)
+			if sqlArg != "" {
+				// Real parse, no regex fallback: an explain tool must
+				// report the same AST/shape the live path evaluates, or
+				// fail loudly.
+				p := parserbackend.New(parser.Options{})
+				a, perr := p.Parse(ctx, sqlArg)
+				if perr != nil {
+					return &exitError{Code: 1, Err: fmt.Errorf("parse --sql: %w", perr)}
+				}
+				ast = a
+				shape = a.Shape()
+				tables = a.Tables()
+			}
 			if tableArg != "" {
 				ref, terr := parseTableRef(tableArg)
 				if terr != nil {
@@ -161,6 +179,8 @@ Exit codes:
 
 			result, err := engine.Explain(ctx, policy.Input{
 				User:   uctx,
+				AST:    ast,
+				Shape:  shape,
 				Tables: tables,
 				Now:    time.Now(),
 			})
@@ -208,7 +228,7 @@ Exit codes:
 	cmd.Flags().StringSliceVar(&groups, "groups", nil, "subject groups (comma-separated)")
 	cmd.Flags().StringSliceVar(&claims, "claims", nil, "extra claims as key=value (comma-separated)")
 	cmd.Flags().StringVar(&tableArg, "table", "", "target table as catalog.schema.table")
-	cmd.Flags().StringVar(&sqlArg, "sql", "", "simulated SQL (reserved; not wired until the parser is plumbed here)")
+	cmd.Flags().StringVar(&sqlArg, "sql", "", "simulated SQL; parsed and explained as the live path would see it")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit ExplainResult as JSON")
 
 	_ = cmd.MarkFlagRequired("user")

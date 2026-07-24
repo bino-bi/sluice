@@ -26,12 +26,12 @@ Status: the query path and transports are in place; release matrix, docs site, a
 - `QueryRewritePolicy` runtime — limit injection, sampling, per-policy timeout.
 - SELECT-* expansion for unmasked tables (today DuckDB handles it; explicit expansion gives operators deterministic output shape).
 - Expanded golden rewrite fixtures covering every scenario in concept §4.11.
-- OTel tracing in `internal/telemetry` + HTTP middleware + `WrapDB` for otelsql.
+- ~~OTel tracing in `internal/telemetry` + HTTP middleware~~ (shipped; `WrapDB`/otelsql driver-level spans still pending).
 - Audit sink fan-out: S3 with Object Lock, Postgres, syslog, OTLP logs.
 
 ## Soon — v0.3.0 / v0.4.0
 
-- Additional identity providers: OIDC discovery, mTLS client certificates.
+- Additional identity providers: OIDC discovery, certificate-derived identity for mTLS clients (transport-level mTLS gating already shipped).
 - Secret providers behind build tags: Vault, AWS Secrets Manager, GCP Secret Manager.
 - `sluice policy test` — run a fixture table against a policy directory.
 - Admin API: `POST /admin/audit/export`, `POST /admin/datasources/:name/probe`.

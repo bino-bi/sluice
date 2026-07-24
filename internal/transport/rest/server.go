@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 )
 
 // Config controls the listener, timeouts, and body limits.
@@ -41,13 +42,20 @@ type Config struct {
 	// ShutdownTimeout bounds graceful-shutdown drain. Zero falls back to
 	// 10 s.
 	ShutdownTimeout time.Duration
+
+	// Tracing wraps the handler chain in an otel server span. Gated here
+	// so disabled deployments pay no wrapping cost.
+	Tracing bool
 }
 
-// TLSConfig holds the cert/key pair for HTTPS. MVP supports a single
-// server cert; mTLS lands in v1.
+// TLSConfig holds the cert/key pair for HTTPS. A non-empty ClientCA
+// enables mutual TLS: clients must present a certificate signed by that
+// CA. Client certificates gate the transport only — they are not mapped
+// to a subject identity.
 type TLSConfig struct {
 	CertFile string
 	KeyFile  string
+	ClientCA string
 }
 
 // Deps wires the request pipeline dependencies. All non-nil fields are
@@ -133,10 +141,25 @@ func (s *Server) Handler() http.Handler { return s.srv.Handler }
 // occurs. A cancelled ctx triggers graceful shutdown honouring
 // Config.ShutdownTimeout.
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if s.cfg.TLS != nil {
+		tc, err := tlsutil.Build(tlsutil.Config{
+			CertFile: s.cfg.TLS.CertFile,
+			KeyFile:  s.cfg.TLS.KeyFile,
+			ClientCA: s.cfg.TLS.ClientCA,
+		})
+		if err != nil {
+			return fmt.Errorf("rest: tls: %w", err)
+		}
+		s.srv.TLSConfig = tc
+		if s.cfg.TLS.ClientCA != "" {
+			s.lg.InfoContext(ctx, "rest: mTLS enabled — client certificates required",
+				slog.String("client_ca", s.cfg.TLS.ClientCA))
+		}
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		if s.cfg.TLS != nil {
-			errCh <- s.srv.ListenAndServeTLS(s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile)
+			errCh <- s.srv.ListenAndServeTLS("", "")
 			return
 		}
 		s.lg.WarnContext(ctx, "rest: serving plain HTTP (no TLS configured)",

@@ -14,6 +14,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/telemetry"
 	"github.com/bino-bi/sluice/internal/version"
 )
 
@@ -52,6 +53,11 @@ type Config struct {
 	// policy default-deny is then the second line of defence. When true, an
 	// unauthenticated request proceeds as anonymous.
 	AllowAnonymous bool
+
+	// Tracing wraps the Streamable HTTP handler in an otel server span.
+	// Stdio needs nothing: the queryservice pipeline spans become trace
+	// roots there.
+	Tracing bool
 }
 
 // Deps wires the server's dependencies. Service is required. Catalogs is
@@ -174,9 +180,13 @@ func (s *Server) runStreamable(ctx context.Context) error {
 	// than silently downgraded to anonymous.
 	mux.Handle("/", s.authMiddleware(handler))
 
+	var h http.Handler = mux
+	if s.cfg.Tracing {
+		h = telemetry.HTTPMiddleware("mcp")(h)
+	}
 	s.http = &http.Server{
 		Addr:              s.cfg.HTTPListen,
-		Handler:           mux,
+		Handler:           h,
 		ReadTimeout:       s.cfg.ReadTimeout,
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
 		WriteTimeout:      s.cfg.WriteTimeout,

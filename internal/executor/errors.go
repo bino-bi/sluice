@@ -23,10 +23,10 @@ var (
 	// ErrExecute wraps errors surfaced by DuckDB during query execution.
 	ErrExecute = errors.New("executor: query execution failed")
 
-	// ErrResultTruncated signals that a row cap stopped iteration before
-	// the stream was fully drained; the Response still returns the rows
-	// that were produced, with Truncated=true.
-	ErrResultTruncated = errors.New("executor: result truncated")
+	// ErrConnUnavailable is returned when a hardened connection cannot be
+	// drawn from the pool for reasons other than the caller's context.
+	// Maps to ERR_DATASOURCE_UNAVAILABLE upstream.
+	ErrConnUnavailable = errors.New("executor: connection unavailable")
 
 	// ErrCanceled is returned when a context is canceled during
 	// execution. It wraps context.Canceled so callers can use

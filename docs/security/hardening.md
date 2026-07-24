@@ -30,12 +30,31 @@ your `policies.d/`.
 - [ ] Set a strong admin token. An empty token boots in dev mode with only a
       logged warning between you and an open admin plane.
 
-!!! warning "Not yet implemented: mTLS — rejected at load"
-    Client-certificate verification is not enforced yet, so setting
-    `rest.tls.clientCA` or `rest.tls.clientAuth` **fails validation**:
-    `sluice config validate` exits 3 and `sluice serve` refuses to start.
-    The REST server loads a single server cert/key pair. If you need
-    mutual TLS, enforce it at a proxy in front of Sluice.
+### Mutual TLS
+
+Setting `rest.tls.clientCA` to a CA bundle (PEM) requires every client to
+present a certificate signed by that CA — the handshake fails otherwise
+(`RequireAndVerifyClientCert`, TLS 1.2 floor). The admin listener takes
+the same block under `admin.tls` (server cert/key, optional `clientCA`)
+on top of its bearer token.
+
+```yaml
+rest:
+  tls:
+    certFile: /etc/sluice/tls/server.pem
+    keyFile: /etc/sluice/tls/server-key.pem
+    clientCA: /etc/sluice/tls/clients-ca.pem
+admin:
+  tls:
+    certFile: /etc/sluice/tls/admin.pem
+    keyFile: /etc/sluice/tls/admin-key.pem
+```
+
+A `tls` block must carry both `certFile` and `keyFile`, and unreadable
+files abort startup before the listener binds. mTLS here is
+**transport-level gating only**: the client certificate is not mapped to
+a subject — requests still authenticate via JWT or API key
+(certificate-derived identity is on the roadmap).
 
 ## Credentials
 

@@ -9,6 +9,14 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Added
 
+- **Mutual TLS on the REST and admin listeners** — a non-empty `rest.tls.clientCA` now requires clients to present a certificate signed by that CA (`RequireAndVerifyClientCert`, TLS 1.2 floor); the admin listener gains full TLS support (`admin.tls.certFile`/`keyFile`, optional `clientCA`) on top of its bearer token. Transport-level gating only: client certificates are not mapped to a subject identity.
+- **OpenTelemetry tracing** — new `tracing` config block (disabled by default; `endpoint`, `protocol: grpc|http`, `insecure`, `sampleRatio`). OTLP export with W3C propagation, server spans on REST and MCP streamable HTTP, and pipeline spans `query` → `query.parse`/`query.policy`/`query.rewrite`/`query.execute`/`query.mask` carrying query id, decision, SQL fingerprint, and error code — never raw SQL. Driver-level spans (otelsql) remain roadmap.
+- **`GET /admin/audit/tail` is wired** — the file sink now implements the tailer: last-N records as NDJSON in chronological order across rotated files, with buffered writes flushed first. Previously the endpoint always answered `501`.
+- **`client_meta` audit field** — `QueryRequest.meta` key/values are recorded on the audit access record (previously accepted and silently dropped), deterministically capped at 16 keys / 64-byte keys / 256-byte values. Appended as an optional field: existing hash chains keep verifying.
+- **`sluice policy explain --sql`** — the flag now parses the simulated SQL with the real parser backend and explains it with AST, shape, and extracted tables, exactly as the live path evaluates it; a parse failure exits 1. `--sql` and `--table` combine additively.
+- **MCP list pagination** — `list_tables` and `list_accessible_tables` take optional `limit` (default 500, max 1000) and an opaque `cursor`, and return `next_cursor` while more pages exist; results come in stable lexicographic order and pages are dense (visibility filtering runs first). `list_catalogs` stays unpaginated.
+- **`ERR_RESULT_TRUNCATED` surfaced as a warning** — truncated JSON responses carry a `warning: {code, message}` object next to `truncated: true`; CSV responses set the `X-Sluice-Warning` trailer. Non-truncated responses are unchanged.
+
 - **Syslog and S3 audit sinks** — `audit.syslog` (RFC 5424 over udp/tcp/unix/unixgram) and `audit.s3` (batched JSONL objects, optional Object Lock `governance`/`compliance` retention, minio-go client with env/IAM credential chain or `credentialsRef`). Both are best-effort secondaries: the hash-chained file sink remains the durable record and the only sink that gates queries; secondary failures are metered (`sluice_audit_write_errors_total`, `sluice_audit_dropped_total`) and never break the chain. AuditSink manifests declaring `s3`/`syslog` now point at the server-config keys instead of "unimplemented".
 - **Approval persistence** — `approval.persist: true` stores pending requests and unconsumed grants in SQLite under `approval.stateDir`; capability links survive restarts (tokens at rest and in memory are SHA-256 hashes), grants stay single-use across the restart boundary, and restored requests fire no duplicate webhook.
 - **JWT bindings hot-reload** — the reload subscriber now re-applies `SubjectBinding` issuer sets, claim mappings, and per-issuer HMAC secrets (previously only API-key bindings hot-reloaded; JWT changes silently required a restart). A snapshot with duplicate issuers is rejected and the previous set stays live.
@@ -38,11 +46,13 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **TLS blocks are validated structurally instead of rejected** — `rest.tls.clientCA`/`clientAuth` and `admin.tls` now activate enforcement rather than failing `config validate`; a `tls` block must carry both `certFile` and `keyFile` (a partial block used to silently serve plain HTTP), and `clientAuth` accepts only `require_and_verify`.
+- **MCP table listings are bounded** — previously unbounded responses now default to 500 tables per page; agents follow `next_cursor` for the remainder.
 - **A Bearer token presented while zero SubjectBindings are configured is now rejected with 401** instead of falling through to anonymous — the JWT identifier is constructed even with an empty binding set so a reload can introduce the first issuer without a restart.
 - **The default deployment now has a global request-rate ceiling** (`limits.globalRps: 500`); set `0` to disable. Per-IP and default-subject rates ship disabled.
 - **`sluice config validate` cross-checks ApprovalPolicies against `approval.publicBaseUrl`** — a policy directory containing ApprovalPolicy objects without a configured base URL now exits 3 (serve already refused this combination at boot).
 - **`approval.New` returns `(*Broker, error)`** and the broker gained `Close` (store lifecycle).
-- **Unenforceable configuration now fails at load** — `rest.tls.clientCA`/`clientAuth`, `admin.tls`, `datasources.reload`, AuditSink types `s3`/`postgres`/`syslog`/`otlp`, and `secret://vault|aws-sm|gcp-sm` references parsed but silently did nothing; they are now rejected with a "parsed but unimplemented" error naming the field (`sluice config validate` exits 3, `serve`/`mcp` refuse to start). Guards drop as each feature lands.
+- **Unenforceable configuration now fails at load** — `datasources.reload`, AuditSink types `postgres`/`otlp`, and `secret://vault|aws-sm|gcp-sm` references parsed but silently did nothing; they are now rejected with a "parsed but unimplemented" error naming the field (`sluice config validate` exits 3, `serve`/`mcp` refuse to start). Guards drop as each feature lands (the TLS client-auth and `admin.tls` guards already did, in this cycle).
 - **Approval webhook SQL sampling honors `approval.sqlSampleBytes`** — the knob was never read; a hardcoded 2048-byte fallback always won. `0` now disables the sample instead of silently reverting to 2048.
 - **QueryRewritePolicy `hint` entries and out-of-subset CEL expressions now fail at policy load** (previously inert/rejected-as-unsupported).
 - FPE ships **FF1**, not the roadmap's FF3-1 (FF3 was broken in 2017; FF1 is NIST-preferred and dependency-free).
@@ -51,6 +61,9 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **Manual reload works with `policies.reload: false`** — `SIGHUP` and `POST /admin/reload` no longer die with the fsnotify watcher; the flag now gates only filesystem watching.
+- **Invalid policy snapshots no longer half-apply on reload** — a snapshot that fails policy compilation is rejected before publish on every reload path; previously the policy engine kept the old state while bindings, rate specs, and budgets applied the new one. `/admin/reload` reports compile failures as `ERR_POLICY_INVALID` (load/decode failures stay `ERR_CONFIG_INVALID`).
+- **Connection-pool failures return `ERR_DATASOURCE_UNAVAILABLE` (503)** — drawing a connection from a dead pool surfaced as `ERR_INTERNAL` (500); context cancellations and deadlines keep their codes.
 - **CEL `startsWith`/`endsWith`/`contains` row-filter matchers mismatched on `%`, `_`, and `\`** — they lowered to `LIKE` with backslash-escaped patterns, but DuckDB's `LIKE` has no default escape character, so the escapes were matched literally (typically under-matching; over-matching inside `not:`). The matchers now lower to the literal-safe string operators and involve no pattern escaping at all.
 - **`limits.disableCrossCatalog` is enforced** — it parsed (and was documented as working) but had zero readers. Queries spanning more than one catalog are now rejected with `ERR_ACL_REJECTED` before policy evaluation and before the rewrite cache. Only three-part (`catalog.schema.table`) names carry a catalog — parity with the policy rule `size(query.catalogs) > 1`.
 - **CSV metadata delivered as HTTP trailers** — `X-Sluice-Row-Count`/`X-Sluice-Truncated` were set after the response body was committed, so clients never received them; they now arrive as declared trailers without breaking streaming.
@@ -59,6 +72,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - **sqlitefile default health query** (`<catalog>.sqlite_master`) never resolved under DuckDB and would fail on an empty database; it now uses the same `information_schema.schemata` probe as every other driver. Latent until the health sweep landed — the probe had no callers.
 - `examples/multi-tenant/policies.d/filter-tenant.yaml` used a schema shape that never loaded (`predicate:` directly under `spec:`, lowercase `op: equals`); corrected to `spec.filter.predicate` with `op: Equals`.
 - Stale example READMEs (mask providers "landing in v0.2" that are shipped, four MCP tools instead of nine).
+
+### Removed
+
+- **`ERR_FORBIDDEN` and `ERR_INSUFFICIENT_SCOPE`** — declared in the public error catalog but unreachable: no producer existed, policy denials use `ACL_DENIED`/`ACL_REJECTED`, and the approval endpoints deliberately answer uniform 404s. `ERR_INSUFFICIENT_SCOPE` returns with the OAuth work.
 
 ## [0.1.0] — _unreleased_
 
