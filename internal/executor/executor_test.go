@@ -215,3 +215,27 @@ func TestExecutorConfigClonesDefaults(t *testing.T) {
 		t.Fatalf("Ping: %v", err)
 	}
 }
+
+func TestExecutorClosedPoolReturnsConnUnavailable(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, err := e.Execute(context.Background(), executor.Request{SQL: "SELECT 1"})
+	if !errors.Is(err, executor.ErrConnUnavailable) {
+		t.Fatalf("err = %v; want ErrConnUnavailable", err)
+	}
+}
+
+func TestExecutorCanceledContextStaysCanceled(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := e.Execute(ctx, executor.Request{SQL: "SELECT 1"})
+	if !errors.Is(err, executor.ErrCanceled) {
+		t.Fatalf("err = %v; want ErrCanceled", err)
+	}
+	if errors.Is(err, executor.ErrConnUnavailable) {
+		t.Fatal("canceled context must not classify as ErrConnUnavailable")
+	}
+}

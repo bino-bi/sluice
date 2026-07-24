@@ -113,7 +113,10 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 	conn, err := e.db.Conn(execCtx)
 	if err != nil {
 		cancel()
-		return nil, wrapRunErr(err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, wrapRunErr(err)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrConnUnavailable, err)
 	}
 	if err := e.ensureInit(execCtx, conn); err != nil {
 		cancel()

@@ -511,6 +511,28 @@ func TestExecute_AttachErrorMapsToDataSourceUnavailable(t *testing.T) {
 	}
 }
 
+func TestExecute_ConnUnavailableMapsToDataSourceUnavailable(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{err: fmt.Errorf("run: %w", executor.ErrConnUnavailable)},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:    "SELECT 1",
+		Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ae := pkgerr.FromError(err)
+	if ae.Code != pkgerr.CodeDataSourceUnavailable {
+		t.Fatalf("code = %s, want %s", ae.Code, pkgerr.CodeDataSourceUnavailable)
+	}
+}
+
 func TestExecute_UnknownCatalogMapsToDataSourceUnavailable(t *testing.T) {
 	a := &fakeAudit{}
 	svc := buildService(t,

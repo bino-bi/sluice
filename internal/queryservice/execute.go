@@ -478,7 +478,7 @@ func execErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeCanceled, err).WithQueryID(qid)
 	case stderrors.Is(err, context.DeadlineExceeded):
 		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
-	case stderrors.Is(err, executor.ErrAttach):
+	case stderrors.Is(err, executor.ErrAttach), stderrors.Is(err, executor.ErrConnUnavailable):
 		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
