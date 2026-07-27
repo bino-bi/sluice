@@ -72,7 +72,16 @@ spec:
   readonly: true
 ```
 
-### s3_parquet
+### s3
+
+Exposes Parquet, CSV, JSON, and Excel (`.xlsx`) files on S3-compatible
+object storage as read-only views — one view per `allowedPaths` entry.
+The format is inferred per path from the file extension
+(`.parquet`, `.csv`, `.json`/`.ndjson`/`.jsonl`, `.xlsx`); paths without
+a recognizable extension (e.g. `raw/**`) require an explicit
+`format:`, which then applies to every path in the manifest. Globs are
+fine for parquet/csv/json but not for xlsx (`read_xlsx` opens a single
+workbook).
 
 ```yaml
 apiVersion: sluice.bino.bi/v1alpha1
@@ -80,16 +89,61 @@ kind: DataSource
 metadata:
   name: ref
 spec:
-  type: s3_parquet
+  type: s3
   bucket: "ref-data"
   region: "us-east-1"
   endpoint: "http://minio:9000"          # optional, for S3-compatible stores
   allowedPaths:                          # driver-level allow-list
-    - "s3://ref-data/countries.parquet"
+    - "s3://ref-data/countries.csv"      # → view ref.main.countries_csv
+    - "s3://ref-data/facts/*.parquet"    # → view ref.main.facts___parquet
+    - "s3://ref-data/plan.xlsx"          # → view ref.main.plan_xlsx
   credentialsRef: "secret://env/SLUICE_S3_CREDS"
   readonly: true
   schemas: ["main"]
 ```
+
+```yaml
+# Extension-less paths need the format pinned explicitly:
+spec:
+  type: s3
+  bucket: "lake"
+  region: "eu-central-1"
+  format: parquet                        # applies to all allowedPaths
+  allowedPaths:
+    - "s3://lake/raw/**"
+```
+
+> Renamed from `s3_parquet`. Old manifests fail validation with a
+> pointer at the rename; `type: s3` with the same fields (plus
+> `format: parquet` for extension-less paths) is a drop-in replacement.
+
+### http
+
+Exposes remote files served over HTTP(S) as read-only views — one view
+per URL. The `urls` list is the allow-list: no globs, every file is one
+explicit URL, and nothing else on those hosts becomes readable. Format
+inference works as for `s3` (query strings, e.g. pre-signed URLs, do
+not defeat it); `format:` pins it when the URL has no telling extension.
+
+```yaml
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: web
+spec:
+  type: http
+  urls:
+    - "https://data.example.com/exports/countries.csv"
+    - "https://data.example.com/exports/facts.parquet"
+    - "https://api.example.com/v1/report.json"
+  headersRef: "secret://env/SLUICE_HTTP_HEADERS"   # optional, for authenticated endpoints
+  readonly: true
+```
+
+`headersRef` resolves to a JSON object of header name → value (e.g.
+`{"Authorization": "Bearer …"}`). The headers are installed as one
+DuckDB HTTP secret per URL origin, scoped to that origin — they are
+never sent to other hosts.
 
 ### motherduck
 
@@ -116,6 +170,12 @@ spec:
 
 Credentials resolve through [`secret://` references](server-config.md) into
 DuckDB secrets — they never appear in logs or audit records.
+
+The `s3` and `http` drivers install DuckDB's `httpfs` extension (plus
+`excel` when any path is `.xlsx`) on first attach, which downloads from
+`extensions.duckdb.org` unless already cached. Air-gapped deployments
+should pre-seed the DuckDB extension directory (see DuckDB's
+`extension_directory` docs) in the image.
 
 ## The read-only guarantee
 
@@ -153,7 +213,7 @@ sluice schema export --kind DataSource > datasource.schema.json
 ## Cross-catalog joins
 
 Because every source is a catalog in the same DuckDB instance, one `SELECT`
-can join PostgreSQL against S3 Parquet. Set
+can join PostgreSQL against files on S3. Set
 `limits.disableCrossCatalog: true` to forbid multi-catalog queries. See the
 [cross-source joins cookbook](../cookbook/cross-source-joins.md) for a
 worked example.

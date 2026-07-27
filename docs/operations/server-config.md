@@ -159,7 +159,8 @@ Where references are accepted:
 | `approval.webhooks[].headersRef` | server config (JSON map of header → value) |
 | `spec.jwt.hmacSecretRef` | `SubjectBinding` |
 | `spec.apiKeys[].hashRef` | `SubjectBinding` |
-| `spec.credentialsRef` | `DataSource` (postgres, mysql, s3_parquet) |
+| `spec.credentialsRef` | `DataSource` (postgres, mysql, s3) |
+| `spec.headersRef` | `DataSource` (http; JSON map of header → value) |
 | `spec.backend.tokenRef` | `RelationshipPolicy`; also `spec.tokenRef` on the motherduck `DataSource` |
 | `spec.mask.args.saltRef` / `keyRef` / `seed` | `ColumnMaskPolicy` (`hash` hmac_sha256, `fpe`, `jitter`) |
 

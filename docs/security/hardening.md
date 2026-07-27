@@ -67,7 +67,14 @@ a subject — requests still authenticate via JWT or API key
 - [ ] Use read-only database credentials for every `DataSource`
       (`credentialsRef` via `secret://`). Sluice attaches sources
       `READ_ONLY`, but a least-privilege upstream grant is defense in depth.
-- [ ] For `s3_parquet`, pin `allowedPaths` to the minimum set of globs.
+- [ ] For `s3`, pin `allowedPaths` to the minimum set of globs; for
+      `http`, list only the exact URLs you need. Both lists double as the
+      DuckDB external-access carve-out (`allowed_directories` /
+      `allowed_paths`): everything outside them — other URLs, the local
+      filesystem — stays unreadable even at query time.
+- [ ] For `http` sources with `headersRef`, keep one datasource per
+      credential: the headers are scoped per URL origin, but every origin
+      in one manifest receives the same header set.
 - [ ] Plan rotation up front — see [Key rotation](key-rotation.md).
 
 ## Audit

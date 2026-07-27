@@ -15,7 +15,7 @@ supplies the access-control layer on top.
   grant `ref.main.countries` — both tables must appear in the
   `SqlAccessPolicy` or the whole query is denied. This keeps joins
   explicit: you decide every cell of the access matrix.
-- **Allow-listed S3 paths.** The `s3_parquet` driver only reads files
+- **Allow-listed S3 paths.** The `s3` driver only reads files
   listed in `allowedPaths`. Even if policy allows the catalog, the
   driver refuses any other bucket/key.
 
@@ -31,7 +31,7 @@ cross-source-join/
 │   └── README.md               — how to seed the parquet out-of-band
 ├── policies.d/
 │   ├── datasource-pg.yaml      — Postgres connection
-│   ├── datasource-s3.yaml      — S3 Parquet with allowedPaths
+│   ├── datasource-s3.yaml      — S3 files with allowedPaths
 │   ├── binding-apikey.yaml
 │   └── allow-analytics.yaml    — SqlAccessPolicy lists BOTH tables
 └── data/

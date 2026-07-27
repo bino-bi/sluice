@@ -8,7 +8,7 @@
 
 ## What is Sluice?
 
-Sluice parses every inbound SQL statement with the real PostgreSQL grammar (pg_query) and evaluates it against declarative, default-deny YAML policies — an empty policy directory denies everything. Policies rewrite the query in flight: row filters are injected as parameterized `WHERE` clauses, column masks replace expressions in the target list, and `LIMIT`, sampling, and timeouts are clamped before anything reaches a backend. The rewritten statement executes read-only through embedded DuckDB against attached catalogs (Postgres, MySQL, SQLite, S3 Parquet, DuckDB files, MotherDuck). Every request — allowed or denied — is appended to a hash-chained JSONL audit log that `sluice audit verify` can replay offline.
+Sluice parses every inbound SQL statement with the real PostgreSQL grammar (pg_query) and evaluates it against declarative, default-deny YAML policies — an empty policy directory denies everything. Policies rewrite the query in flight: row filters are injected as parameterized `WHERE` clauses, column masks replace expressions in the target list, and `LIMIT`, sampling, and timeouts are clamped before anything reaches a backend. The rewritten statement executes read-only through embedded DuckDB against attached catalogs (Postgres, MySQL, SQLite, S3 files, HTTP(S) files, DuckDB files, MotherDuck). Every request — allowed or denied — is appended to a hash-chained JSONL audit log that `sluice audit verify` can replay offline.
 
 ```
 client (REST / MCP) ─▶ identify ─▶ parse ─▶ policy ─▶ rewrite ─▶ execute (DuckDB, read-only) ─▶ audit ─▶ rows
@@ -107,7 +107,7 @@ The `customers` table holds rows for three tenants; the caller sees only their o
 - **Policy test harness** — `sluice policy test` runs YAML fixture suites against a policy directory.
 - **Tamper-evident audit** — hash-chained JSONL with `sluice audit verify`.
 - **MCP server** — 9 tools (`execute_sql`, `explain_access`, `whoami`, …) over stdio or Streamable HTTP.
-- **6 datasource drivers** — Postgres, MySQL, SQLite, S3 Parquet, DuckDB file, MotherDuck.
+- **7 datasource drivers** — Postgres, MySQL, SQLite, S3 (Parquet/CSV/JSON/Excel), HTTP(S) files, DuckDB file, MotherDuck.
 
 ## Install
 

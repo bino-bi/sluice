@@ -29,7 +29,7 @@ kind: DataSource
 metadata:
   name: ref
 spec:
-  type: s3_parquet
+  type: s3
   bucket: "ref-data"
   region: "us-east-1"
   endpoint: "http://minio:9000"
