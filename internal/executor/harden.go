@@ -27,11 +27,13 @@ type HardenConfig struct {
 	// Empty keeps DuckDB's default (OS temp).
 	TempDirectory string
 
-	// AllowedExternalPaths lists remote URI prefixes (e.g. "s3://bucket/",
-	// "https://host/data/") that query-time reads may touch. They are
-	// rendered into DuckDB's allowed_directories, which carves exceptions
-	// out of enable_external_access=false — verified against DuckDB 1.3:
-	// reads under a listed prefix succeed while everything else (other
+	// AllowedExternalPaths lists remote URIs that query-time reads may
+	// touch. Entries with a trailing slash are treated as prefixes and
+	// rendered into DuckDB's allowed_directories (e.g. "s3://bucket/");
+	// entries without one are exact files rendered into allowed_paths
+	// (e.g. "https://host/data/report.csv"). Both carve exceptions out
+	// of enable_external_access=false — verified against DuckDB 1.3:
+	// reads of a listed location succeed while everything else (other
 	// URLs, the local filesystem) stays blocked. Empty keeps today's
 	// fully-closed posture and emits no statement at all.
 	AllowedExternalPaths []string
@@ -48,7 +50,7 @@ func hardeningStatements(cfg HardenConfig) []string {
 	// DuckDB evaluates allowed_directories only while
 	// enable_external_access=false.
 	if len(cfg.AllowedExternalPaths) > 0 {
-		stmts = append(stmts, allowedDirectoriesStatement(cfg))
+		stmts = append(stmts, carveOutStatements(cfg)...)
 	}
 	stmts = append(stmts,
 		// Security floor. These MUST land first.
@@ -81,31 +83,49 @@ func hardeningStatements(cfg HardenConfig) []string {
 	return stmts
 }
 
-// allowedDirectoriesStatement renders the allowed_directories carve-out:
-// the configured remote prefixes plus the temp-spill directory (DuckDB's
-// own default for allowed_directories is [<temp_directory>/], which a
-// plain SET would silently drop, breaking larger-than-memory queries).
-func allowedDirectoriesStatement(cfg HardenConfig) string {
-	temp := cfg.TempDirectory
-	if temp == "" {
-		temp = ".tmp/" // DuckDB's own default allowed_directories entry
-	}
+// carveOutStatements renders the external-access carve-outs. Trailing-
+// slash entries become allowed_directories prefixes — always including
+// the temp-spill directory, because DuckDB's own default for
+// allowed_directories is [<temp_directory>/] and a plain SET would
+// silently drop it, breaking larger-than-memory queries. Exact-file
+// entries become allowed_paths; when none exist the statement is
+// omitted so DuckDB's default (empty) stands.
+func carveOutStatements(cfg HardenConfig) []string {
 	seen := map[string]bool{}
-	paths := []string{temp}
-	seen[temp] = true
+	var dirs, files []string
 	for _, p := range cfg.AllowedExternalPaths {
 		if p == "" || seen[p] {
 			continue
 		}
 		seen[p] = true
-		paths = append(paths, p)
+		if strings.HasSuffix(p, "/") {
+			dirs = append(dirs, p)
+		} else {
+			files = append(files, p)
+		}
 	}
-	sort.Strings(paths[1:]) // deterministic statement; temp entry stays first
-	quoted := make([]string, len(paths))
-	for i, p := range paths {
-		quoted[i] = "'" + escapeSQLLiteral(p) + "'"
+	sort.Strings(dirs)
+	sort.Strings(files)
+
+	temp := cfg.TempDirectory
+	if temp == "" {
+		temp = ".tmp/" // DuckDB's own default allowed_directories entry
 	}
-	return "SET allowed_directories=[" + strings.Join(quoted, ", ") + "]"
+	stmts := []string{"SET allowed_directories=" + sqlStringList(append([]string{temp}, dirs...))}
+	if len(files) > 0 {
+		stmts = append(stmts, "SET allowed_paths="+sqlStringList(files))
+	}
+	return stmts
+}
+
+// sqlStringList renders escaped, single-quoted entries as a DuckDB list
+// literal.
+func sqlStringList(entries []string) string {
+	quoted := make([]string, len(entries))
+	for i, e := range entries {
+		quoted[i] = "'" + escapeSQLLiteral(e) + "'"
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // applyHardening runs each SET against conn. A failure on any step

@@ -17,6 +17,36 @@ import (
 type SecretArg struct {
 	Key   string
 	Value string
+
+	// Raw marks Value as a pre-rendered SQL expression (e.g. a MAP
+	// literal from MapLiteral) emitted verbatim instead of as a
+	// single-quoted string. The zero value keeps the quoted rendering.
+	Raw bool
+}
+
+// MapLiteral renders a DuckDB MAP literal from the given entries with
+// deterministic (sorted) key order and escaped keys and values, e.g.
+// MAP {'Authorization': 'Bearer …'}. Use with SecretArg.Raw.
+func MapLiteral(entries map[string]string) string {
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	_, _ = b.WriteString("MAP {")
+	for i, k := range keys {
+		if i > 0 {
+			_, _ = b.WriteString(", ")
+		}
+		_, _ = b.WriteString("'")
+		_, _ = b.WriteString(EscapeSQLString(k))
+		_, _ = b.WriteString("': '")
+		_, _ = b.WriteString(EscapeSQLString(entries[k]))
+		_, _ = b.WriteString("'")
+	}
+	_, _ = b.WriteString("}")
+	return b.String()
 }
 
 // BuildCreateSecret renders a DuckDB CREATE OR REPLACE SECRET statement.
@@ -53,6 +83,11 @@ func BuildCreateSecret(name, secretType string, args []SecretArg) (string, error
 		}
 		_, _ = b.WriteString(",\n    ")
 		_, _ = b.WriteString(strings.ToUpper(a.Key))
+		if a.Raw {
+			_, _ = b.WriteString(" ")
+			_, _ = b.WriteString(a.Value)
+			continue
+		}
 		_, _ = b.WriteString(" '")
 		_, _ = b.WriteString(EscapeSQLString(a.Value))
 		_, _ = b.WriteString("'")

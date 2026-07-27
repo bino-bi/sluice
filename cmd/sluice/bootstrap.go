@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/datasource"
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/duckdbfile" // driver registration
+	_ "github.com/bino-bi/sluice/internal/datasource/drivers/httpfile"   // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/motherduck" // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/mysql"      // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/postgres"   // driver registration

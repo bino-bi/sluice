@@ -36,6 +36,27 @@ func TestHardeningStatementsCarveOutOrderAndDedup(t *testing.T) {
 	}
 }
 
+func TestHardeningStatementsCarveOutSplitsFilesFromPrefixes(t *testing.T) {
+	got := hardeningStatements(HardenConfig{
+		AllowedExternalPaths: []string{
+			"https://host/data/report.csv", // exact file → allowed_paths
+			"s3://bucket/",                 // prefix → allowed_directories
+			"https://host/api/export.json", // exact file → allowed_paths
+		},
+	})
+	want0 := "SET allowed_directories=['.tmp/', 's3://bucket/']"
+	want1 := "SET allowed_paths=['https://host/api/export.json', 'https://host/data/report.csv']"
+	if got[0] != want0 {
+		t.Fatalf("statements[0] = %q; want %q", got[0], want0)
+	}
+	if got[1] != want1 {
+		t.Fatalf("statements[1] = %q; want %q", got[1], want1)
+	}
+	if got[2] != "SET enable_external_access=false" {
+		t.Fatalf("statements[2] = %q; want the security floor next", got[2])
+	}
+}
+
 func TestHardeningStatementsCarveOutTempDirAndEscaping(t *testing.T) {
 	got := hardeningStatements(HardenConfig{
 		TempDirectory:        "/mnt/spill",
