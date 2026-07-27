@@ -309,3 +309,44 @@ func TestValidationErrorMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateDataSourceS3AndHTTP(t *testing.T) {
+	t.Parallel()
+	mk := func(spec string) string {
+		return "apiVersion: sluice.bino.bi/v1alpha1\nkind: DataSource\nmetadata:\n  name: t\nspec:\n" + spec
+	}
+	cases := []struct {
+		name      string
+		yaml      string
+		wantField string // empty = decode must succeed
+	}{
+		{"s3 ok", mk("  type: s3\n  bucket: b\n  region: eu-central-1\n"), ""},
+		{"s3 with format ok", mk("  type: s3\n  bucket: b\n  format: csv\n"), ""},
+		{"s3 missing bucket", mk("  type: s3\n  region: eu-central-1\n"), "spec.bucket"},
+		{"s3 bad format", mk("  type: s3\n  bucket: b\n  format: avro\n"), "spec.format"},
+		{"http ok", mk("  type: http\n  urls: [\"https://example.com/data.csv\"]\n"), ""},
+		{"http with headersRef ok", mk("  type: http\n  urls: [\"https://example.com/d.json\"]\n  headersRef: secret://env/API_HEADERS\n"), ""},
+		{"http missing urls", mk("  type: http\n"), "spec.urls"},
+		{"http bad scheme", mk("  type: http\n  urls: [\"ftp://example.com/x.csv\"]\n"), "spec.urls[0]"},
+		{"http relative url", mk("  type: http\n  urls: [\"/local/x.csv\"]\n"), "spec.urls[0]"},
+		{"s3_parquet renamed", mk("  type: s3_parquet\n  bucket: b\n"), "spec.type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(strings.NewReader(tc.yaml))
+			if tc.wantField == "" {
+				if err != nil {
+					t.Fatalf("Decode: %v", err)
+				}
+				return
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v; want ValidationError", err)
+			}
+			if ve.Field != tc.wantField {
+				t.Fatalf("Field = %q; want %q", ve.Field, tc.wantField)
+			}
+		})
+	}
+}

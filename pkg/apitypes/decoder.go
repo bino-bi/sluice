@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -437,11 +438,28 @@ func validateDataSource(d *DataSource) error {
 				Reason: "required for sqlite/duckdb_file",
 			}
 		}
-	case DSS3Parquet:
+	case DSS3:
 		if s.Bucket == "" {
 			return &ValidationError{
 				Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.bucket",
-				Reason: "required for s3_parquet",
+				Reason: "required for s3",
+			}
+		}
+	case DSHTTP:
+		if len(s.URLs) == 0 {
+			return &ValidationError{
+				Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.urls",
+				Reason: "required for http",
+			}
+		}
+		for i, raw := range s.URLs {
+			u, err := url.Parse(raw)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return &ValidationError{
+					Kind: d.GetKind(), Name: d.Metadata.Name,
+					Field:  fmt.Sprintf("spec.urls[%d]", i),
+					Reason: fmt.Sprintf("%q is not an absolute http(s) URL", raw),
+				}
 			}
 		}
 	case DSMotherDuck:
@@ -451,10 +469,23 @@ func validateDataSource(d *DataSource) error {
 				Reason: "required for motherduck",
 			}
 		}
+	case "s3_parquet":
+		return &ValidationError{
+			Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.type",
+			Reason: "s3_parquet was renamed to s3 (Parquet stays the behavior for .parquet paths; set spec.format to override)",
+		}
 	default:
 		return &ValidationError{
 			Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.type",
 			Reason: fmt.Sprintf("unknown data source type %q", s.Type),
+		}
+	}
+	switch s.Format {
+	case "", FileFormatParquet, FileFormatCSV, FileFormatJSON, FileFormatXLSX:
+	default:
+		return &ValidationError{
+			Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.format",
+			Reason: fmt.Sprintf("unknown format %q (parquet, csv, json, xlsx)", s.Format),
 		}
 	}
 	return nil

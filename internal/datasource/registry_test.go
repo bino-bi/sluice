@@ -235,3 +235,38 @@ func TestRegistryExternalPathsUnion(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryMarshalSpecPassesFileFields(t *testing.T) {
+	const typ = "fake_rawcapture_test"
+	var captured map[string]any
+	pkgds.Register(typ, func(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
+		captured = spec.Raw
+		return testfakes.New(spec.Name, pkgds.Schema{Catalog: spec.Name}), nil
+	})
+
+	ds := dsSpec("cap")
+	ds.Spec.Type = apitypes.DataSourceType(typ)
+	ds.Spec.Format = apitypes.FileFormatCSV
+	ds.Spec.URLs = []string{"https://example.com/a.csv"}
+	ds.Spec.HeadersRef = "secret://env/H"
+
+	r, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{ds}},
+		HealthInterval: -1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	if got, _ := captured["format"].(string); got != "csv" {
+		t.Errorf("raw format = %v; want csv", captured["format"])
+	}
+	if got, _ := captured["headersRef"].(string); got != "secret://env/H" {
+		t.Errorf("raw headersRef = %v; want secret://env/H", captured["headersRef"])
+	}
+	urls, _ := captured["urls"].([]string)
+	if len(urls) != 1 || urls[0] != "https://example.com/a.csv" {
+		t.Errorf("raw urls = %v; want the configured URL", captured["urls"])
+	}
+}

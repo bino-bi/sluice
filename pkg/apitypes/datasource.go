@@ -23,12 +23,21 @@ type DataSourceSpec struct {
 	// sqlite / duckdb_file
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 
-	// s3_parquet
+	// s3
 	Bucket       string   `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	Prefix       string   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 	Region       string   `yaml:"region,omitempty" json:"region,omitempty"`
 	AllowedPaths []string `yaml:"allowedPaths,omitempty" json:"allowedPaths,omitempty"`
 	Endpoint     string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+
+	// http
+	URLs       []string `yaml:"urls,omitempty" json:"urls,omitempty"`
+	HeadersRef string   `yaml:"headersRef,omitempty" json:"headersRef,omitempty"`
+
+	// s3 / http: file format for the exposed views — one of "parquet",
+	// "csv", "json", "xlsx". Empty means "infer per path from the file
+	// extension"; loading fails when a path's format cannot be inferred.
+	Format FileFormat `yaml:"format,omitempty" json:"format,omitempty"`
 
 	// motherduck
 	Database string `yaml:"database,omitempty" json:"database,omitempty"`
@@ -49,9 +58,20 @@ const (
 	DSPostgres   DataSourceType = "postgres"
 	DSMySQL      DataSourceType = "mysql"
 	DSSQLite     DataSourceType = "sqlite"
-	DSS3Parquet  DataSourceType = "s3_parquet"
+	DSS3         DataSourceType = "s3"
+	DSHTTP       DataSourceType = "http"
 	DSDuckDBFile DataSourceType = "duckdb_file"
 	DSMotherDuck DataSourceType = "motherduck"
+)
+
+// FileFormat selects the DuckDB reader backing a file-based view.
+type FileFormat string
+
+const (
+	FileFormatParquet FileFormat = "parquet"
+	FileFormatCSV     FileFormat = "csv"
+	FileFormatJSON    FileFormat = "json"
+	FileFormatXLSX    FileFormat = "xlsx"
 )
 
 // AttachMode controls DuckDB ATTACH behavior.

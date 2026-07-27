@@ -244,6 +244,15 @@ func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
 	if s.Endpoint != "" {
 		raw["endpoint"] = s.Endpoint
 	}
+	if len(s.URLs) > 0 {
+		raw["urls"] = append([]string(nil), s.URLs...)
+	}
+	if s.HeadersRef != "" {
+		raw["headersRef"] = s.HeadersRef
+	}
+	if s.Format != "" {
+		raw["format"] = string(s.Format)
+	}
 	if s.Database != "" {
 		raw["database"] = s.Database
 	}

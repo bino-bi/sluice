@@ -57,6 +57,9 @@ Attach a catalog to DuckDB.
 | `region` | `string` | optional |
 | `allowedPaths` | `[]string` | optional, list |
 | `endpoint` | `string` | optional |
+| `urls` | `[]string` | optional, list |
+| `headersRef` | `string` | optional |
+| `format` | `FileFormat` | optional |
 | `database` | `string` | optional |
 | `tokenRef` | `string` | optional |
 | `readonly` | `bool` | required |
