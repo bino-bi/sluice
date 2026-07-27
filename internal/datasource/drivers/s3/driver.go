@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package s3parquet
+package s3
 
 import (
 	"context"
@@ -12,19 +12,29 @@ import (
 	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
 
-// Type matches apitypes.DSS3Parquet.
-const Type = "s3_parquet"
+// Type matches apitypes.DSS3.
+const Type = "s3"
 
 const (
 	secretTypeS3     = "s3"
 	secretNamePrefix = "sluice_s3_"
 )
 
+// viewSpec is one pre-resolved view: every failure mode (bad format,
+// bad identifier, name collision) surfaces at construction, where
+// FailFast/degraded-mode handling already exists.
+type viewSpec struct {
+	path   string
+	name   string
+	format apitypes.FileFormat
+}
+
 // driver holds bucket metadata and the allowedPaths whitelist. A single
-// data source instance covers multiple Parquet paths within one bucket
+// data source instance covers multiple file paths within one bucket
 // (cross-bucket access requires multiple DataSource entries).
 type driver struct {
 	name     string
@@ -35,6 +45,8 @@ type driver struct {
 	region       string
 	endpoint     string
 	allowedPaths []string
+	views        []viewSpec
+	needsExcel   bool
 
 	credentialsRef string
 
@@ -55,15 +67,16 @@ func Register() { pkgds.Register(Type, newDriver) }
 func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	bucket, _ := spec.Raw["bucket"].(string)
 	if bucket == "" {
-		return nil, errors.New("s3_parquet: spec.bucket is required")
+		return nil, errors.New("s3: spec.bucket is required")
 	}
 	region, _ := spec.Raw["region"].(string)
 	if region == "" {
-		return nil, errors.New("s3_parquet: spec.region is required")
+		return nil, errors.New("s3: spec.region is required")
 	}
 	prefix, _ := spec.Raw["prefix"].(string)
 	endpoint, _ := spec.Raw["endpoint"].(string)
 	credRef, _ := spec.Raw["credentialsRef"].(string)
+	formatOverride, _ := spec.Raw["format"].(string)
 
 	var allowed []string
 	if raw, ok := spec.Raw["allowedPaths"]; ok {
@@ -86,11 +99,16 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 			if !strings.Contains(p, "://") {
 				continue
 			}
-			return nil, fmt.Errorf("s3_parquet: allowedPaths[%d] %q: %w", i, p, err)
+			return nil, fmt.Errorf("s3: allowedPaths[%d] %q: %w", i, p, err)
 		}
 		if norm != "" {
 			allowed[i] = norm
 		}
+	}
+
+	views, needsExcel, err := resolveViews(allowed, apitypes.FileFormat(formatOverride))
+	if err != nil {
+		return nil, err
 	}
 
 	return &driver{
@@ -101,9 +119,47 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		region:         region,
 		endpoint:       endpoint,
 		allowedPaths:   allowed,
+		views:          views,
+		needsExcel:     needsExcel,
 		credentialsRef: credRef,
 		extLoaded:      make(map[*sql.Conn]bool),
 	}, nil
+}
+
+// resolveViews maps every allowed path to a named, format-resolved view.
+// An explicit override applies to all paths; otherwise each path infers
+// its format from the file extension.
+func resolveViews(allowed []string, override apitypes.FileFormat) ([]viewSpec, bool, error) {
+	views := make([]viewSpec, 0, len(allowed))
+	seen := map[string]string{} // view name → path
+	needsExcel := false
+	for i, p := range allowed {
+		format := override
+		if format == "" {
+			f, err := common.InferFormat(p)
+			if err != nil {
+				return nil, false, fmt.Errorf("s3: allowedPaths[%d]: %w", i, err)
+			}
+			format = f
+		}
+		if format == apitypes.FileFormatXLSX {
+			// read_xlsx opens a single workbook; globs are unsupported.
+			if strings.ContainsAny(p, "*?[") {
+				return nil, false, fmt.Errorf("s3: allowedPaths[%d] %q: glob patterns are not supported for xlsx", i, p)
+			}
+			needsExcel = true
+		}
+		name := common.SanitizeViewName(trimBucketPrefix(p))
+		if err := common.ValidateIdentifier(name); err != nil {
+			return nil, false, fmt.Errorf("s3: view %q: %w", name, err)
+		}
+		if prev, dup := seen[name]; dup {
+			return nil, false, fmt.Errorf("s3: allowedPaths[%d] %q: view name %q collides with %q", i, p, name, prev)
+		}
+		seen[name] = p
+		views = append(views, viewSpec{path: p, name: name, format: format})
+	}
+	return views, needsExcel, nil
 }
 
 // Name implements pkgds.DataSource.
@@ -115,27 +171,39 @@ func (d *driver) Type() string { return Type }
 // Readonly implements pkgds.DataSource.
 func (d *driver) Readonly() bool { return d.readonly }
 
-// Attach loads httpfs, creates the S3 secret (if credentials are
-// configured), attaches an in-memory catalog under the configured
-// alias, and exposes one VIEW per allowed path.
+// ExternalPaths implements pkgds.ExternalPather: query-time reads stay
+// inside the bucket, so the bucket prefix is the carve-out.
+func (d *driver) ExternalPaths() []string {
+	return []string{"s3://" + d.bucket + "/"}
+}
+
+// Attach loads httpfs (and excel when needed), creates the S3 secret
+// (if credentials are configured), attaches an in-memory catalog under
+// the configured alias, and exposes one VIEW per allowed path.
 func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOptions) error {
 	catalog := opts.CatalogName
 	if catalog == "" {
 		catalog = d.name
 	}
 	if err := common.ValidateIdentifier(catalog); err != nil {
-		return fmt.Errorf("s3_parquet: catalog alias: %w", err)
+		return fmt.Errorf("s3: catalog alias: %w", err)
 	}
 
+	extensions := []string{"httpfs"}
+	if d.needsExcel {
+		extensions = append(extensions, "excel")
+	}
 	d.mu.Lock()
 	if !d.extLoaded[conn] {
-		if _, err := conn.ExecContext(ctx, `INSTALL httpfs`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("s3_parquet: INSTALL httpfs: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `LOAD httpfs`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("s3_parquet: LOAD httpfs: %w", err)
+		for _, ext := range extensions {
+			if _, err := conn.ExecContext(ctx, "INSTALL "+ext); err != nil {
+				d.mu.Unlock()
+				return fmt.Errorf("s3: INSTALL %s: %w", ext, err)
+			}
+			if _, err := conn.ExecContext(ctx, "LOAD "+ext); err != nil {
+				d.mu.Unlock()
+				return fmt.Errorf("s3: LOAD %s: %w", ext, err)
+			}
 		}
 		d.extLoaded[conn] = true
 	}
@@ -148,21 +216,19 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 	attachStmt := fmt.Sprintf(`ATTACH ':memory:' AS %s`, catalog)
 	if _, err := conn.ExecContext(ctx, attachStmt); err != nil {
 		if !common.IsAlreadyAttached(err) {
-			return fmt.Errorf("s3_parquet: ATTACH %s: %w", catalog, err)
+			return fmt.Errorf("s3: ATTACH %s: %w", catalog, err)
 		}
 	}
 
-	for _, p := range d.allowedPaths {
-		viewName := common.SanitizeViewName(trimBucketPrefix(p))
-		if err := common.ValidateIdentifier(viewName); err != nil {
-			return fmt.Errorf("s3_parquet: view %q: %w", viewName, err)
+	for _, v := range d.views {
+		reader, err := common.ReaderSQL(v.format, v.path)
+		if err != nil {
+			return fmt.Errorf("s3: view %q: %w", v.name, err)
 		}
-		stmt := fmt.Sprintf(
-			`CREATE OR REPLACE VIEW %s.main.%s AS SELECT * FROM read_parquet('%s')`,
-			catalog, viewName, common.EscapeSQLString(p),
-		)
+		stmt := fmt.Sprintf(`CREATE OR REPLACE VIEW %s.main.%s AS SELECT * FROM %s`,
+			catalog, v.name, reader)
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("s3_parquet: CREATE VIEW %s: %w", viewName, err)
+			return fmt.Errorf("s3: CREATE VIEW %s: %w", v.name, err)
 		}
 	}
 	return nil
@@ -194,25 +260,28 @@ func (d *driver) createSecret(ctx context.Context, conn *sql.Conn, opts pkgds.At
 		{Key: "REGION", Value: d.region},
 	}
 	if d.endpoint != "" {
-		args = append(args, common.SecretArg{Key: "ENDPOINT", Value: d.endpoint})
+		// DuckDB expects ENDPOINT as host:port; the scheme (documented
+		// form: "http://minio:9000") only decides USE_SSL.
+		host := strings.TrimPrefix(strings.TrimPrefix(d.endpoint, "https://"), "http://")
+		args = append(args, common.SecretArg{Key: "ENDPOINT", Value: host})
 		// DuckDB requires url_style=path for non-AWS endpoints.
 		args = append(args, common.SecretArg{Key: "URL_STYLE", Value: "path"})
 		args = append(args, common.SecretArg{Key: "USE_SSL", Value: httpsOrFalse(d.endpoint)})
 	}
 	if d.credentialsRef != "" {
 		if opts.SecretResolver == nil {
-			return errors.New("s3_parquet: credentialsRef set but SecretResolver is nil")
+			return errors.New("s3: credentialsRef set but SecretResolver is nil")
 		}
 		raw, err := opts.SecretResolver.Resolve(ctx, d.credentialsRef)
 		if err != nil {
-			return fmt.Errorf("s3_parquet: resolve credentials: %w", err)
+			return fmt.Errorf("s3: resolve credentials: %w", err)
 		}
 		var creds s3Credentials
 		if err := json.Unmarshal(raw, &creds); err != nil {
-			return fmt.Errorf("s3_parquet: credentials must be JSON {key_id,secret[,session_token]}: %w", err)
+			return fmt.Errorf("s3: credentials must be JSON {key_id,secret[,session_token]}: %w", err)
 		}
 		if creds.KeyID == "" || creds.Secret == "" {
-			return errors.New("s3_parquet: credentials JSON missing key_id or secret")
+			return errors.New("s3: credentials JSON missing key_id or secret")
 		}
 		args = append(args,
 			common.SecretArg{Key: "KEY_ID", Value: creds.KeyID},
@@ -225,14 +294,14 @@ func (d *driver) createSecret(ctx context.Context, conn *sql.Conn, opts pkgds.At
 
 	secretName := secretNamePrefix + d.name
 	if err := common.ValidateIdentifier(secretName); err != nil {
-		return fmt.Errorf("s3_parquet: secret name: %w", err)
+		return fmt.Errorf("s3: secret name: %w", err)
 	}
 	stmt, err := common.BuildCreateSecret(secretName, secretTypeS3, args)
 	if err != nil {
-		return fmt.Errorf("s3_parquet: render CREATE SECRET: %w", err)
+		return fmt.Errorf("s3: render CREATE SECRET: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("s3_parquet: CREATE SECRET: %w", err)
+		return fmt.Errorf("s3: CREATE SECRET: %w", err)
 	}
 	return nil
 }
@@ -248,54 +317,11 @@ func httpsOrFalse(endpoint string) string {
 }
 
 // Schema reports the views this driver exposed under the attached
-// catalog. information_schema.columns already filters by
-// table_catalog, so the query is the same shape as the other drivers.
+// catalog.
 func (d *driver) Schema(ctx context.Context, conn *sql.Conn) (pkgds.Schema, error) {
-	const q = `
-SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position
-FROM information_schema.columns
-WHERE table_catalog = ?
-ORDER BY table_schema, table_name, ordinal_position
-`
-	rows, err := conn.QueryContext(ctx, q, d.name)
+	sch, err := common.IntrospectCatalog(ctx, conn, d.name)
 	if err != nil {
-		return pkgds.Schema{}, fmt.Errorf("s3_parquet: introspect: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	sch := pkgds.Schema{Catalog: d.name}
-	byNS := map[string]*pkgds.SchemaNS{}
-	byTable := map[string]*pkgds.Table{}
-	for rows.Next() {
-		var (
-			nsName, tblName, colName, dataType, isNullable string
-			ordinal                                        int32
-		)
-		if err := rows.Scan(&nsName, &tblName, &colName, &dataType, &isNullable, &ordinal); err != nil {
-			return pkgds.Schema{}, fmt.Errorf("s3_parquet: scan: %w", err)
-		}
-		ns := byNS[nsName]
-		if ns == nil {
-			sch.Schemas = append(sch.Schemas, pkgds.SchemaNS{Name: nsName})
-			ns = &sch.Schemas[len(sch.Schemas)-1]
-			byNS[nsName] = ns
-		}
-		key := nsName + "." + tblName
-		tbl := byTable[key]
-		if tbl == nil {
-			ns.Tables = append(ns.Tables, pkgds.Table{Name: tblName})
-			tbl = &ns.Tables[len(ns.Tables)-1]
-			byTable[key] = tbl
-		}
-		tbl.Columns = append(tbl.Columns, pkgds.Column{
-			Name:     colName,
-			SQLType:  dataType,
-			Nullable: strings.EqualFold(isNullable, "YES"),
-			Position: ordinal,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return pkgds.Schema{}, fmt.Errorf("s3_parquet: rows: %w", err)
+		return pkgds.Schema{}, fmt.Errorf("s3: %w", err)
 	}
 	return sch, nil
 }
@@ -313,7 +339,7 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 	row := conn.QueryRowContext(ctx, q)
 	var one int
 	if err := row.Scan(&one); err != nil {
-		return fmt.Errorf("s3_parquet: health: %w", err)
+		return fmt.Errorf("s3: health: %w", err)
 	}
 	return nil
 }

@@ -18,7 +18,7 @@ import (
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/motherduck" // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/mysql"      // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/postgres"   // driver registration
-	_ "github.com/bino-bi/sluice/internal/datasource/drivers/s3parquet"  // driver registration
+	_ "github.com/bino-bi/sluice/internal/datasource/drivers/s3"         // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/sqlitefile" // driver registration
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
