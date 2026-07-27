@@ -163,9 +163,10 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.exec, err = executor.New(ctx, executor.Config{
 		Path: "",
 		Harden: executor.HardenConfig{
-			MemoryLimit:   scfg.DuckDB.MemoryLimit,
-			Threads:       scfg.DuckDB.Threads,
-			TempDirectory: scfg.DuckDB.TempDir,
+			MemoryLimit:          scfg.DuckDB.MemoryLimit,
+			Threads:              scfg.DuckDB.Threads,
+			TempDirectory:        scfg.DuckDB.TempDir,
+			AllowedExternalPaths: deps.sourceReg.ExternalPaths(),
 		},
 		AttachHook:              deps.sourceReg.AttachHook(),
 		MaxOpen:                 scfg.DuckDB.MaxOpen,

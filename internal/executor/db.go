@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
@@ -78,7 +79,16 @@ func New(ctx context.Context, cfg Config) (*Executor, error) {
 		cfg.DefaultStatementTimeout = DefaultDefaultStatementTimeout
 	}
 
-	connector, err := duckdb.NewConnector(cfg.Path, nil)
+	// allow_persistent_secrets must be set at open time, not in the
+	// per-connection hardening pass: httpfs initialises the secret
+	// manager the moment a driver binds a remote path during attach, and
+	// DuckDB refuses to change secret-manager settings after first use.
+	// Drivers still create TEMPORARY secrets (the CREATE SECRET default).
+	dsn := cfg.Path + "?allow_persistent_secrets=false"
+	if strings.Contains(cfg.Path, "?") {
+		dsn = cfg.Path + "&allow_persistent_secrets=false"
+	}
+	connector, err := duckdb.NewConnector(dsn, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -25,6 +26,15 @@ type HardenConfig struct {
 	// TempDirectory is an absolute path for spilled-to-disk temp files.
 	// Empty keeps DuckDB's default (OS temp).
 	TempDirectory string
+
+	// AllowedExternalPaths lists remote URI prefixes (e.g. "s3://bucket/",
+	// "https://host/data/") that query-time reads may touch. They are
+	// rendered into DuckDB's allowed_directories, which carves exceptions
+	// out of enable_external_access=false — verified against DuckDB 1.3:
+	// reads under a listed prefix succeed while everything else (other
+	// URLs, the local filesystem) stays blocked. Empty keeps today's
+	// fully-closed posture and emits no statement at all.
+	AllowedExternalPaths []string
 }
 
 // hardeningStatements returns the ordered slice of SET statements
@@ -33,14 +43,24 @@ type HardenConfig struct {
 // connection partly-locked; lock_configuration goes last to freeze
 // everything above it.
 func hardeningStatements(cfg HardenConfig) []string {
-	stmts := []string{
+	var stmts []string
+	// The carve-out must be declared before external access is disabled;
+	// DuckDB evaluates allowed_directories only while
+	// enable_external_access=false.
+	if len(cfg.AllowedExternalPaths) > 0 {
+		stmts = append(stmts, allowedDirectoriesStatement(cfg))
+	}
+	stmts = append(stmts,
 		// Security floor. These MUST land first.
 		"SET enable_external_access=false",
 		"SET allow_community_extensions=false",
 		"SET autoinstall_known_extensions=false",
 		"SET autoload_known_extensions=false",
-		"SET allow_persistent_secrets=false",
-	}
+		// allow_persistent_secrets=false is applied at database-open time
+		// (see the DSN in New): httpfs initialises the secret manager as
+		// soon as a driver binds a remote path during attach, and DuckDB
+		// rejects changing secret-manager settings after first use.
+	)
 	// User tunables — only emit a statement when a value is present so
 	// DuckDB's own default remains authoritative otherwise.
 	if cfg.MemoryLimit != "" {
@@ -59,6 +79,33 @@ func hardeningStatements(cfg HardenConfig) []string {
 	// for the rest of the connection lifetime.
 	stmts = append(stmts, "SET lock_configuration=true")
 	return stmts
+}
+
+// allowedDirectoriesStatement renders the allowed_directories carve-out:
+// the configured remote prefixes plus the temp-spill directory (DuckDB's
+// own default for allowed_directories is [<temp_directory>/], which a
+// plain SET would silently drop, breaking larger-than-memory queries).
+func allowedDirectoriesStatement(cfg HardenConfig) string {
+	temp := cfg.TempDirectory
+	if temp == "" {
+		temp = ".tmp/" // DuckDB's own default allowed_directories entry
+	}
+	seen := map[string]bool{}
+	paths := []string{temp}
+	seen[temp] = true
+	for _, p := range cfg.AllowedExternalPaths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	sort.Strings(paths[1:]) // deterministic statement; temp entry stays first
+	quoted := make([]string, len(paths))
+	for i, p := range paths {
+		quoted[i] = "'" + escapeSQLLiteral(p) + "'"
+	}
+	return "SET allowed_directories=[" + strings.Join(quoted, ", ") + "]"
 }
 
 // applyHardening runs each SET against conn. A failure on any step

@@ -184,3 +184,54 @@ func TestRegistryMarkSchemaPulled(t *testing.T) {
 
 // nowish is a tiny wrapper so the test reads naturally.
 func nowish() time.Time { return time.Now() }
+
+// fakeExtType registers a fake whose instances implement
+// pkgds.ExternalPather, reporting one prefix derived from the name.
+const fakeExtType = "fake_extpaths_test"
+
+type extPathsFake struct {
+	pkgds.DataSource
+	paths []string
+}
+
+func (f extPathsFake) ExternalPaths() []string { return f.paths }
+
+func init() {
+	pkgds.Register(fakeExtType, func(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
+		return extPathsFake{
+			DataSource: testfakes.New(spec.Name, pkgds.Schema{Catalog: spec.Name}),
+			paths:      []string{"s3://" + spec.Name + "/"},
+		}, nil
+	})
+}
+
+func TestRegistryExternalPathsUnion(t *testing.T) {
+	typed := func(name, typ string) *apitypes.DataSource {
+		ds := dsSpec(name)
+		ds.Spec.Type = apitypes.DataSourceType(typ)
+		return ds
+	}
+	r, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot: &datasource.Snapshot{DataSources: []*apitypes.DataSource{
+			typed("ext1", fakeExtType),
+			typed("plain", fakeType), // no ExternalPather — must be skipped
+			typed("ext2", fakeExtType),
+		}},
+		HealthInterval: -1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	got := r.ExternalPaths()
+	want := []string{"s3://ext1/", "s3://ext2/"}
+	if len(got) != len(want) {
+		t.Fatalf("ExternalPaths = %v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ExternalPaths[%d] = %q; want %q", i, got[i], want[i])
+		}
+	}
+}

@@ -295,6 +295,23 @@ func (r *Registry) Statuses() []Status {
 	return out
 }
 
+// ExternalPaths returns the union of remote URI prefixes reported by
+// sources implementing pkgds.ExternalPather, in registration order. The
+// composition root feeds this into the executor's hardening config so
+// query-time reads through httpfs-backed views stay possible under
+// enable_external_access=false.
+func (r *Registry) ExternalPaths() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []string
+	for _, name := range r.order {
+		if ep, ok := r.sources[name].(pkgds.ExternalPather); ok {
+			out = append(out, ep.ExternalPaths()...)
+		}
+	}
+	return out
+}
+
 // AttachHook returns a hook suitable for installing on every fresh
 // DuckDB connection. It iterates every catalog and calls Attach; the
 // first failure aborts subsequent attachments — the executor treats any

@@ -51,6 +51,16 @@ type DataSource interface {
 	Close() error
 }
 
+// ExternalPather is an optional interface for drivers whose views read
+// remote locations at query time (httpfs-backed s3/http sources).
+// ExternalPaths returns the URI prefixes those reads may touch, e.g.
+// "s3://bucket/" or "https://host/data/report.csv". The executor renders
+// the union of all sources' prefixes into DuckDB's allowed_directories so
+// query-time reads succeed while enable_external_access stays disabled.
+type ExternalPather interface {
+	ExternalPaths() []string
+}
+
 // Reloadable is an optional interface for drivers that can reapply
 // configuration (e.g. rotated credentials) without tearing down connections.
 // Runtime support lands in v1; declaring the interface here lets drivers
