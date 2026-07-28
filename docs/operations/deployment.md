@@ -15,14 +15,31 @@ not work.
 
 ## Docker
 
-The repository `Dockerfile` is a two-stage build: `golang:1.25-bookworm`
-compiles with cgo, and the runtime stage is
-`gcr.io/distroless/cc-debian12:nonroot` (glibc + libstdc++, uid/gid 65532,
-no shell). Working directory is `/var/lib/sluice`.
+The repository `Dockerfile` is a multi-stage build: a `libduckdb` stage
+compiles DuckDB with the `httpfs`/`excel`/`sqlite_scanner` extensions
+statically linked (cached until `scripts/DUCKDB_VERSION` changes, ~30 min
+cold), an `extensions` stage pre-seeds the non-embeddable
+`postgres_scanner`/`mysql_scanner`/`motherduck` loadable extensions,
+`golang:1.25-bookworm` compiles the binary against the bundle, and the
+runtime stage is `gcr.io/distroless/cc-debian12:nonroot` (glibc +
+libstdc++, uid/gid 65532, no shell). The image needs no outbound access
+to `extensions.duckdb.org` at runtime for any datasource type. Working
+directory is `/var/lib/sluice`; pre-seeded extensions live under
+`/home/nonroot/.duckdb/extensions`.
 
 ```bash
 docker build -t sluice:dev .
 ```
+
+The DuckDB compile stage caps parallelism at 4 jobs so it fits Docker
+Desktop's default ~8 GB VM; raise it with `--build-arg LIBDUCKDB_JOBS=N`
+when the daemon has more memory.
+
+Released container images differ per arch only in how extensions are
+delivered: the `-amd64` image compiles `httpfs`/`excel`/`sqlite_scanner`
+into the binary and pre-seeds the rest; the `-arm64` image uses the
+prebuilt DuckDB bindings and pre-seeds all six. Both attach every
+datasource type offline.
 
 The image declares `EXPOSE 8080 8081 9090`; `EXPOSE` is metadata only, so
 publish the ports you actually configure — `8080` (data) and `9091`

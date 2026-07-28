@@ -171,11 +171,29 @@ spec:
 Credentials resolve through [`secret://` references](server-config.md) into
 DuckDB secrets — they never appear in logs or audit records.
 
-The `s3` and `http` drivers install DuckDB's `httpfs` extension (plus
-`excel` when any path is `.xlsx`) on first attach, which downloads from
-`extensions.duckdb.org` unless already cached. Air-gapped deployments
-should pre-seed the DuckDB extension directory (see DuckDB's
-`extension_directory` docs) in the image.
+### Extension provisioning
+
+Builds made with `make build-static`, the repository `Dockerfile`, and the
+released linux/amd64 binary and `-amd64` container image have DuckDB's
+`httpfs`, `excel`, and `sqlite_scanner` extensions **compiled into the
+binary**. Three extensions cannot be embedded: `motherduck`
+(closed-source), `mysql_scanner` (upstream duckdb-mysql supports loading
+only, not static linking), and `postgres_scanner` (its vendored libpq
+collides with the pg_query parser Sluice links).
+
+**Container images pre-seed those three as loadable files** under
+`/home/nonroot/.duckdb/extensions` (all six for the `-arm64` image, which
+uses the prebuilt bindings without the compiled-in trio), so every
+datasource type attaches without touching `extensions.duckdb.org` —
+air-gap ready as shipped. Drivers load pre-seeded files via a bare
+`LOAD`, and DuckDB verifies the extension signature at load time.
+
+Host builds (`make build`/`build-static` outside a container, the
+released darwin/windows/linux-arm64 binaries) still install
+non-embedded extensions on first attach, downloading unless already
+cached in `~/.duckdb`. Air-gapped hosts can pre-seed the same way:
+`scripts/fetch-duckdb-extensions.sh <platform> ~/.duckdb/extensions
+<extension>...` on a connected machine, then copy the directory over.
 
 ## The read-only guarantee
 

@@ -128,13 +128,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 
 	d.mu.Lock()
 	if !d.extLoaded[conn] {
-		if _, err := conn.ExecContext(ctx, `INSTALL postgres`); err != nil {
+		if err := common.EnsureExtension(ctx, conn, "postgres_scanner"); err != nil {
 			d.mu.Unlock()
-			return fmt.Errorf("postgres: INSTALL postgres: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `LOAD postgres`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("postgres: LOAD postgres: %w", err)
+			return fmt.Errorf("postgres: %w", err)
 		}
 		d.extLoaded[conn] = true
 	}

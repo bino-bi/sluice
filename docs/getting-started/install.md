@@ -23,6 +23,17 @@ make build
 
 The first build compiles pg_query's vendored C sources and links DuckDB's prebuilt static library, so expect it to take several minutes; subsequent builds are cached.
 
+### Static DuckDB extensions
+
+`make build` produces a binary whose datasource drivers download DuckDB extensions (`httpfs`, `excel`, the sqlite/postgres/mysql scanners) from `extensions.duckdb.org` on first attach. To compile `httpfs`, `excel`, and `sqlite_scanner` into the binary instead — required for air-gapped operation with s3/http/sqlite sources — build the custom DuckDB bundle once and use the static target (the postgres/mysql scanners and `motherduck` cannot be embedded and always install at attach):
+
+```bash
+make libduckdb      # one-time: ~20-40 min, needs cmake + ninja + python3; cached under third_party/
+make build-static
+```
+
+`make test-static` runs the test suite (plus a static-linking smoke test) against that bundle. The version of DuckDB to build is pinned in `scripts/DUCKDB_VERSION` and checked against `go.mod`.
+
 ## Docker
 
 The repository root `Dockerfile` is a multi-stage build (Go builder → distroless `cc` runtime, non-root). The easiest way to use it is the `hello-sluice` example, whose compose file builds the image and mounts config, policies, and data:

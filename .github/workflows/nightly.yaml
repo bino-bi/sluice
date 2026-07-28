@@ -122,3 +122,28 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 30
+
+  # Unit tests linked against the static DuckDB extension bundle,
+  # including the duckdb_use_static_lib smoke test in internal/executor.
+  # Cache key is separate from the release job's: this bundle is compiled
+  # against ubuntu-latest's glibc, the release one against goreleaser-cross.
+  static-extensions:
+    name: static extension bundle (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: third_party/libduckdb/linux_amd64
+          key: libduckdb-linux-amd64-ubuntu-${{ hashFiles('scripts/DUCKDB_VERSION', 'scripts/build-libduckdb.sh') }}
+      - name: Build bundle if cache miss (~30 min cold)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build python3 zip unzip pkg-config
+          ./scripts/build-libduckdb.sh
+      - name: test-static
+        run: make test-static

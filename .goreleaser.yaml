@@ -5,6 +5,9 @@
 # pg_query_go and go-duckdb both require it. Cross-compilation uses the
 # ghcr.io/goreleaser/goreleaser-cross image (release.yaml pins the version) so
 # all five platforms build in one container without a host-side toolchain dance.
+# linux/amd64 is built separately (sluice-static) against a custom DuckDB
+# bundle with the httpfs/excel/scanner extensions compiled in; the release
+# workflow provides it via LIBDUCKDB_DIR (see scripts/build-libduckdb.sh).
 #
 # Per plan/25-release.md (Slice 10): docker manifest lists, cosign keyless
 # signatures, syft SBOM (CycloneDX), SLSA provenance via the release workflow.
@@ -19,13 +22,15 @@ before:
     - go mod tidy
 
 builds:
+  # Prebuilt-binding platforms: DuckDB core + default extensions are
+  # statically linked, httpfs/excel/scanners install at first attach.
   - id: sluice-cgo
     main: ./cmd/sluice
     binary: sluice
     env:
       - CGO_ENABLED=1
       - >-
-        {{- if eq .Os "linux" }}{{- if eq .Arch "amd64" }}CC=x86_64-linux-gnu-gcc{{ end }}{{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}{{- end }}
+        {{- if eq .Os "linux" }}{{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}{{- end }}
       - >-
         {{- if eq .Os "darwin" }}{{- if eq .Arch "amd64" }}CC=o64-clang{{ end }}{{- if eq .Arch "arm64" }}CC=oa64-clang{{ end }}{{- end }}
       - >-
@@ -35,6 +40,35 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+      - goos: linux
+        goarch: amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/bino-bi/sluice/internal/version.Version={{.Version}}
+      - -X github.com/bino-bi/sluice/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/bino-bi/sluice/internal/version.CommitFull={{.FullCommit}}
+      - -X github.com/bino-bi/sluice/internal/version.BuildTime={{.Date}}
+      - -X github.com/bino-bi/sluice/internal/version.Parser=pg_query
+
+  # linux/amd64 links the custom DuckDB bundle with httpfs, excel, and
+  # sqlite_scanner compiled in — no runtime extension downloads for
+  # s3/http/sqlite sources. The release workflow builds the bundle
+  # (release.yaml job `libduckdb`) and exports LIBDUCKDB_DIR before
+  # goreleaser runs.
+  - id: sluice-static
+    main: ./cmd/sluice
+    binary: sluice
+    tags: [duckdb_use_static_lib]
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+      - CGO_CFLAGS=-DDUCKDB_STATIC_BUILD
+      - >-
+        CGO_LDFLAGS=-L{{ .Env.LIBDUCKDB_DIR }} -lduckdb_bundle -lstdc++ -lm -ldl
+    goos: [linux]
+    goarch: [amd64]
     flags:
       - -trimpath
     ldflags:
@@ -47,7 +81,7 @@ builds:
 
 archives:
   - id: default
-    ids: [sluice-cgo]
+    ids: [sluice-cgo, sluice-static]
     formats: [tar.gz]
     format_overrides:
       - goos: windows
@@ -75,14 +109,21 @@ changelog:
   disable: true
 
 dockers:
+  # Both images attach datasources without runtime extension downloads:
+  # amd64 has httpfs/excel/sqlite_scanner compiled in and pre-seeds the
+  # rest as loadable files; arm64 (prebuilt bindings) pre-seeds all six.
+  # The release workflow fetches third_party/duckdb-extensions/<arch>
+  # before goreleaser runs (scripts/fetch-duckdb-extensions.sh).
   - id: sluice-amd64
-    ids: [sluice-cgo]
+    ids: [sluice-static]
     goos: linux
     goarch: amd64
     image_templates:
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-amd64'
       - 'ghcr.io/bino-bi/sluice:latest-amd64'
     dockerfile: Dockerfile.release
+    extra_files:
+      - third_party/duckdb-extensions/amd64
     use: buildx
     build_flag_templates:
       - --platform=linux/amd64
@@ -103,6 +144,8 @@ dockers:
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-arm64'
       - 'ghcr.io/bino-bi/sluice:latest-arm64'
     dockerfile: Dockerfile.release
+    extra_files:
+      - third_party/duckdb-extensions/arm64
     use: buildx
     build_flag_templates:
       - --platform=linux/arm64

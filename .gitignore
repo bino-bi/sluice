@@ -4,6 +4,11 @@
 /coverage.out
 /coverage.html
 
+# DuckDB static extension bundle + source checkout (make libduckdb)
+/third_party/libduckdb/
+# Loadable extensions pre-seeded into container images (make duckdb-extensions)
+/third_party/duckdb-extensions/
+
 # Go
 *.test
 *.out

@@ -92,13 +92,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 
 	d.mu.Lock()
 	if !d.extLoaded {
-		if _, err := conn.ExecContext(ctx, `INSTALL sqlite`); err != nil {
+		if err := common.EnsureExtension(ctx, conn, "sqlite_scanner"); err != nil {
 			d.mu.Unlock()
-			return fmt.Errorf("sqlite: INSTALL sqlite: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `LOAD sqlite`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("sqlite: LOAD sqlite: %w", err)
+			return fmt.Errorf("sqlite: %w", err)
 		}
 		d.extLoaded = true
 	}

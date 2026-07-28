@@ -146,6 +146,7 @@ Full documentation: **<https://bino-bi.github.io/sluice/>**
 - `internal/` — the gateway itself (AGPL-3.0-or-later).
 - `docs/` — documentation site source (CC-BY-4.0).
 - `examples/` — runnable end-to-end examples.
+- `third_party/` — gitignored build cache for the DuckDB static extension bundle (`make libduckdb`, see `scripts/build-libduckdb.sh`).
 
 ## Status
 

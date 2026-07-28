@@ -13,9 +13,42 @@ permissions:
   attestations: write   # SLSA provenance
 
 jobs:
+  # Builds (or restores from cache) the DuckDB static extension bundle the
+  # sluice-static linux/amd64 build links against. Runs in the same
+  # goreleaser-cross image as the release job so the archive is compiled
+  # against the glibc the final link sees.
+  libduckdb:
+    name: libduckdb bundle (linux/amd64)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/goreleaser/goreleaser-cross:v1.25
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/libduckdb/linux_amd64
+          key: libduckdb-linux-amd64-cross-${{ hashFiles('scripts/DUCKDB_VERSION', 'scripts/build-libduckdb.sh') }}
+
+      - name: Build bundle (cold cache ~30 min)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends cmake ninja-build python3 zip unzip pkg-config
+          LIBDUCKDB_WORKDIR=/tmp/duckdb-src ./scripts/build-libduckdb.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libduckdb-linux-amd64
+          path: third_party/libduckdb/linux_amd64
+          if-no-files-found: error
+
   release:
     name: goreleaser (multi-arch + cosign + SBOM)
     runs-on: ubuntu-latest
+    needs: [libduckdb]
     # goreleaser-cross ships all the CGO toolchains (glibc/arm64, macOS SDK,
     # mingw) so one container produces every archive in .goreleaser.yaml.
     container:
@@ -30,6 +63,26 @@ jobs:
 
       - name: Mark workspace safe (goreleaser-cross runs as root)
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Fetch libduckdb bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: libduckdb-linux-amd64
+          path: third_party/libduckdb/linux_amd64
+
+      - name: Export LIBDUCKDB_DIR
+        run: echo "LIBDUCKDB_DIR=${GITHUB_WORKSPACE}/third_party/libduckdb/linux_amd64" >> "$GITHUB_ENV"
+
+      # Loadable extensions baked into the container images (goreleaser
+      # extra_files). amd64 has httpfs/excel/sqlite_scanner compiled into
+      # the binary and only needs the three non-embeddable ones; arm64
+      # runs the prebuilt bindings and needs all six.
+      - name: Fetch pre-seeded DuckDB extensions
+        run: |
+          ./scripts/fetch-duckdb-extensions.sh linux_amd64 third_party/duckdb-extensions/amd64 \
+            postgres_scanner mysql_scanner motherduck
+          ./scripts/fetch-duckdb-extensions.sh linux_arm64 third_party/duckdb-extensions/arm64 \
+            httpfs excel sqlite_scanner postgres_scanner mysql_scanner motherduck
 
       - name: Log in to ghcr.io
         uses: docker/login-action@v3

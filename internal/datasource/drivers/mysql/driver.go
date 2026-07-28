@@ -127,13 +127,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 
 	d.mu.Lock()
 	if !d.extLoaded[conn] {
-		if _, err := conn.ExecContext(ctx, `INSTALL mysql`); err != nil {
+		if err := common.EnsureExtension(ctx, conn, "mysql_scanner"); err != nil {
 			d.mu.Unlock()
-			return fmt.Errorf("mysql: INSTALL mysql: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `LOAD mysql`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("mysql: LOAD mysql: %w", err)
+			return fmt.Errorf("mysql: %w", err)
 		}
 		d.extLoaded[conn] = true
 	}

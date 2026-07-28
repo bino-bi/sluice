@@ -15,6 +15,23 @@ DIRTY        ?= $(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo
 BUILD_TIME   ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PARSER       ?= pg_query
 
+# Static DuckDB extension bundle (httpfs, excel, sqlite_scanner
+# compiled into the binary; postgres/mysql scanners and motherduck
+# cannot be embedded — see scripts/build-libduckdb.sh). Built once by
+# `make libduckdb` (~20-40 min cold, cached under third_party/
+# thereafter); consumed by build-static / test-static via go-duckdb's
+# duckdb_use_static_lib tag. cgo reads CGO_CFLAGS (not CPPFLAGS) for
+# -DDUCKDB_STATIC_BUILD.
+DUCKDB_VERSION := $(shell cat scripts/DUCKDB_VERSION)
+GOOS_HOST      := $(shell $(GO) env GOOS)
+LIBDUCKDB_DIR  := $(CURDIR)/third_party/libduckdb/$(GOOS_HOST)_$(shell $(GO) env GOARCH)
+# darwin: vcpkg's curl needs SystemConfiguration (proxy lookup) and
+# minizip-ng links Apple's libcompression.
+STATIC_EXT_LIBS_darwin := -lduckdb_bundle -lc++ -lcompression -framework SystemConfiguration
+STATIC_EXT_LIBS_linux  := -lduckdb_bundle -lstdc++ -lm -ldl
+STATIC_GO_ENV := CGO_ENABLED=1 CGO_CFLAGS="-DDUCKDB_STATIC_BUILD" \
+                 CGO_LDFLAGS="-L$(LIBDUCKDB_DIR) $(STATIC_EXT_LIBS_$(GOOS_HOST))"
+
 # ldflags populate internal/version at build time.
 LDFLAGS := \
   -X github.com/bino-bi/sluice/internal/version.Version=$(VERSION) \
@@ -24,7 +41,8 @@ LDFLAGS := \
   -X github.com/bino-bi/sluice/internal/version.BuildTime=$(BUILD_TIME) \
   -X github.com/bino-bi/sluice/internal/version.Parser=$(PARSER)
 
-.PHONY: all build test test-integration test-fuzz bench coverage lint fmt vet tidy clean spdx \
+.PHONY: all build build-static libduckdb duckdb-extensions test test-integration test-static \
+        test-fuzz bench coverage lint fmt vet tidy clean clean-libduckdb spdx \
         docs-generate docs-check docs-serve release-snapshot help
 
 all: fmt vet lint test build
@@ -32,6 +50,19 @@ all: fmt vet lint test build
 build:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/sluice
+
+# Build (or reuse) the DuckDB static extension bundle for the host
+# platform. Idempotent: a cached third_party/libduckdb/<os>_<arch>/
+# bundle is a fast no-op; only a scripts/DUCKDB_VERSION bump rebuilds.
+libduckdb:
+	@./scripts/build-libduckdb.sh
+
+# Like `build`, but with httpfs/excel/sqlite_scanner compiled in — no
+# extensions.duckdb.org download at runtime for s3/http/sqlite sources.
+build-static: libduckdb
+	@mkdir -p $(BIN_DIR)
+	$(STATIC_GO_ENV) $(GO) build -trimpath -tags duckdb_use_static_lib \
+	  -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/sluice
 
 test:
 	$(GO) test -race -short ./...
@@ -41,6 +72,11 @@ test:
 # fast. The nightly CI lane sets INTEGRATION=1.
 test-integration:
 	$(GO) test -race -tags=integration ./...
+
+# Unit tests against the static extension bundle, including the
+# duckdb_use_static_lib-tagged smoke test in internal/executor.
+test-static: libduckdb
+	$(STATIC_GO_ENV) $(GO) test -race -short -tags duckdb_use_static_lib ./...
 
 # Smoke-run every fuzz target for FUZZTIME seconds so PRs catch panics
 # on newly-added fuzzers without running them at full nightly duration.
@@ -111,20 +147,39 @@ docs-serve:
 	fi
 	mkdocs serve
 
+# Fetch the loadable DuckDB extensions the container images pre-seed
+# (goreleaser extra_files). Idempotent; keyed on scripts/DUCKDB_VERSION.
+duckdb-extensions:
+	@./scripts/fetch-duckdb-extensions.sh linux_amd64 third_party/duckdb-extensions/amd64 \
+	  postgres_scanner mysql_scanner motherduck
+	@./scripts/fetch-duckdb-extensions.sh linux_arm64 third_party/duckdb-extensions/arm64 \
+	  httpfs excel sqlite_scanner postgres_scanner mysql_scanner motherduck
+
 # Run goreleaser in snapshot mode (no publishing) to exercise the full
 # archive + docker + SBOM + sign pipeline locally. Requires goreleaser,
-# docker buildx, cosign, and syft on PATH (or run via goreleaser-cross).
-release-snapshot:
+# docker buildx, cosign, and syft on PATH (or run via goreleaser-cross),
+# plus LIBDUCKDB_DIR pointing at a linux/amd64 static bundle for the
+# sluice-static build (see scripts/build-libduckdb.sh).
+release-snapshot: duckdb-extensions
 	goreleaser release --snapshot --clean --skip=publish
 
+# Deliberately keeps third_party/libduckdb (a ~40 min rebuild); use
+# clean-libduckdb to drop the cached bundle and DuckDB checkout.
 clean:
 	rm -rf $(BIN_DIR) dist coverage.out coverage.html site
+
+clean-libduckdb:
+	rm -rf third_party/libduckdb
 
 help:
 	@echo "Targets:"
 	@echo "  build             Build ./bin/sluice with version ldflags"
+	@echo "  build-static      Build with DuckDB extensions compiled in (needs libduckdb)"
+	@echo "  libduckdb         Build/cache the DuckDB static bundle (~20-40 min cold)"
+	@echo "  duckdb-extensions Fetch loadable extensions the container images pre-seed"
 	@echo "  test              go test -race -short ./... (PR lane)"
 	@echo "  test-integration  go test -tags=integration ./... (requires docker)"
+	@echo "  test-static       go test with the static extension bundle (needs libduckdb)"
 	@echo "  test-fuzz         Smoke-run every fuzz target for FUZZTIME (default 5s)"
 	@echo "  bench             Run every benchmark once with -benchmem"
 	@echo "  coverage          go test -coverprofile + per-package threshold gate"
@@ -136,5 +191,6 @@ help:
 	@echo "  docs-generate     regenerate auto-built docs/reference pages"
 	@echo "  docs-serve        serve the mkdocs site locally at :8000"
 	@echo "  release-snapshot  goreleaser snapshot build (no publish)"
-	@echo "  clean             remove build artefacts"
+	@echo "  clean             remove build artefacts (keeps third_party/libduckdb)"
+	@echo "  clean-libduckdb   remove the cached DuckDB static bundle + checkout"
 	@echo "  all               fmt → vet → lint → test → build"

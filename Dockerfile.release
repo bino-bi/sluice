@@ -9,7 +9,14 @@
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 
+ARG TARGETARCH
+
 COPY sluice /usr/local/bin/sluice
+# Pre-seeded loadable DuckDB extensions (fetched by the release workflow
+# via scripts/fetch-duckdb-extensions.sh, shipped through goreleaser
+# extra_files) so datasource attach never downloads at runtime. DuckDB
+# resolves ~/.duckdb/extensions via $HOME (/home/nonroot).
+COPY --chown=65532:65532 third_party/duckdb-extensions/${TARGETARCH} /home/nonroot/.duckdb/extensions
 
 USER nonroot:nonroot
 WORKDIR /var/lib/sluice

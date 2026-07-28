@@ -173,13 +173,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 	d.mu.Lock()
 	if !d.extLoaded[conn] {
 		for _, ext := range extensions {
-			if _, err := conn.ExecContext(ctx, "INSTALL "+ext); err != nil {
+			if err := common.EnsureExtension(ctx, conn, ext); err != nil {
 				d.mu.Unlock()
-				return fmt.Errorf("http: INSTALL %s: %w", ext, err)
-			}
-			if _, err := conn.ExecContext(ctx, "LOAD "+ext); err != nil {
-				d.mu.Unlock()
-				return fmt.Errorf("http: LOAD %s: %w", ext, err)
+				return fmt.Errorf("http: %w", err)
 			}
 		}
 		d.extLoaded[conn] = true

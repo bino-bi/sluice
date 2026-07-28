@@ -83,13 +83,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 
 	d.mu.Lock()
 	if !d.extLoaded[conn] {
-		if _, err := conn.ExecContext(ctx, `INSTALL motherduck`); err != nil {
+		if err := common.EnsureExtension(ctx, conn, "motherduck"); err != nil {
 			d.mu.Unlock()
-			return fmt.Errorf("motherduck: INSTALL motherduck: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `LOAD motherduck`); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("motherduck: LOAD motherduck: %w", err)
+			return fmt.Errorf("motherduck: %w", err)
 		}
 		d.extLoaded[conn] = true
 	}
