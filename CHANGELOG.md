@@ -11,7 +11,9 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 First tagged release: a release candidate for v0.1.0. It carries everything in this section **plus** the MVP baseline further down, which was staged as `[0.1.0]` but never tagged on its own.
 
-Pre-release status is deliberate — the release matrix (5 platforms, multi-arch images, cosign signatures, SBOMs, SLSA provenance) runs end to end for the first time with this tag. Expect `v0.1.0` to follow once it has been exercised.
+Pre-release status is deliberate — the release matrix (linux and darwin on amd64 and arm64, multi-arch images, cosign signatures, SBOMs, SLSA provenance) runs end to end for the first time with this tag. Expect `v0.1.0` to follow once it has been exercised.
+
+Windows is not in the release matrix: DuckDB's prebuilt Windows libraries reference `pthread_*` symbols that the Go bindings' cgo `LDFLAGS` never link, so the mingw cross-link fails. Native `go build` on Windows works and stays covered by CI — build from source there.
 
 ### Added
 

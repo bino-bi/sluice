@@ -33,13 +33,15 @@ builds:
         {{- if eq .Os "linux" }}{{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}{{- end }}
       - >-
         {{- if eq .Os "darwin" }}{{- if eq .Arch "amd64" }}CC=o64-clang{{ end }}{{- if eq .Arch "arm64" }}CC=oa64-clang{{ end }}{{- end }}
-      - >-
-        {{- if eq .Os "windows" }}{{- if eq .Arch "amd64" }}CC=x86_64-w64-mingw32-gcc{{ end }}{{- end }}
-    goos: [linux, darwin, windows]
+    # windows/amd64 is not released: DuckDB's prebuilt windows-amd64
+    # archives reference pthread_mutex_* but the bindings' cgo LDFLAGS
+    # (-lws2_32 -lwsock32 -lrstrtmgr -lstdc++ -lm --static) never link
+    # winpthreads, so the mingw cross-link fails with hundreds of
+    # undefined references. Native windows `go build` works — test.yaml
+    # covers it — so this is a cross-compile gap, not a code gap.
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     ignore:
-      - goos: windows
-        goarch: arm64
       - goos: linux
         goarch: amd64
     flags:
@@ -83,9 +85,6 @@ archives:
   - id: default
     ids: [sluice-cgo, sluice-static]
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:

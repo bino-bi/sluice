@@ -64,7 +64,7 @@ Releases are initiated from the GitHub UI, not from a local `git tag`. Publishin
 4. **Draft the release.** Go to *Releases → Draft a new release*, type the new tag (`vX.Y.Z`, or `vX.Y.Z-rc.N` for a candidate) into the tag selector — choosing *Create new tag on publish* — and target `main`. Write the release notes in the **body**; the title is overwritten with the tag by goreleaser, so do not put prose there.
 5. **Publish.** This creates the tag and triggers `.github/workflows/release.yaml`, which:
    - builds (or restores from cache) the DuckDB static bundle for linux/amd64 — roughly 30 minutes on a cold cache, seconds on a warm one;
-   - cross-compiles all five platform archives inside `goreleaser-cross`;
+   - cross-compiles the four platform archives (linux and darwin, amd64 and arm64) inside `goreleaser-cross`;
    - pushes `ghcr.io/bino-bi/sluice:<version>` plus the per-arch tags and the multi-arch manifest;
    - signs `checksums.txt` and the image manifests with keyless cosign, attaches CycloneDX SBOMs, and appends its footer to the notes you wrote;
    - generates SLSA v1.0 provenance (`multiple.intoto.jsonl`) in a follow-up job.
