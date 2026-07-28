@@ -202,7 +202,8 @@ func shortTypeName(t reflect.Type) string {
 }
 
 // formatDefault renders a default value in a single table cell. Empty
-// strings and zeros stay visible (` `` `), non-zeros are fenced as code.
+// strings and zeros stay visible as an empty code span, non-zeros are
+// fenced as code.
 func formatDefault(v reflect.Value) string {
 	if !v.IsValid() {
 		return "`` ``"

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/parserbackend"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -40,6 +41,9 @@ func writeExplainPolicyDir(t *testing.T) string {
 }
 
 func TestPolicyExplain_SQLHappyPath(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("--sql needs a real parser backend (-tags=pure_parser)")
+	}
 	dir := writeExplainPolicyDir(t)
 	root := newRootCmd()
 	root.SetArgs([]string{"policy", "explain",
@@ -88,6 +92,9 @@ func TestPolicyExplain_SQLParseErrorExit1(t *testing.T) {
 }
 
 func TestPolicyExplain_SQLAndTableCombine(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("--sql needs a real parser backend (-tags=pure_parser)")
+	}
 	dir := writeExplainPolicyDir(t)
 	root := newRootCmd()
 	root.SetArgs([]string{"policy", "explain",

@@ -225,7 +225,7 @@ func decodeTelemetryCall(fn string, args []ast.Expr, pkg, path string) (metricDe
 	help, _ := stringLiteral(args[1])
 	return metricDecl{
 		Name: name, Type: kind, Help: help,
-		Labels: stringSliceLiteral(args[2]),
+		Labels:  stringSliceLiteral(args[2]),
 		Package: pkg, File: path,
 	}, true
 }
