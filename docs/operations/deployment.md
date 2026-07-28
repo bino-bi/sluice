@@ -9,7 +9,7 @@ and keep `CGO_ENABLED=1`; plain `GOOS=linux CGO_ENABLED=0` cross-builds do
 not work.
 
 !!! warning "Alpha — pin an exact version"
-    The current release is `v0.1.0-rc.1`. Container images and binaries are
+    The current release is `v0.1.0-rc.2`. Container images and binaries are
     published, but the API surface and policy schema may still change before
     `v0.1.0`, and pre-releases are deliberately never tagged `latest`. Pin an
     exact tag. There is still **no Helm chart**.
@@ -17,8 +17,8 @@ not work.
 ## Container image
 
 ```bash
-docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.1
-docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
+docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.2
+docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.2 version
 ```
 
 | Tag | Contents |
@@ -28,13 +28,13 @@ docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
 | `ghcr.io/bino-bi/sluice:<version>-arm64` | linux/arm64 only. |
 | `ghcr.io/bino-bi/sluice:latest` | Most recent **stable** release. Never points at a pre-release, and does not exist until the first stable tag ships. |
 
-The version tag omits the leading `v`: the tag for release `v0.1.0-rc.1` is
-`0.1.0-rc.1`.
+The version tag omits the leading `v`: the tag for release `v0.1.0-rc.2` is
+`0.1.0-rc.2`.
 
 Image manifests are signed with keyless cosign — verify before deploying:
 
 ```bash
-cosign verify ghcr.io/bino-bi/sluice:0.1.0-rc.1 \
+cosign verify ghcr.io/bino-bi/sluice:0.1.0-rc.2 \
   --certificate-identity-regexp 'https://github.com/bino-bi/sluice/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -89,7 +89,7 @@ The `hello-sluice` compose service shows the full pattern:
 # fragment — docker-compose service, adapted from examples/hello-sluice
 services:
   sluice:
-    image: ghcr.io/bino-bi/sluice:0.1.0-rc.1
+    image: ghcr.io/bino-bi/sluice:0.1.0-rc.2
     ports:
       - "8080:8080"   # REST data plane
       - "9091:9091"   # admin plane (reload, explain, /metrics)

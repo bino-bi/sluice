@@ -4,7 +4,7 @@
 #   docker build -t sluice:dev ../..   &&   SLUICE_IMAGE=sluice:dev docker compose up
 services:
   sluice:
-    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.1}
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
     container_name: break-glass-sluice
     ports:
       - "8080:8080"

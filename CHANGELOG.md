@@ -7,6 +7,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] — 2026-07-28
+
+Second release candidate for v0.1.0. `v0.1.0-rc.1` shipped working archives but **both container images were unusable** — every command died at the dynamic linker. Use this tag instead.
+
 ### Fixed
 
 - **Container images failed to start** — every command in the published `v0.1.0-rc.1` images died at the dynamic linker with ``version `GLIBC_2.38' not found``. goreleaser builds the release binaries inside `goreleaser-cross` (Ubuntu noble), which links `GLIBC_2.38` and `GLIBCXX_3.4.32`, but `Dockerfile.release` ran them on `distroless/cc-debian12` — bookworm, glibc 2.36 with a GCC-12 libstdc++. Both architectures were affected. The release runtime is now `gcr.io/distroless/cc-debian13:nonroot` (glibc 2.41, GCC-14 libstdc++); verified by running the published binaries unchanged on the new base. The repository root `Dockerfile` keeps `cc-debian12`, since it compiles with a bookworm toolchain and its glibc floor matches.
@@ -187,5 +191,6 @@ Everything below landed between 2026-04-19 and 2026-04-20 across ten implementat
 
 ---
 
-[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.2...HEAD
+[0.1.0-rc.2]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.1...v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/bino-bi/sluice/releases/tag/v0.1.0-rc.1

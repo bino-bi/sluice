@@ -116,14 +116,14 @@ The `customers` table holds rows for three tenants; the caller sees only their o
 Container image (linux/amd64 + arm64):
 
 ```bash
-docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.1
-docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
+docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.2
+docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.2 version
 ```
 
 Binary — download the archive for your platform from the [releases page](https://github.com/bino-bi/sluice/releases), then:
 
 ```bash
-tar -xzf sluice_0.1.0-rc.1_linux_amd64.tar.gz
+tar -xzf sluice_0.1.0-rc.2_linux_amd64.tar.gz
 ./sluice version
 ```
 
@@ -166,7 +166,7 @@ Full documentation: **<https://bino-bi.github.io/sluice/>**
 
 ## Status
 
-Sluice is **alpha**. The current release is `v0.1.0-rc.1`, a release candidate. The end-to-end query path — identity, parse, policy, rewrite, execute, audit — works across REST, MCP, and the admin port, but interfaces may still change before `v0.1.0`, so pin an exact version. See [ROADMAP.md](ROADMAP.md).
+Sluice is **alpha**. The current release is `v0.1.0-rc.2`, a release candidate. The end-to-end query path — identity, parse, policy, rewrite, execute, audit — works across REST, MCP, and the admin port, but interfaces may still change before `v0.1.0`, so pin an exact version. See [ROADMAP.md](ROADMAP.md).
 
 ## License
 

@@ -69,4 +69,4 @@ with `$1` bound to the caller's `tenantId` claim — a positional parameter, nev
 | A security reviewer | [Security model](architecture/security-model.md) |
 
 !!! warning "Project status: alpha"
-    The current release is `v0.1.0-rc.1` — a release candidate. The full query path works end to end, and binaries plus multi-arch container images are published on [GitHub Releases](https://github.com/bino-bi/sluice/releases) and [`ghcr.io/bino-bi/sluice`](https://github.com/bino-bi/sluice/pkgs/container/sluice). Interfaces may still change before `v0.1.0`, so pin an exact version rather than tracking `latest`. See [Install](getting-started/install.md).
+    The current release is `v0.1.0-rc.2` — a release candidate. The full query path works end to end, and binaries plus multi-arch container images are published on [GitHub Releases](https://github.com/bino-bi/sluice/releases) and [`ghcr.io/bino-bi/sluice`](https://github.com/bino-bi/sluice/pkgs/container/sluice). Interfaces may still change before `v0.1.0`, so pin an exact version rather than tracking `latest`. See [Install](getting-started/install.md).

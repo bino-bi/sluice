@@ -3,20 +3,20 @@
 # Install
 
 !!! warning "Alpha — release candidate"
-    The current release is `v0.1.0-rc.1`. Binaries and container images are published, but the API surface and policy schema may still change before `v0.1.0`. Pin an exact version; do not track `latest`. There is still **no Helm chart** — see the [deployment guide](../operations/deployment.md) for running the image directly.
+    The current release is `v0.1.0-rc.2`. Binaries and container images are published, but the API surface and policy schema may still change before `v0.1.0`. Pin an exact version; do not track `latest`. There is still **no Helm chart** — see the [deployment guide](../operations/deployment.md) for running the image directly.
 
 ## Container image
 
 Multi-arch (`linux/amd64`, `linux/arm64`), distroless, non-root:
 
 ```bash
-docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.1
-docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
+docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.2
+docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.2 version
 ```
 
 Both images attach every datasource type without reaching out to `extensions.duckdb.org` at runtime: `amd64` has `httpfs`, `excel`, and `sqlite_scanner` compiled into the binary and pre-seeds the rest under `/home/nonroot/.duckdb/extensions`; `arm64` pre-seeds all six.
 
-The image tag omits the leading `v` (`0.1.0-rc.1`, not `v0.1.0-rc.1`). Pre-releases are never tagged `latest`.
+The image tag omits the leading `v` (`0.1.0-rc.2`, not `v0.1.0-rc.2`). Pre-releases are never tagged `latest`.
 
 ## Binary
 
@@ -26,7 +26,7 @@ Download the archive for your platform from the [releases page](https://github.c
     Windows is not part of the release matrix. DuckDB's prebuilt Windows libraries do not link under the mingw cross-toolchain (they reference `pthread_*` symbols that the bindings never link against). A native `go build` on Windows works — CI covers it — so build from source there for now.
 
 ```bash
-VERSION=0.1.0-rc.1
+VERSION=0.1.0-rc.2
 curl -fsSLO https://github.com/bino-bi/sluice/releases/download/v${VERSION}/sluice_${VERSION}_linux_amd64.tar.gz
 tar -xzf sluice_${VERSION}_linux_amd64.tar.gz
 ./sluice version

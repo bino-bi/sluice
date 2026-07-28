@@ -41,7 +41,7 @@ For the observation period, an auditor will typically accept:
       (`sluice_audit_dropped_total`).
     - **Only pre-release artifacts so far** — releases are signed with
       cosign and carry SBOMs plus SLSA v1.0 provenance, but the only
-      published tag is the `v0.1.0-rc.1` candidate. Pin an exact
+      published tag is the `v0.1.0-rc.2` candidate. Pin an exact
       version, verify signatures on the archive and image manifest, and
       evidence the deployed digest.
     - **Single-instance approval broker** — approval decisions are

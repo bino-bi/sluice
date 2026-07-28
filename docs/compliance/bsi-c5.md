@@ -33,7 +33,7 @@ an engineering-level map, not evidence.
     - **Release artifacts are pre-release only.** Releases ship
       cosign-signed checksums, CycloneDX SBOMs, and SLSA v1.0
       provenance, and container manifests are cosign-signed — but the
-      only tag published so far is the `v0.1.0-rc.1` candidate. Pin an
+      only tag published so far is the `v0.1.0-rc.2` candidate. Pin an
       exact version, verify the signature before deploying, and record
       the digest you deployed.
     - **Single-instance approval broker.** Approval state is not

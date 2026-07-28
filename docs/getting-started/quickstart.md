@@ -117,7 +117,7 @@ spec:
 docker compose up
 ```
 
-Compose pulls the published image `ghcr.io/bino-bi/sluice:0.1.0-rc.1`, mounts `server.yaml`, `policies.d/`, and `data/`, and sets the three demo secrets (`SLUICE_APIKEY_PEPPER`, `SLUICE_AUDIT_GENESIS`, `SLUICE_APIKEY_HELLO_HASH`). To run `./bin/sluice serve --config server.yaml --policies-dir policies.d` directly instead, export those three variables yourself, and note that `server.yaml` and `datasource-shop.yaml` point at the container paths `/data/audit` and `/data/shop.db` — create `/data` or adjust both paths first.
+Compose pulls the published image `ghcr.io/bino-bi/sluice:0.1.0-rc.2`, mounts `server.yaml`, `policies.d/`, and `data/`, and sets the three demo secrets (`SLUICE_APIKEY_PEPPER`, `SLUICE_AUDIT_GENESIS`, `SLUICE_APIKEY_HELLO_HASH`). To run `./bin/sluice serve --config server.yaml --policies-dir policies.d` directly instead, export those three variables yourself, and note that `server.yaml` and `datasource-shop.yaml` point at the container paths `/data/audit` and `/data/shop.db` — create `/data` or adjust both paths first.
 
 ## 6. The first query
 
