@@ -120,7 +120,9 @@ dockers:
     goarch: amd64
     image_templates:
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-amd64'
-      - 'ghcr.io/bino-bi/sluice:latest-amd64'
+      # `latest` tracks stable tags only — a pre-release must never become
+      # the default pull. goreleaser drops templates that render empty.
+      - '{{ if not .Prerelease }}ghcr.io/bino-bi/sluice:latest-amd64{{ end }}'
     dockerfile: Dockerfile.release
     extra_files:
       - third_party/duckdb-extensions/amd64
@@ -142,7 +144,7 @@ dockers:
     goarch: arm64
     image_templates:
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-arm64'
-      - 'ghcr.io/bino-bi/sluice:latest-arm64'
+      - '{{ if not .Prerelease }}ghcr.io/bino-bi/sluice:latest-arm64{{ end }}'
     dockerfile: Dockerfile.release
     extra_files:
       - third_party/duckdb-extensions/arm64
@@ -163,7 +165,9 @@ docker_manifests:
     image_templates:
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-amd64'
       - 'ghcr.io/bino-bi/sluice:{{ .Version }}-arm64'
-  - name_template: 'ghcr.io/bino-bi/sluice:latest'
+  # Skipped entirely on pre-releases: an empty name_template makes
+  # goreleaser skip the manifest instead of failing.
+  - name_template: '{{ if not .Prerelease }}ghcr.io/bino-bi/sluice:latest{{ end }}'
     image_templates:
       - 'ghcr.io/bino-bi/sluice:latest-amd64'
       - 'ghcr.io/bino-bi/sluice:latest-arm64'
@@ -200,17 +204,27 @@ docker_signs:
       - ${artifact}@${digest}
     output: true
 
+# The release is created by a human on the GitHub Releases page (which is
+# what creates the tag); publishing it triggers .github/workflows/release.yaml.
+# goreleaser then adopts that existing release rather than creating one.
 release:
   github:
     owner: bino-bi
     name: sluice
+  # `auto` reads the tag: v0.1.0-rc.1 is flagged pre-release, v0.1.0 is not.
+  # goreleaser also forces make_latest=false for pre-releases, so a candidate
+  # never becomes the repo's "latest" release.
   prerelease: auto
   draft: false
+  # Append our footer to the notes typed in the UI instead of overwriting
+  # them (`keep-existing`, the default, would drop the footer entirely).
+  mode: append
+  # Makes a re-run after a partial failure idempotent instead of 422-ing on
+  # the assets that already uploaded.
+  replace_existing_artifacts: true
   name_template: '{{ .Tag }}'
   header: |
-    ## Sluice {{ .Tag }}
-
-    See [CHANGELOG.md](https://github.com/bino-bi/sluice/blob/main/CHANGELOG.md) for highlights.
+    See [CHANGELOG.md](https://github.com/bino-bi/sluice/blob/main/CHANGELOG.md) for the full list of changes.
   footer: |
     ---
     Verify artefact signatures with cosign:

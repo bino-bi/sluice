@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: release
 
+# Cutting a release is a two-step, human-initiated flow (see CONTRIBUTING.md
+# "Cutting a release"): draft a release on the GitHub Releases page against a
+# new `vX.Y.Z` tag — GitHub creates the tag on publish — and publishing it
+# fires this workflow, which builds the archives, pushes the ghcr.io images,
+# and uploads everything onto that same release.
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
-  contents: write       # goreleaser creates the GitHub release
+  contents: write       # upload assets onto the published release
   packages: write       # push ghcr.io images
   id-token: write       # cosign keyless OIDC
   attestations: write   # SLSA provenance
@@ -25,6 +29,8 @@ jobs:
       options: --user root
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - id: cache
         uses: actions/cache@v4
@@ -56,9 +62,15 @@ jobs:
       options: --user root
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # Consumed by the slsa-provenance job below as `base64-subjects`.
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.release.tag_name }}
+          # goreleaser derives the version from `git describe`, so it needs
+          # the full history and every tag, not just the release commit.
           fetch-depth: 0
 
       - name: Mark workspace safe (goreleaser-cross runs as root)
@@ -105,6 +117,12 @@ jobs:
       - name: Run goreleaser
         run: goreleaser release --clean
 
+      # checksums.txt is already in `sha256sum` format, which is exactly the
+      # subject format the SLSA generic generator expects, base64-encoded.
+      - name: Compute SLSA subjects
+        id: hashes
+        run: echo "hashes=$(base64 -w0 < dist/checksums.txt)" >> "$GITHUB_OUTPUT"
+
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
         with:
@@ -119,13 +137,18 @@ jobs:
 
   slsa-provenance:
     # Generates SLSA v1.0 provenance for the checksums file so every archive
-    # inherits a verifiable build-origin attestation.
+    # inherits a verifiable build-origin attestation. Emits
+    # multiple.intoto.jsonl onto the release.
     needs: [release]
     permissions:
       contents: write
       id-token: write
       actions: read
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.release.outputs.hashes }}
       upload-assets: true
+      # Name the target release explicitly rather than letting the generator
+      # infer it from the ref — this workflow runs on `release: published`,
+      # not on a tag push.
+      upload-tag-name: ${{ github.event.release.tag_name }}

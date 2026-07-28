@@ -7,6 +7,12 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+## [0.1.0-rc.1] — 2026-07-28
+
+First tagged release: a release candidate for v0.1.0. It carries everything in this section **plus** the MVP baseline further down, which was staged as `[0.1.0]` but never tagged on its own.
+
+Pre-release status is deliberate — the release matrix (5 platforms, multi-arch images, cosign signatures, SBOMs, SLSA provenance) runs end to end for the first time with this tag. Expect `v0.1.0` to follow once it has been exercised.
+
 ### Added
 
 - **Statically compiled DuckDB extensions** — `make build-static`, the repository `Dockerfile`, and the released linux/amd64 binary + `-amd64` container image now compile `httpfs`, `excel`, and `sqlite_scanner` into the binary (custom DuckDB bundle via `scripts/build-libduckdb.sh`, pinned in `scripts/DUCKDB_VERSION`, linked with go-duckdb's `duckdb_use_static_lib` tag), so `s3`/`http`/`sqlite` datasources attach with no `extensions.duckdb.org` download; drivers probe `duckdb_extensions()` and skip `INSTALL`/`LOAD` when an extension is already loaded. Not embeddable on any build: `motherduck` (closed-source), `mysql_scanner` (no static target upstream), `postgres_scanner` (its vendored libpq collides with pg_query's symbols).
@@ -52,6 +58,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **Examples run the published container instead of building from source** — the five compose examples (`hello-sluice`, `multi-tenant`, `break-glass`, `pii-masking`, `cross-source-join`) dropped their `build:` block and now pull `ghcr.io/bino-bi/sluice:<version>`, so `docker compose up` needs no Go toolchain and no 30-minute DuckDB compile. Each honours a `SLUICE_IMAGE` override for running a local build (`docker build -t sluice:dev ../.. && SLUICE_IMAGE=sluice:dev docker compose up`). Because pre-releases are deliberately never tagged `latest`, the version is pinned in each file and has to be bumped per release — see the release runbook in `CONTRIBUTING.md`.
 - **Coverage gate measures statement-weighted coverage and enforces a floor per package** — `scripts/check-coverage.sh` previously averaged `go tool cover -func` per-function percentages, which weights a one-line helper the same as a 200-line function and misreported badly (`drivers/duckdbfile` read 66.9% against a true 23.1%); it now computes coverage from the profile blocks. The plan §11 targets are kept as the documented goal, but the gate enforces a floor set to measured coverage — 20 packages sit below their goal, and enforcing the table directly kept nightly permanently red. Floors stop regressions and the gate prints a ratchet hint once a package clears its floor by 5pp. Test-helper packages with no tests of their own (`internal/transport/tlsutil/tlstest`) are excluded rather than scored 0%.
 - **Embedded DuckDB upgraded 1.4.1 → 1.5.5** — the Go driver moved from `github.com/marcboeker/go-duckdb/v2` to its successor module `github.com/duckdb/duckdb-go/v2` (the old import path stops at DuckDB 1.4.x). No API or configuration changes; the connection-hardening floor is unchanged and verified against 1.5.
 - **Breaking: `s3_parquet` is renamed to `s3`** — same fields, plus multi-format support; add `format: parquet` when `allowedPaths` entries have no file extension (globs like `raw/**`). Old manifests fail validation with a targeted error pointing at the rename.
@@ -100,9 +107,9 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 - **`ERR_FORBIDDEN` and `ERR_INSUFFICIENT_SCOPE`** — declared in the public error catalog but unreachable: no producer existed, policy denials use `ACL_DENIED`/`ACL_REJECTED`, and the approval endpoints deliberately answer uniform 404s. `ERR_INSUFFICIENT_SCOPE` returns with the OAuth work.
 
-## [0.1.0] — _unreleased_
+## MVP baseline
 
-The v0.1.0 MVP cuts once the MVP Definition of Done passes. The line items below summarise what is on disk today and will roll into the tag once the release matrix is green on every target OS/arch.
+Originally staged as `[0.1.0]`. It was never tagged on its own and ships as part of `v0.1.0-rc.1` above; the inventory below is kept as the record of the initial ten implementation slices.
 
 ### Added
 
@@ -173,5 +180,5 @@ Everything below landed between 2026-04-19 and 2026-04-20 across ten implementat
 
 ---
 
-[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/bino-bi/sluice/releases/tag/v0.1.0
+[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/bino-bi/sluice/releases/tag/v0.1.0-rc.1
