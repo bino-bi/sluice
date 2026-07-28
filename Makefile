@@ -104,8 +104,12 @@ coverage:
 lint: spdx
 	$(GOLANGCI) run ./...
 
+# `go fmt ./...` only sees files that belong to a package, so the
+# //go:build ignore generators under scripts/ are invisible to it — and to
+# golangci-lint. CI checks them via `gofmt -l .`, so format them here too.
 fmt:
 	$(GO) fmt ./...
+	gofmt -w scripts
 
 vet:
 	$(GO) vet ./...
