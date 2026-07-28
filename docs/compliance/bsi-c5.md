@@ -17,7 +17,7 @@ The BSI Cloud Computing Compliance Criteria Catalogue (C5:2020) covers
 | SIM-03 | Evidence preservation | Append-only audit files, daily plus size-based rotation, audit directory created `0750`; rotation preserves prior files. |
 | OPS-04 | Configuration management | Policies live in a git-tracked directory; reloads are validate-then-swap atomic (a bad reload keeps the prior snapshot); `sluice policy validate` and `sluice policy test` gate changes in CI. |
 | OPS-09 | Vulnerability management | `govulncheck`, `gosec`, and `trivy` lanes run in CI; CodeQL runs weekly. |
-| — | Gaps | See below — file-only audit sink, single-instance approvals, no published release artifacts yet. |
+| — | Gaps | See below — file-only audit sink, single-instance approvals, pre-release artifacts only. |
 
 For a full attestation, engage a BSI-qualified auditor. This page is
 an engineering-level map, not evidence.
@@ -30,10 +30,12 @@ an engineering-level map, not evidence.
       (WORM archival) via the `audit.*` server config; both are
       best-effort secondaries — the hash-chained file sink remains the
       durable record, so evidence the file retention path.
-    - **No published release artifacts.** The release pipeline is set
-      up to sign binaries with cosign and attach CycloneDX SBOMs, but
-      no release has been published yet — build from source and record
-      the git commit you deployed.
+    - **Release artifacts are pre-release only.** Releases ship
+      cosign-signed checksums, CycloneDX SBOMs, and SLSA v1.0
+      provenance, and container manifests are cosign-signed — but the
+      only tag published so far is the `v0.1.0-rc.1` candidate. Pin an
+      exact version, verify the signature before deploying, and record
+      the digest you deployed.
     - **Single-instance approval broker.** Approval state is not
       replicated across instances. Durability across restarts is opt-in
       (`approval.persist: true`, SQLite-backed); without it a restart

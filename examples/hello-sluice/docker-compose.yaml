@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: CC-BY-4.0
 # hello-sluice docker-compose — one Sluice service with the seeded SQLite
-# catalog bind-mounted read-only. Build from the repository root so the
-# Dockerfile sees the source tree.
+# catalog bind-mounted read-only.
+#
+# Pulls the published image by default. To run a locally built one instead:
+#   docker build -t sluice:dev ../..   &&   SLUICE_IMAGE=sluice:dev docker compose up
 
 services:
   sluice:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    image: sluice:hello
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.1}
     container_name: hello-sluice
     ports:
       - "8080:8080"  # REST

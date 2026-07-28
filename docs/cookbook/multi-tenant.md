@@ -82,7 +82,7 @@ sqlite3 data/shop.db < seed.sql
 sluice apikey hash --pepper multi-tenant-demo-pepper --id acme --material supersecret
 sluice apikey hash --pepper multi-tenant-demo-pepper --id beta --material supersecret
 # paste the two hashes into the environment: block of docker-compose.yaml
-docker compose up --build
+docker compose up
 ```
 
 Run the **same** query as both tenants:

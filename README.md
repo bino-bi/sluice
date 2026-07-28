@@ -111,6 +111,22 @@ The `customers` table holds rows for three tenants; the caller sees only their o
 
 ## Install
 
+> Sluice is alpha. The current release is a **release candidate** — pin an exact version rather than tracking `latest`.
+
+Container image (linux/amd64 + arm64):
+
+```bash
+docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.1
+docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
+```
+
+Binary — download the archive for your platform from the [releases page](https://github.com/bino-bi/sluice/releases), then:
+
+```bash
+tar -xzf sluice_0.1.0-rc.1_linux_amd64.tar.gz
+./sluice version
+```
+
 Build from source (Go 1.25+; CGO is required because pg_query and DuckDB are C libraries):
 
 ```bash
@@ -120,15 +136,15 @@ make build
 ./bin/sluice version
 ```
 
-Or run the containerized example — the compose file builds the image from the repo-root `Dockerfile`:
+Or run the containerized example — the compose file pulls the published image and mounts config, policies, and seeded data:
 
 ```bash
 cd examples/hello-sluice
 sqlite3 data/shop.db < seed.sql
-docker compose up --build
+docker compose up
 ```
 
-There are no published release binaries or images yet; building from source (or docker compose) is the supported path.
+Every release ships `checksums.txt` with a keyless cosign signature, a CycloneDX SBOM per archive, and SLSA v1.0 provenance. See [Install](docs/getting-started/install.md) for the verification commands.
 
 ## Documentation
 
@@ -150,7 +166,7 @@ Full documentation: **<https://bino-bi.github.io/sluice/>**
 
 ## Status
 
-Sluice is **alpha**, pre-`v0.1.0`. The end-to-end query path — identity, parse, policy, rewrite, execute, audit — works across REST, MCP, and the admin port, but interfaces may still change. See [ROADMAP.md](ROADMAP.md).
+Sluice is **alpha**. The current release is `v0.1.0-rc.1`, a release candidate. The end-to-end query path — identity, parse, policy, rewrite, execute, audit — works across REST, MCP, and the admin port, but interfaces may still change before `v0.1.0`, so pin an exact version. See [ROADMAP.md](ROADMAP.md).
 
 ## License
 

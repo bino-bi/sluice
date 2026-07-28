@@ -49,8 +49,10 @@ pii-masking/
 
 ```bash
 sqlite3 data/shop.db < seed.sql
-docker compose up --build
+docker compose up
 ```
+
+This pulls `ghcr.io/bino-bi/sluice:0.1.0-rc.1`. To run your own build instead: `docker build -t sluice:dev ../.. && SLUICE_IMAGE=sluice:dev docker compose up`.
 
 ## Query and compare
 

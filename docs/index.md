@@ -69,4 +69,4 @@ with `$1` bound to the caller's `tenantId` claim — a positional parameter, nev
 | A security reviewer | [Security model](architecture/security-model.md) |
 
 !!! warning "Project status: alpha"
-    Sluice is pre-`v0.1.0`. The full query path works end to end, but there are no published release binaries or container images yet — you build from source or use the docker-compose examples. Interfaces may change between commits.
+    The current release is `v0.1.0-rc.1` — a release candidate. The full query path works end to end, and binaries plus multi-arch container images are published on [GitHub Releases](https://github.com/bino-bi/sluice/releases) and [`ghcr.io/bino-bi/sluice`](https://github.com/bino-bi/sluice/pkgs/container/sluice). Interfaces may still change before `v0.1.0`, so pin an exact version rather than tracking `latest`. See [Install](getting-started/install.md).

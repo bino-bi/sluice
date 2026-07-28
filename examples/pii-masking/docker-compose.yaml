@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: CC-BY-4.0
+#
+# Pulls the published image by default. To run a locally built one instead:
+#   docker build -t sluice:dev ../..   &&   SLUICE_IMAGE=sluice:dev docker compose up
 services:
   sluice:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    image: sluice:pii-masking
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.1}
     container_name: pii-masking-sluice
     ports:
       - "8080:8080"

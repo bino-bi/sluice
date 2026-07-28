@@ -84,7 +84,7 @@ The compose stack runs Postgres (seeded `orders`), MinIO (a one-shot job
 writes `countries.parquet` into the `ref-data` bucket), and Sluice:
 
 ```bash
-docker compose up --build
+docker compose up
 # wait for "seeded ref-data/countries.parquet" and the server start
 
 curl -s -H "X-Api-Key: analyst.supersecret" -H "Content-Type: application/json" \

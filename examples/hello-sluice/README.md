@@ -47,10 +47,17 @@ This creates two tables under the `main` schema — `customers` and `orders` —
 ### With Docker
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
-The image is built from the repository root. The service listens on `:8080` (REST) and `:9091` (admin, optional).
+This pulls the published image `ghcr.io/bino-bi/sluice:0.1.0-rc.1` from GitHub Container Registry — no build step, no Go toolchain needed. The service listens on `:8080` (REST) and `:9091` (admin, optional).
+
+To run your own build instead (e.g. when working on Sluice itself):
+
+```bash
+docker build -t sluice:dev ../..
+SLUICE_IMAGE=sluice:dev docker compose up
+```
 
 ### Without Docker
 

@@ -40,9 +40,11 @@ cross-source-join/
 ## Run it
 
 ```bash
-docker compose up --build
+docker compose up
 # wait for "seeded ref-data/countries.parquet" and "sluice: starting"
 ```
+
+Sluice comes from the published image `ghcr.io/bino-bi/sluice:0.1.0-rc.1`; Postgres and MinIO come from their own upstream images. To run your own Sluice build instead: `docker build -t sluice:dev ../.. && SLUICE_IMAGE=sluice:dev docker compose up`.
 
 ## Run a join query
 

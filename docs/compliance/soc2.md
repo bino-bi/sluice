@@ -39,9 +39,11 @@ For the observation period, an auditor will typically accept:
       the hash-chained file sink is the sink of record; evidence its
       retention, and treat forwarding gaps as monitored, not impossible
       (`sluice_audit_dropped_total`).
-    - **No published signed releases yet** — the pipeline signs with
-      cosign and attaches SBOMs, but until a release ships, evidence
-      the deployed git commit and your own build process instead.
+    - **Only pre-release artifacts so far** — releases are signed with
+      cosign and carry SBOMs plus SLSA v1.0 provenance, but the only
+      published tag is the `v0.1.0-rc.1` candidate. Pin an exact
+      version, verify signatures on the archive and image manifest, and
+      evidence the deployed digest.
     - **Single-instance approval broker** — approval decisions are
       audited and pending state survives restarts when
       `approval.persist: true` is set, but the broker is not replicated

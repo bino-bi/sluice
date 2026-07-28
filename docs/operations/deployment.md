@@ -8,12 +8,51 @@ the binary links against glibc. Build on (or target) a glibc-based Linux
 and keep `CGO_ENABLED=1`; plain `GOOS=linux CGO_ENABLED=0` cross-builds do
 not work.
 
-!!! warning "Not yet implemented"
-    There are no published release binaries, container images, or Helm
-    charts yet. Build from source (`make build`) or use the repository
-    `Dockerfile` — the `hello-sluice` example wraps it in a compose file.
+!!! warning "Alpha — pin an exact version"
+    The current release is `v0.1.0-rc.1`. Container images and binaries are
+    published, but the API surface and policy schema may still change before
+    `v0.1.0`, and pre-releases are deliberately never tagged `latest`. Pin an
+    exact tag. There is still **no Helm chart**.
 
-## Docker
+## Container image
+
+```bash
+docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.1
+docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.1 version
+```
+
+| Tag | Contents |
+| --- | -------- |
+| `ghcr.io/bino-bi/sluice:<version>` | Multi-arch manifest — resolves to `amd64` or `arm64` automatically. Use this one. |
+| `ghcr.io/bino-bi/sluice:<version>-amd64` | linux/amd64 only. |
+| `ghcr.io/bino-bi/sluice:<version>-arm64` | linux/arm64 only. |
+| `ghcr.io/bino-bi/sluice:latest` | Most recent **stable** release. Never points at a pre-release, and does not exist until the first stable tag ships. |
+
+The version tag omits the leading `v`: the tag for release `v0.1.0-rc.1` is
+`0.1.0-rc.1`.
+
+Image manifests are signed with keyless cosign — verify before deploying:
+
+```bash
+cosign verify ghcr.io/bino-bi/sluice:0.1.0-rc.1 \
+  --certificate-identity-regexp 'https://github.com/bino-bi/sluice/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The runtime is `gcr.io/distroless/cc-debian12:nonroot` (glibc + libstdc++,
+uid/gid 65532, no shell). Working directory is `/var/lib/sluice`;
+pre-seeded DuckDB extensions live under `/home/nonroot/.duckdb/extensions`,
+so no datasource type needs outbound access to `extensions.duckdb.org` at
+runtime. The two architectures differ only in how those extensions are
+delivered: `-amd64` compiles `httpfs`/`excel`/`sqlite_scanner` into the
+binary and pre-seeds the rest; `-arm64` uses the prebuilt DuckDB bindings
+and pre-seeds all six.
+
+The image declares `EXPOSE 8080 8081 9090`; `EXPOSE` is metadata only, so
+publish the ports you actually configure — `8080` (data) and `9091`
+(admin) with the defaults.
+
+## Building the image yourself
 
 The repository `Dockerfile` is a multi-stage build: a `libduckdb` stage
 compiles DuckDB with the `httpfs`/`excel`/`sqlite_scanner` extensions
@@ -35,22 +74,22 @@ The DuckDB compile stage caps parallelism at 4 jobs so it fits Docker
 Desktop's default ~8 GB VM; raise it with `--build-arg LIBDUCKDB_JOBS=N`
 when the daemon has more memory.
 
-Released container images differ per arch only in how extensions are
-delivered: the `-amd64` image compiles `httpfs`/`excel`/`sqlite_scanner`
-into the binary and pre-seeds the rest; the `-arm64` image uses the
-prebuilt DuckDB bindings and pre-seeds all six. Both attach every
-datasource type offline.
+Every example compose file accepts a `SLUICE_IMAGE` override, so a local
+build drops straight into them:
 
-The image declares `EXPOSE 8080 8081 9090`; `EXPOSE` is metadata only, so
-publish the ports you actually configure — `8080` (data) and `9091`
-(admin) with the defaults. The `hello-sluice` compose service shows the
-full pattern:
+```bash
+SLUICE_IMAGE=sluice:dev docker compose up
+```
+
+## Compose
+
+The `hello-sluice` compose service shows the full pattern:
 
 ```yaml
 # fragment — docker-compose service, adapted from examples/hello-sluice
 services:
   sluice:
-    build: {context: ., dockerfile: Dockerfile}
+    image: ghcr.io/bino-bi/sluice:0.1.0-rc.1
     ports:
       - "8080:8080"   # REST data plane
       - "9091:9091"   # admin plane (reload, explain, /metrics)
