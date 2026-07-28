@@ -1,0 +1,7 @@
+# Documentation toolchain for `mkdocs build` / `make docs-serve`.
+# Kept as a file (rather than inline pip args in the workflow) so
+# actions/setup-python can key its pip cache off it.
+mkdocs==1.6.*
+mkdocs-material==9.5.*
+pymdown-extensions==10.*
+mkdocs-minify-plugin==0.8.*

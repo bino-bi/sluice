@@ -69,6 +69,10 @@ plugins:
   - minify:
       minify_html: true
 
+# Build inputs that live under docs/ but must not be published.
+exclude_docs: |
+  requirements.txt
+
 nav:
   - Home: index.md
   - Getting started:
