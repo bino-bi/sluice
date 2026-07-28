@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/bino-bi/sluice/internal/parserbackend"
 )
 
 // TestBuildRuntime_ReloadDisabled_ManualReloadStillWired locks in the
@@ -16,6 +18,9 @@ import (
 // reloader all still exist, and a synchronous Reload (SIGHUP /
 // POST /admin/reload path) applies a policy change without Start.
 func TestBuildRuntime_ReloadDisabled_ManualReloadStillWired(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
 	dir := t.TempDir()
 	policyDir := filepath.Join(dir, "policies.d")
 	if err := os.MkdirAll(policyDir, 0o750); err != nil {

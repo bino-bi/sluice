@@ -9,8 +9,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policytest"
 )
+
+// requireRealParser skips a test that cannot run against the pure_parser
+// stub backend: NewRunner refuses it at construction time by design.
+func requireRealParser(t *testing.T) {
+	t.Helper()
+	if !parserbackend.Implemented {
+		t.Skip("NewRunner refuses the stub parser backend (-tags=pure_parser)")
+	}
+}
 
 const policiesYAML = `
 apiVersion: sluice.bino.bi/v1alpha1
@@ -44,6 +54,7 @@ func writePolicies(t *testing.T) string {
 }
 
 func TestRunner_PassAndFail(t *testing.T) {
+	requireRealParser(t)
 	dir := writePolicies(t)
 	runner, err := policytest.NewRunner(context.Background(), dir, false)
 	if err != nil {
@@ -111,6 +122,7 @@ spec:
 `
 
 func TestRunner_SchemaFixtureExpandsStar(t *testing.T) {
+	requireRealParser(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(maskPoliciesYAML), 0o644); err != nil {
 		t.Fatal(err)
@@ -162,6 +174,7 @@ func TestRunner_SchemaFixtureExpandsStar(t *testing.T) {
 }
 
 func TestRunner_RunFile(t *testing.T) {
+	requireRealParser(t)
 	dir := writePolicies(t)
 	suitePath := filepath.Join(t.TempDir(), "suite.yaml")
 	suite := `
