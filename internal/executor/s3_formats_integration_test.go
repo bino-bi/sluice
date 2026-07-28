@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	duckdb "github.com/marcboeker/go-duckdb/v2"
+	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/datasource"
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/s3"

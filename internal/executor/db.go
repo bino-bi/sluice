@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	duckdb "github.com/marcboeker/go-duckdb/v2"
+	duckdb "github.com/duckdb/duckdb-go/v2"
 )
 
 // Config tunes the embedded DuckDB and the wrapping *sql.DB pool.

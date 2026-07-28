@@ -50,6 +50,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Changed
 
+- **Embedded DuckDB upgraded 1.4.1 → 1.5.5** — the Go driver moved from `github.com/marcboeker/go-duckdb/v2` to its successor module `github.com/duckdb/duckdb-go/v2` (the old import path stops at DuckDB 1.4.x). No API or configuration changes; the connection-hardening floor is unchanged and verified against 1.5.
 - **Breaking: `s3_parquet` is renamed to `s3`** — same fields, plus multi-format support; add `format: parquet` when `allowedPaths` entries have no file extension (globs like `raw/**`). Old manifests fail validation with a targeted error pointing at the rename.
 - **Builds with `-tags=pure_parser` now refuse to start** — `serve`, `mcp`, and `sluice policy test` exit 1 at boot with a clear stub-backend error (`parserbackend.Implemented`) instead of failing every query at parse time. `policy explain --table` still works under the stub.
 - **TLS blocks are validated structurally instead of rejected** — `rest.tls.clientCA`/`clientAuth` and `admin.tls` now activate enforcement rather than failing `config validate`; a `tls` block must carry both `certFile` and `keyFile` (a partial block used to silently serve plain HTTP), and `clientAuth` accepts only `require_and_verify`.

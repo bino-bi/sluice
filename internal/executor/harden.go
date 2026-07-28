@@ -32,7 +32,7 @@ type HardenConfig struct {
 	// rendered into DuckDB's allowed_directories (e.g. "s3://bucket/");
 	// entries without one are exact files rendered into allowed_paths
 	// (e.g. "https://host/data/report.csv"). Both carve exceptions out
-	// of enable_external_access=false — verified against DuckDB 1.3:
+	// of enable_external_access=false — verified against DuckDB 1.5:
 	// reads of a listed location succeed while everything else (other
 	// URLs, the local filesystem) stays blocked. Empty keeps today's
 	// fully-closed posture and emits no statement at all.
