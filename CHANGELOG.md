@@ -7,6 +7,11 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+### Fixed
+
+- **Container images failed to start** — every command in the published `v0.1.0-rc.1` images died at the dynamic linker with ``version `GLIBC_2.38' not found``. goreleaser builds the release binaries inside `goreleaser-cross` (Ubuntu noble), which links `GLIBC_2.38` and `GLIBCXX_3.4.32`, but `Dockerfile.release` ran them on `distroless/cc-debian12` — bookworm, glibc 2.36 with a GCC-12 libstdc++. Both architectures were affected. The release runtime is now `gcr.io/distroless/cc-debian13:nonroot` (glibc 2.41, GCC-14 libstdc++); verified by running the published binaries unchanged on the new base. The repository root `Dockerfile` keeps `cc-debian12`, since it compiles with a bookworm toolchain and its glibc floor matches.
+- **Linux archives require glibc 2.38+** — a consequence of the same cross-build. Documented on the install page: the tarballs do not run on Debian 12, Ubuntu 22.04, or RHEL 9; use the container image or build from source there.
+
 ## [0.1.0-rc.1] — 2026-07-28
 
 First tagged release: a release candidate for v0.1.0. It carries everything in this section **plus** the MVP baseline further down, which was staged as `[0.1.0]` but never tagged on its own.

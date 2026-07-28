@@ -39,7 +39,7 @@ cosign verify ghcr.io/bino-bi/sluice:0.1.0-rc.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-The runtime is `gcr.io/distroless/cc-debian12:nonroot` (glibc + libstdc++,
+The runtime is `gcr.io/distroless/cc-debian13:nonroot` (glibc + libstdc++,
 uid/gid 65532, no shell). Working directory is `/var/lib/sluice`;
 pre-seeded DuckDB extensions live under `/home/nonroot/.duckdb/extensions`,
 so no datasource type needs outbound access to `extensions.duckdb.org` at

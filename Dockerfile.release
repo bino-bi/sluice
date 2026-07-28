@@ -7,7 +7,13 @@
 # For a local-build image (one-shot `docker build .`), use the root
 # Dockerfile, which carries its own golang:1.25-bookworm builder stage.
 
-FROM gcr.io/distroless/cc-debian12:nonroot
+# debian13 (trixie, glibc 2.41 / GCC 14 libstdc++), not debian12. goreleaser
+# builds these binaries inside goreleaser-cross, which is Ubuntu noble — they
+# require GLIBC_2.38 and GLIBCXX_3.4.32, and bookworm only ships glibc 2.36
+# with a GCC-12 libstdc++, so every command failed at the dynamic linker.
+# The root Dockerfile stays on debian12: it builds with a bookworm toolchain,
+# so its binary has a matching glibc floor.
+FROM gcr.io/distroless/cc-debian13:nonroot
 
 ARG TARGETARCH
 

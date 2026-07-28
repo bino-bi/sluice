@@ -32,7 +32,10 @@ tar -xzf sluice_${VERSION}_linux_amd64.tar.gz
 ./sluice version
 ```
 
-The `linux_amd64` build is the static-extension flavour described under [Static DuckDB extensions](#static-duckdb-extensions); the other four install `httpfs`/`excel`/`sqlite_scanner` at first attach.
+The `linux_amd64` build is the static-extension flavour described under [Static DuckDB extensions](#static-duckdb-extensions); the others install `httpfs`/`excel`/`sqlite_scanner` at first attach.
+
+!!! warning "Linux archives need glibc 2.38 or newer"
+    The release binaries are cross-compiled on Ubuntu noble, so they require `GLIBC_2.38` and `GLIBCXX_3.4.32`. They run on Debian 13+, Ubuntu 24.04+, and Fedora 39+, but **not** on Debian 12, Ubuntu 22.04, or RHEL 9 — those fail at the dynamic linker with `version 'GLIBC_2.38' not found`. On an older distro, use the container image or build from source. The published container image already ships a matching runtime.
 
 ### Verifying a download
 
