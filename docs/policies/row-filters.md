@@ -54,7 +54,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-active-eu, priority: 60 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"] } }] }
   filter:
     predicate:
       all:                              # AND
@@ -154,7 +154,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-tenant, priority: 80 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers", "shop.main.orders"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers", "orders"] } }] }
   combine: restrictive
   filter:
     predicate:
@@ -170,7 +170,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: hide-soft-deleted, priority: 70 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.**"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"] } }] }
   exclude:
     any:
       - subjects: { groups: ["auditors"] }
@@ -188,7 +188,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-region, priority: 60 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.orders"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["orders"] } }] }
   filter:
     expression: "row.region == subject.claims.region"
 ```

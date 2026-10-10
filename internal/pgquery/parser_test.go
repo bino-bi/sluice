@@ -441,3 +441,32 @@ func TestParseAcceptsLongFlatStatements(t *testing.T) {
 		})
 	}
 }
+
+// A FROM alias that DuckDB reads as a join-type keyword is refused: pg_query
+// reads it as an alias, so the deparsed statement would restructure the
+// join in DuckDB and skip the row filter and mask.
+func TestParseRefusesJoinKeywordAliases(t *testing.T) {
+	p := newTestParser(t)
+	for _, sql := range []string{
+		`SELECT 1 FROM customers "semi" JOIN orders ON true`,
+		`SELECT 1 FROM customers AS anti JOIN orders ON true`,
+		`SELECT 1 FROM customers "ASOF" JOIN orders ON true`,
+		`SELECT 1 FROM (SELECT 1) "positional" JOIN orders ON true`,
+		`SELECT 1 FROM orders o JOIN customers "semi" ON true`,
+	} {
+		if _, err := p.Parse(context.Background(), sql); !errors.Is(err, parser.ErrAliasKeyword) {
+			t.Errorf("%q: err = %v, want ErrAliasKeyword", sql, err)
+		}
+	}
+	// A column named or aliased like a join keyword is fine; only FROM
+	// aliases restructure a join.
+	for _, sql := range []string{
+		`SELECT 1 AS semi FROM customers`,
+		`SELECT semi FROM customers`,
+		`SELECT 1 FROM customers c JOIN orders o ON true`,
+	} {
+		if _, err := p.Parse(context.Background(), sql); err != nil {
+			t.Errorf("%q: unexpected error %v", sql, err)
+		}
+	}
+}

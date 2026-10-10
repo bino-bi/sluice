@@ -44,7 +44,9 @@ spec:
   match:
     any:
       - resources:
-          tables: ["shop.main.customers", "shop.main.orders"]
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
   combine: restrictive
   filter:
     predicate:
@@ -61,7 +63,9 @@ spec:
   match:
     any:
       - resources:
-          tables: ["shop.main.customers"]
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
           columns: ["email"]
   mask:
     type: partial

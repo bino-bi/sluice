@@ -173,6 +173,17 @@ func compileClaimCheck(cc apitypes.ClaimCheck) (compiledClaimCheck, error) {
 func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]*compiledResource) (*compiledResource, error) {
 	out := &compiledResource{}
 	var err error
+	// Each of these fields is compared with one name, so a dotted pattern
+	// such as shop.main.customers never matches the table it means, and a
+	// mask or filter written that way would silently apply to nothing. A
+	// name that really contains a dot is written with \. (sales\.2024).
+	for field, patterns := range map[string][]string{"catalogs": r.Catalogs, "schemas": r.Schemas, "tables": r.Tables} {
+		for _, p := range patterns {
+			if hasUnescapedDot(p) {
+				return nil, fmt.Errorf("resource.%s: pattern %q contains a dot, but each field matches one name: write catalogs, schemas and tables separately (escape a dot that is part of the name as \\.)", field, p)
+			}
+		}
+	}
 	// Catalog, schema and table names are matched without regard to case,
 	// like DuckDB resolves them.
 	if out.catalogs, err = compileMatchers(lowerAll(r.Catalogs), "catalogs"); err != nil {
@@ -210,6 +221,20 @@ func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]
 	return out, nil
 }
 
+// hasUnescapedDot reports whether p has a dot that is not escaped with a
+// backslash.
+func hasUnescapedDot(p string) bool {
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case '\\':
+			i++
+		case '.':
+			return true
+		}
+	}
+	return false
+}
+
 func lowerAll(in []string) []string {
 	out := make([]string, len(in))
 	for i, s := range in {
@@ -240,6 +265,23 @@ func countStatic(patterns []string) int {
 		}
 	}
 	return n
+}
+
+// checkTagsNameTables refuses a tag whose classification rule names no
+// catalog, schema or table. Such a rule matches every table, so an allow by
+// that tag would cover tables the classification never meant.
+func (s *CompiledSelector) checkTagsNameTables() error {
+	for _, c := range append(append([]CompiledClause(nil), s.Any...), s.All...) {
+		if c.Resource == nil {
+			continue
+		}
+		for _, tr := range c.Resource.tagRules {
+			if len(tr.catalogs) == 0 && len(tr.schemas) == 0 && len(tr.tables) == 0 {
+				return fmt.Errorf("resource.tags: a classification rule of a referenced tag names no table (only columns), so an allow by it would cover every table; select the tables with catalogs, schemas or tables")
+			}
+		}
+	}
+	return nil
 }
 
 // Match reports whether ctx satisfies the selector. An entirely empty
@@ -366,8 +408,9 @@ func (c CompiledClause) Match(ctx MatchContext) bool {
 		}
 	}
 	// A resource that constrains only actions (no catalog/schema/table
-	// matchers) matches every table once the action check has passed.
-	if len(c.Resource.catalogs) == 0 && len(c.Resource.schemas) == 0 && len(c.Resource.tables) == 0 {
+	// matchers and no tags) matches every table once the action check has
+	// passed. A tag-only resource must reach matches(), which checks tags.
+	if len(c.Resource.catalogs) == 0 && len(c.Resource.schemas) == 0 && len(c.Resource.tables) == 0 && len(c.Resource.tagRules) == 0 {
 		return true
 	}
 	for _, tref := range ctx.Tables {

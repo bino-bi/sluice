@@ -55,7 +55,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: null-ssn }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["ssn"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["ssn"] } }] }
   mask: { type: "null" }
 ```
 
@@ -72,7 +72,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: constant-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: constant, args: { value: "REDACTED" } }
 ```
 
@@ -96,7 +96,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: partial-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: partial, args: { showFirst: 1, showLast: 0 } }
 ```
 
@@ -117,7 +117,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: hmac-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: hash, args: { algorithm: hmac_sha256, saltRef: secret://env/MASK_HMAC_KEY } }
 ```
 
@@ -139,7 +139,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: regex-phone }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["phone"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["phone"] } }] }
   mask: { type: regex, args: { pattern: "[0-9]", replacement: "#" } }
 ```
 
@@ -159,7 +159,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: truncate-notes }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["notes"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["notes"] } }] }
   mask: { type: truncate, args: { length: 8, suffix: "…" } }
 ```
 
@@ -183,7 +183,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: fpe-card }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.payments"], columns: ["card_number"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["payments"], columns: ["card_number"] } }] }
   mask: { type: fpe, args: { keyRef: secret://env/FPE_KEY, alphabet: numeric } }
 ```
 
@@ -207,7 +207,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: jitter-salary }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["salary"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["salary"] } }] }
   mask: { type: jitter, args: { range: 0.05, seed: secret://env/JITTER_SEED } }
 ```
 
@@ -228,7 +228,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: fake-name }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["full_name"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["full_name"] } }] }
   mask: { type: fake, args: { fakeType: name } }
 ```
 
@@ -244,28 +244,28 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-email, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: partial, args: { showFirst: 1, showLast: 0 } }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-ssn, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["ssn"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["ssn"] } }] }
   mask: { type: "null" }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-card, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.payments"], columns: ["card_number"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["payments"], columns: ["card_number"] } }] }
   mask: { type: fpe, args: { keyRef: secret://env/FPE_KEY } }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-salary, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["salary"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["salary"] } }] }
   mask: { type: jitter, args: { range: 0.05 } }
 ```
 

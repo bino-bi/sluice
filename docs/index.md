@@ -22,7 +22,9 @@ spec:
   match:
     any:
       - resources:
-          tables: ["shop.main.customers", "shop.main.orders"]
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
   combine: restrictive
   filter:
     predicate:

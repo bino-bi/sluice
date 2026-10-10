@@ -195,7 +195,9 @@ func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
 // EXPLAIN ANALYZE runs its body, so only a SELECT body is read-only. The
 // rewrite passes also only know how to secure a SELECT body.
 func TestExecute_ExplainBodyMustBeSelect(t *testing.T) {
-	svc, ex, _ := newHelloSluiceService(t)
+	// The write targets must be allowed so the statement-kind gate, not the
+	// per-table access gate, is what refuses each query.
+	svc, ex, _ := newHelloSluiceService(t, explainTargetsAllow)
 	cases := []struct {
 		sql  string
 		code pkgerr.Code
@@ -233,6 +235,20 @@ func TestExecute_ExplainBodyMustBeSelect(t *testing.T) {
 		t.Fatalf("EXPLAIN SELECT must show the filtered plan, got %s", plan)
 	}
 }
+
+const explainTargetsAllow = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-explain-targets
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["memory"], schemas: ["main"] }
+`
 
 const maskIDsPolicy = `
 apiVersion: sluice.bino.bi/v1alpha1
@@ -580,5 +596,67 @@ func TestExecute_WildcardMaskOnJoinedTables(t *testing.T) {
 	})
 	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeMaskContext {
 		t.Errorf("ambiguous masked column: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", err)
+	}
+}
+
+// An allow admits only the tables it names. A table that no allow covers is
+// denied even when it is joined to, or hidden in a subquery beside, an
+// allowed table. admin_users has no allow in the hello policies.
+func TestExecute_UnallowedTableIsDenied(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	denied := []string{
+		"SELECT a.username FROM shop.main.admin_users a, (SELECT 1 FROM shop.main.customers LIMIT 1) x",
+		"SELECT a.username FROM shop.main.customers c JOIN shop.main.admin_users a ON a.id = c.id",
+		"SELECT v.u FROM (VALUES ((SELECT string_agg(username, ',') FROM shop.main.admin_users))) v(u), (SELECT 1 FROM shop.main.customers LIMIT 1) x",
+		"SELECT d.database_name FROM duckdb_databases() d, (SELECT 1 FROM shop.main.customers LIMIT 1) x",
+	}
+	for _, sql := range denied {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			_ = res.Rows.Close()
+			t.Errorf("%s: served, want ACL_DENIED/ACL_REJECTED", sql)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied && ae.Code != pkgerr.CodeACLRejected {
+			t.Errorf("%s: code = %s, want ACL_DENIED or ACL_REJECTED", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+	// The allowed tables on their own still work.
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL:  "SELECT c.name FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id LIMIT 1",
+		User: helloUser(),
+	})
+	if err != nil {
+		t.Fatalf("allowed join: %v", err)
+	}
+	_ = res.Rows.Close()
+}
+
+// A FROM alias that is a DuckDB join keyword is refused before execution:
+// otherwise DuckDB restructures the join and the row filter and mask are
+// skipped. (A pre-existing deparse divergence, closed at the parser.)
+func TestExecute_JoinKeywordAliasRefused(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	for _, sql := range []string{
+		`SELECT unnamed_subquery.email FROM shop.main.customers "semi" JOIN shop.main.orders o ON true`,
+		`SELECT unnamed_subquery.email FROM shop.main.customers "anti" JOIN shop.main.orders o ON false`,
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql, User: helloUser()})
+		if err == nil {
+			_ = res.Rows.Close()
+			t.Errorf("%s: served, want ERR_SYNTAX", sql)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
+			t.Errorf("%s: code = %s, want ERR_SYNTAX", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
 	}
 }

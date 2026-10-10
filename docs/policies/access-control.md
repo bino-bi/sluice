@@ -30,11 +30,12 @@ spec:
 An explicit deny short-circuits: row filters, masks, rewrites, and approvals are not evaluated
 for a denied request.
 
-!!! warning "An allow spans the whole statement"
-    A clause matches when the subject matches and **at least one** referenced table satisfies its
-    `resources` block. An allow on `orders` therefore also admits a query that *joins* `orders`
-    with tables the policy never names. Protect sensitive tables with explicit `effect: deny`
-    policies — a deny matching any referenced table blocks the whole query, joins included.
+!!! warning "An allow admits only the tables it names"
+    Every referenced table must be covered by some `effect: allow` policy. An allow on `orders`
+    admits a query over `orders`, but a query that *joins* `orders` with a table no allow names is
+    denied with `no SqlAccessPolicy allows <table>` — the unnamed table is not admitted just because
+    it shares a statement with an allowed one. Different tables may be covered by different allow
+    policies. A deny still overrides: a deny matching any referenced table blocks the whole query.
 
 ## Scoping by action
 

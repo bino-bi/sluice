@@ -1,7 +1,8 @@
 {
-  "outcome": "allow",
+  "outcome": "deny",
   "changed": false,
-  "error_code": "ACL_REJECTED",
+  "deny_code": "ACL_DENIED",
+  "error_code": "ACL_DENIED",
   "applied_policies": [
     "ColumnMaskPolicy/mask-email",
     "RowFilterPolicy/filter-tenant",

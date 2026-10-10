@@ -17,7 +17,7 @@ metadata: { name: pii-catalog }
 spec:
   rules:
     - resources:
-        tables: ["**.customers"]
+        tables: ["customers"]
         columns: ["email", "phone"]
       tags: ["pii"]
 ```
@@ -42,6 +42,10 @@ all rules are folded into a tag → resource index; each selector that reference
 - Referencing a tag that no `DataClassification` defines is a **compile error**
   (`resource.tags: unknown tag …`) — the whole snapshot is rejected and, on hot reload, the
   previous one stays active. A typo'd tag can never silently protect nothing.
+- A rule that names only `columns` (no `catalogs`, `schemas` or `tables`) matches every table.
+  That is what a mask by its tag wants (mask the column wherever it occurs), but an `effect: allow`
+  by such a tag would cover every table, so it is a **compile error**. Name the tables in the rule
+  to grant access by tag.
 - File order does not matter; the index is built before any policy compiles.
 
 For [column masks](column-masks.md) the classification also supplies the columns: a
@@ -69,7 +73,7 @@ metadata: { name: pii-catalog }
 spec:
   rules:
     - resources:
-        tables: ["**.customers"]
+        tables: ["customers"]
         columns: ["email", "phone"]
       tags: ["pii"]
 ---

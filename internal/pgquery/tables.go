@@ -257,21 +257,52 @@ func (w *tableWalker) walkWith(with *pg.WithClause) {
 	if with == nil {
 		return
 	}
-	names := make([]string, 0, len(with.Ctes))
-	for _, cte := range with.Ctes {
+	// DuckDB binds a CTE name in the siblings after it and in the statement
+	// body, and for WITH RECURSIVE over a UNION also in that UNION's right
+	// arm. A self or forward reference anywhere else reads the base
+	// relation, so a name enters the scope only after its own body.
+	w.pushCTEScope(nil)
+	scope := w.ctes[len(w.ctes)-1]
+	for _, n := range with.Ctes {
+		cte := n.GetCommonTableExpr()
 		if cte == nil {
+			w.walkNode(n)
 			continue
 		}
-		if c, ok := cte.Node.(*pg.Node_CommonTableExpr); ok && c.CommonTableExpr != nil {
-			names = append(names, c.CommonTableExpr.Ctename)
+		name := strings.ToLower(cte.GetCtename())
+		if body := cte.GetCtequery().GetSelectStmt(); with.GetRecursive() && body.GetOp() == pg.SetOperation_SETOP_UNION {
+			w.walkRecursiveUnion(body, scope, name)
+		} else {
+			w.walkNode(cte.GetCtequery())
 		}
-	}
-	w.pushCTEScope(names)
-	for _, cte := range with.Ctes {
-		w.walkNode(cte)
+		if name != "" {
+			scope[name] = struct{}{}
+		}
 	}
 	// Scope stays pushed for the remainder of the current statement body;
 	// it is popped in walkSelect / walk* after the body is processed.
+}
+
+// walkRecursiveUnion walks the body of a recursive CTE. Only the right arm
+// of the top UNION sees the CTE's own name; DuckDB binds the name in the
+// seed side, including inner arms of a longer UNION chain, to the base
+// relation.
+func (w *tableWalker) walkRecursiveUnion(body *pg.SelectStmt, scope map[string]struct{}, name string) {
+	hadWith := body.WithClause != nil
+	if hadWith {
+		w.walkWith(body.WithClause)
+	}
+	w.walkNode(wrapSelect(body.Larg))
+	w.walkNodes(body.SortClause)
+	w.walkNode(body.LimitCount)
+	w.walkNode(body.LimitOffset)
+	if name != "" {
+		scope[name] = struct{}{}
+	}
+	w.walkNode(wrapSelect(body.Rarg))
+	if hadWith {
+		w.popCTEScope()
+	}
 }
 
 // walkSelect handles SelectStmt including set-operation trees and the

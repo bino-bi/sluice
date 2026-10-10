@@ -121,15 +121,16 @@ func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error 
 	return nil
 }
 
-// Evaluate contributes allow/deny/abstain per the ReBAC checks. All checks
-// true → allow; any false → explicit deny; backend error → error
-// (fail-closed); no policy matched → abstain (composite-safe).
+// Evaluate contributes deny/abstain per the ReBAC checks. Any check false →
+// explicit deny; backend error → error (fail-closed); all checks true or no
+// policy matched → abstain, so access still needs another member's allow.
 func (e *Engine) Evaluate(ctx context.Context, in policy.Input) (*policy.Decision, error) {
 	ptr := e.compiled.Load()
 	if ptr == nil || len(*ptr) == 0 {
 		return abstain(), nil
 	}
-	mc := policy.MatchContext{User: in.User, Tables: in.Tables}
+	act := policy.ActionOf(in)
+	mc := policy.MatchContext{User: in.User, Tables: in.Tables, Action: act}
 	matchedAny := false
 	dec := &policy.Decision{Outcome: policy.OutcomeAllow, RowFilters: map[string]*policy.CompiledFilter{}, ColumnMasks: map[string]*policy.CompiledMask{}}
 
@@ -141,7 +142,7 @@ func (e *Engine) Evaluate(ctx context.Context, in policy.Input) (*policy.Decisio
 		shadow := cr.enforcement == apitypes.EnforcementAudit || cr.enforcement == apitypes.EnforcementDryRun
 		ap := apitypes.AppliedPolicy{Kind: apitypes.KindRelationshipPolicy, Name: cr.name}
 		for _, t := range tables {
-			if cr.exclude != nil && cr.exclude.Match(policy.MatchContext{User: in.User, Tables: []parser.TableRef{t}}) {
+			if cr.exclude != nil && cr.exclude.Match(policy.MatchContext{User: in.User, Tables: []parser.TableRef{t}, Action: act}) {
 				continue
 			}
 			matchedAny = true
@@ -173,6 +174,12 @@ func (e *Engine) Evaluate(ctx context.Context, in policy.Input) (*policy.Decisio
 	if !matchedAny {
 		return abstain(), nil
 	}
+	// Passing checks restrict, they do not grant. Access still needs an
+	// allow from another member, and a table no RelationshipPolicy matches
+	// was not checked here at all. Applied and Shadow stay for the audit.
+	dec.Outcome = policy.OutcomeDeny
+	dec.Abstained = true
+	dec.DenyReason = &policy.DenyReason{Message: "relationship checks passed; access needs an allow from another engine", Code: "ACL_DENIED"}
 	return dec, nil
 }
 

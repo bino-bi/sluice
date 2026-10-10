@@ -62,3 +62,19 @@ WHERE database_name = 'system' AND schema_name = 'main'`)
 		}
 	}
 }
+
+// The join-keyword alias guard must list exactly the DuckDB keywords that
+// act as a join-type prefix. If DuckDB adds or renames one, this fails.
+func TestJoinKeywordAliasesAreDuckDBKeywords(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	for _, kw := range []string{"semi", "anti", "asof", "positional"} {
+		var n int
+		if err := e.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM duckdb_keywords() WHERE keyword_name = ?", kw).Scan(&n); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		if n == 0 {
+			t.Errorf("%q is not a DuckDB keyword; the alias guard may be stale", kw)
+		}
+	}
+}

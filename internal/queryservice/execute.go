@@ -525,6 +525,8 @@ func parseErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrTooDeep.Error())
 	case stderrors.Is(err, parser.ErrIdentifierChars):
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierChars.Error())
+	case stderrors.Is(err, parser.ErrAliasKeyword):
+		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid).WithMessage(parser.ErrAliasKeyword.Error())
 	case stderrors.Is(err, parser.ErrSyntax):
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid)
 	}

@@ -48,7 +48,7 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	}
 
 	// Step 1 + 2: access gate.
-	if denyOrAllow(enforced, dec); dec.Outcome == OutcomeDeny && !dec.Abstained {
+	if denyOrAllow(enforced, tables, user, action, dec); dec.Outcome == OutcomeDeny && !dec.Abstained {
 		// An EXPLICIT deny short-circuits — downstream steps do not run.
 		// An abstained deny (no allow matched) falls through so a composite
 		// member's filters/masks can still merge; standalone the outcome
@@ -99,9 +99,10 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 
 // denyOrAllow inspects SqlAccessPolicy outcomes. If any matched policy
 // denies, the highest-priority deny wins and dec.Outcome flips to deny.
-// Otherwise at least one allow must be present; with none, the request
-// is denied by default.
-func denyOrAllow(matched []*CompiledPolicy, dec *Decision) {
+// Otherwise every referenced table must be covered by an allow; a table
+// that no allow names is denied, so a table joined to an allowed one is
+// not admitted by default.
+func denyOrAllow(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, dec *Decision) {
 	var denies, allows []*CompiledPolicy
 	for _, p := range matched {
 		if p.Kind != apitypes.KindSQLAccessPolicy || p.Access == nil {
@@ -114,9 +115,17 @@ func denyOrAllow(matched []*CompiledPolicy, dec *Decision) {
 			allows = append(allows, p)
 		}
 	}
-	if len(denies) > 0 {
-		// matched is already priority-desc from Compile; the first deny wins.
-		top := denies[0]
+	// A deny whose Exclude carves out some of the tables fires only if its
+	// selector still matches the rest. matched is already priority-desc
+	// from Compile; the first deny that fires wins.
+	var top *CompiledPolicy
+	for _, p := range denies {
+		if p.Match.Match(MatchContext{User: user, Tables: notExcluded(p, tables, user, action), Action: action}) {
+			top = p
+			break
+		}
+	}
+	if top != nil {
 		dec.Outcome = OutcomeDeny
 		msg := top.Access.Message
 		if msg == "" {
@@ -141,7 +150,59 @@ func denyOrAllow(matched []*CompiledPolicy, dec *Decision) {
 			Message:    "no SqlAccessPolicy matched (default-deny)",
 			Code:       "ACL_DENIED",
 		}
+		return
 	}
+	// An allow admits only the tables it names. Every referenced table must
+	// be covered by some allow, else a sensitive table joined to an allowed
+	// one would leak. A statement with no table reference (e.g. SELECT 1)
+	// is covered vacuously. Like the no-allow case the deny is an abstain:
+	// in a composite an OPA member, which decides on the whole table list,
+	// may still allow the statement. A ReBAC member only restricts.
+	if t := uncoveredTable(allows, tables, user, action); t != "" {
+		dec.Outcome = OutcomeDeny
+		dec.Abstained = true
+		dec.DenyReason = &DenyReason{
+			PolicyName: "",
+			Message:    "no SqlAccessPolicy allows " + t,
+			Code:       "ACL_DENIED",
+		}
+	}
+}
+
+// notExcluded returns the tables p's Exclude does not carve out. With no
+// table reference the statement is kept as is: selectMatching already
+// dropped a policy whose Exclude matches it.
+func notExcluded(p *CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action) []parser.TableRef {
+	// A non-per-table Exclude (an `all` combination) is handled at query
+	// scope by selectMatching, not carved here.
+	if p.Exclude == nil || !perTableExclude(p.Exclude) {
+		return tables
+	}
+	out := make([]parser.TableRef, 0, len(tables))
+	for _, t := range tables {
+		if !p.Exclude.Match(MatchContext{User: user, Tables: []parser.TableRef{t}, Action: action}) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// uncoveredTable returns the key of the first referenced table that no
+// allow policy names, or "". Catalog, schema and table names are matched
+// without regard to case by the selectors.
+func uncoveredTable(allows []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action) string {
+	covered := map[string]bool{}
+	for _, p := range allows {
+		for _, t := range p.Match.MatchingTables(MatchContext{User: user, Tables: notExcluded(p, tables, user, action), Action: action}) {
+			covered[tableKey(t)] = true
+		}
+	}
+	for _, t := range tables {
+		if !covered[tableKey(t)] {
+			return tableKey(t)
+		}
+	}
+	return ""
 }
 
 // collectRowFilters walks every matched RowFilterPolicy and folds its

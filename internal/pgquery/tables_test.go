@@ -4,6 +4,7 @@ package pgquery_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/parser"
@@ -114,5 +115,43 @@ func TestExtractTablesCTENotEmittedFromSubquery(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("orders not extracted: %v", ast.Tables())
+	}
+}
+
+// A CTE name binds only where DuckDB binds it: in the siblings after it, in
+// the statement body, and for WITH RECURSIVE over a UNION also in that
+// UNION's right arm. A self or forward reference anywhere else reads the
+// base relation, so it must reach policy as a table.
+func TestExtractTablesCTEScopeFollowsDuckDB(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{"self reference", "WITH secret AS (SELECT * FROM secret) SELECT * FROM secret", []string{"secret"}},
+		{"system view wrapped in a CTE of its name", "WITH duckdb_databases AS (SELECT * FROM duckdb_databases) SELECT path FROM duckdb_databases", []string{"duckdb_databases"}},
+		{"forward reference", "WITH a AS (SELECT * FROM secret), secret AS (SELECT 1 AS v) SELECT * FROM a", []string{"secret"}},
+		{"forward reference under RECURSIVE", "WITH RECURSIVE a AS (SELECT * FROM secret), secret AS (SELECT 1 AS v) SELECT * FROM a", []string{"secret"}},
+		{"later sibling sees earlier", "WITH a AS (SELECT 1 AS v), b AS (SELECT * FROM a) SELECT * FROM b", nil},
+		{"recursive union right arm", "WITH RECURSIVE r(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM r WHERE v < 3) SELECT * FROM r", nil},
+		{"recursive union seed arm", "WITH RECURSIVE r(v) AS (SELECT v FROM r UNION ALL SELECT 1) SELECT * FROM r", []string{"r"}},
+		{"recursive inner arm of a three-arm union", "WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v FROM n UNION ALL SELECT v FROM n) SELECT * FROM n", []string{"n"}},
+		{"recursive without union", "WITH RECURSIVE r AS (SELECT * FROM r) SELECT * FROM r", []string{"r"}},
+		{"recursive intersect", "WITH RECURSIVE r(v) AS (SELECT 1 INTERSECT SELECT v FROM r) SELECT * FROM r", []string{"r"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := newTestParser(t).Parse(context.Background(), tc.sql)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			var got []string
+			for _, ref := range ast.Tables() {
+				got = append(got, ref.Table)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("tables = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

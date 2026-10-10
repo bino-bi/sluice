@@ -22,6 +22,11 @@ var (
 	// ErrTooDeep reports a statement whose nesting would overflow the C
 	// stack inside pg_query. Rejected before parsing.
 	ErrTooDeep = errors.New("parser: statement nesting is too deep")
+	// ErrAliasKeyword reports a FROM alias that DuckDB reads as a join-type
+	// keyword (SEMI, ANTI, ASOF, POSITIONAL). pg_query reads it as an alias
+	// and deparses it bare, so DuckDB would restructure the join and skip
+	// the row filter and mask.
+	ErrAliasKeyword = errors.New("table alias is a reserved join keyword (semi, anti, asof, positional), use another alias")
 )
 
 // ParseError carries position information for logs and audit records. The

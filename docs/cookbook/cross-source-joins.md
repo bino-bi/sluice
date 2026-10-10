@@ -70,13 +70,13 @@ spec:
           tables: ["countries"]
 ```
 
-!!! warning "Allow decisions are query-scoped"
-    An allow policy admits the whole statement as soon as *any* referenced
-    table matches one of its clauses — there is no per-table allow coverage
-    check. Listing both tables explicitly is the right practice, but a broad
-    clause (for example `tables: ["*"]`) on one catalog also admits joins that
-    pull in tables from other catalogs. If catalogs must stay separated, add
-    the reject policy below or set `limits.disableCrossCatalog: true`.
+!!! note "Every joined table needs an allow"
+    An allow admits only the tables it names, so a join must have every table
+    covered by some allow — that is why the policy above lists the tables on
+    both catalogs. A join that pulls in a table no allow names is denied with
+    `no SqlAccessPolicy allows <table>`. To stop cross-catalog joins between
+    otherwise-allowed tables, add the reject policy below or set
+    `limits.disableCrossCatalog: true`.
 
 ## Run and verify
 

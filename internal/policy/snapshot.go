@@ -273,6 +273,11 @@ func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource)
 		if p.Spec.Effect != apitypes.EffectAllow && p.Spec.Effect != apitypes.EffectDeny {
 			return nil, fmt.Errorf("spec.effect: must be allow or deny, got %q", p.Spec.Effect)
 		}
+		if p.Spec.Effect == apitypes.EffectAllow {
+			if err := base.Match.checkTagsNameTables(); err != nil {
+				return nil, fmt.Errorf("spec.match: %w", err)
+			}
+		}
 		base.Access = &CompiledAccess{
 			Effect:    p.Spec.Effect,
 			Message:   p.Spec.Message,

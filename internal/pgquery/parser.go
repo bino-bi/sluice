@@ -73,6 +73,9 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	if err := checkIdentifierRunes(sql); err != nil {
 		return nil, &parser.ParseError{Cause: err}
 	}
+	if err := checkAliasKeywords(tree); err != nil {
+		return nil, &parser.ParseError{Cause: err}
+	}
 
 	fp, ferr := pg.Fingerprint(sql)
 	if ferr != nil {
