@@ -120,3 +120,25 @@ func TestSelector_Specificity(t *testing.T) {
 		t.Errorf("precise (%d) must beat broad (%d)", precise.Specificity(), broad.Specificity())
 	}
 }
+
+// DuckDB resolves catalog, schema and table names without regard to case,
+// so a selector must match them the same way in both directions.
+func TestSelector_NamesMatchWithoutRegardToCase(t *testing.T) {
+	cs := compileSelectorT(t, apitypes.Selector{Any: []apitypes.Clause{{
+		Resources: &apitypes.ResourceSelector{
+			Catalogs: []string{"Shop"}, Schemas: []string{"main"}, Tables: []string{"Customers", "ord*"},
+		},
+	}}})
+	for _, ref := range []parser.TableRef{
+		{Catalog: "shop", Schema: "main", Table: "customers"},
+		{Catalog: "SHOP", Schema: "Main", Table: "CUSTOMERS"},
+		{Catalog: "shop", Schema: "main", Table: "ORDERS"},
+	} {
+		if !cs.Match(MatchContext{Tables: []parser.TableRef{ref}}) {
+			t.Errorf("selector must match %+v", ref)
+		}
+	}
+	if cs.Match(MatchContext{Tables: []parser.TableRef{{Catalog: "shop", Schema: "main", Table: "admin_users"}}}) {
+		t.Error("selector must not match another table")
+	}
+}

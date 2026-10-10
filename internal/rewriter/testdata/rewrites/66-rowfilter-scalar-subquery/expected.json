@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT (SELECT count(*) FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers) AS n",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "8891ca0b578bd751",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

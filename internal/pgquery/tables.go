@@ -3,6 +3,8 @@
 package pgquery
 
 import (
+	"strings"
+
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -60,7 +62,7 @@ func (w *tableWalker) pushCTEScope(names []string) {
 	scope := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		if n != "" {
-			scope[n] = struct{}{}
+			scope[strings.ToLower(n)] = struct{}{}
 		}
 	}
 	w.ctes = append(w.ctes, scope)
@@ -166,6 +168,7 @@ func (w *tableWalker) walkNode(n *pg.Node) {
 		}
 	case *pg.Node_SubLink:
 		if v.SubLink != nil {
+			w.walkNode(v.SubLink.Testexpr)
 			w.walkNode(v.SubLink.Subselect)
 		}
 	case *pg.Node_CommonTableExpr:
@@ -236,10 +239,13 @@ func (w *tableWalker) walkRelation(rv *pg.RangeVar, aliasOverride string) {
 	if alias == "" && rv.Alias != nil {
 		alias = rv.Alias.Aliasname
 	}
+	// DuckDB resolves names without regard to case, also when quoted.
+	// pg_query keeps a quoted name as written, so fold here: policies and
+	// the rewriter compare these names exactly.
 	w.addRef(parser.TableRef{
-		Catalog: rv.Catalogname,
-		Schema:  rv.Schemaname,
-		Table:   rv.Relname,
+		Catalog: strings.ToLower(rv.Catalogname),
+		Schema:  strings.ToLower(rv.Schemaname),
+		Table:   strings.ToLower(rv.Relname),
 		Alias:   alias,
 	})
 }
@@ -285,6 +291,7 @@ func (w *tableWalker) walkSelect(s *pg.SelectStmt) {
 		w.walkNode(wrapSelect(s.Rarg))
 	}
 	w.walkNodes(s.FromClause)
+	w.walkNodes(s.ValuesLists)
 	w.walkNode(s.WhereClause)
 	w.walkNodes(s.GroupClause)
 	w.walkNode(s.HavingClause)

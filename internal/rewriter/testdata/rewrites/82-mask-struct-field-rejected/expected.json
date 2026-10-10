@@ -1,0 +1,12 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_MASK_UNSUPPORTED_CONTEXT",
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-info",
+    "SqlAccessPolicy/allow-profiles"
+  ],
+  "masks": [
+    "shop.main.profiles.info=null"
+  ]
+}

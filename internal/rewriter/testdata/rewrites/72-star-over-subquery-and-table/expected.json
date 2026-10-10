@@ -1,0 +1,22 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT o.id, o.customer_id, o.total_cents, o.tenant_id, o.placed_at, q.* FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) o, (SELECT customers.id, customers.name, NULL AS email, customers.tenant_id, customers.created_at FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $2) customers) q",
+  "changed": true,
+  "params": [
+    "acme",
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "c2caafdab5731c57",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}

@@ -14,6 +14,8 @@ import (
 // RangeVar whose table key has a compiled row filter with a
 // RangeSubselect wrapping `SELECT * FROM <original> WHERE <pred>`. The
 // original alias is preserved so outer column references keep resolving.
+// Every SelectStmt means every one: CTE bodies, FROM subqueries,
+// set-operation arms and subqueries inside expressions.
 func (s *state) applyInjectFilter(raw *pg.ParseResult) error {
 	if raw == nil || len(s.decision.RowFilters) == 0 {
 		return nil
@@ -91,7 +93,9 @@ func (s *state) injectInSelect(sel *pg.SelectStmt) error {
 			return err
 		}
 	}
-	return nil
+	// A subquery in an expression reads tables too. Without this a table
+	// that is only named there would be read unfiltered.
+	return eachExprSubquery(sel, s.injectInSelect)
 }
 
 // injectInFromItem maybe-wraps a FROM entry. Returns the (possibly
@@ -117,11 +121,20 @@ func (s *state) injectInFromItem(n *pg.Node) (*pg.Node, error) {
 		}
 		v.JoinExpr.Larg = larg
 		v.JoinExpr.Rarg = rarg
+		if err := eachNodeSubquery(v.JoinExpr.Quals, s.injectInSelect); err != nil {
+			return nil, err
+		}
 	case *pg.Node_RangeSubselect:
 		if v.RangeSubselect != nil && v.RangeSubselect.Subquery != nil {
 			if err := s.injectInNode(v.RangeSubselect.Subquery); err != nil {
 				return nil, err
 			}
+		}
+	default:
+		// Any other FROM item (a function call, ...) can carry a subquery
+		// in its arguments.
+		if err := eachNodeSubquery(n, s.injectInSelect); err != nil {
+			return nil, err
 		}
 	}
 	return n, nil
@@ -135,11 +148,7 @@ func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 	if rv == nil {
 		return nil, nil
 	}
-	catalog := rv.Catalogname
-	if catalog == "" {
-		catalog = s.defaultCatalog
-	}
-	key := catalog + "." + rv.Schemaname + "." + rv.Relname
+	key := tableKeyOf(rv, s.defaultCatalog)
 	filter, ok := s.decision.RowFilters[key]
 	if !ok {
 		return &pg.Node{Node: &pg.Node_RangeVar{RangeVar: rv}}, nil
@@ -183,6 +192,10 @@ func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 		Alias:    alias,
 	}
 	s.rewrites = append(s.rewrites, "row-filter-wrapped:"+key)
+	if s.wrappers == nil {
+		s.wrappers = make(map[*pg.RangeSubselect]*pg.RangeVar)
+	}
+	s.wrappers[wrapped] = rv
 	return &pg.Node{Node: &pg.Node_RangeSubselect{RangeSubselect: wrapped}}, nil
 }
 

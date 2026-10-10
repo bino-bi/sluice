@@ -15,11 +15,17 @@ func statementKind(raw *pg.RawStmt) parser.StmtKind {
 	if raw == nil || raw.Stmt == nil {
 		return parser.StmtUnsupported
 	}
-	switch raw.Stmt.Node.(type) {
+	switch v := raw.Stmt.Node.(type) {
 	case *pg.Node_SelectStmt:
 		return parser.StmtSelect
 	case *pg.Node_ExplainStmt:
-		return parser.StmtExplain
+		// EXPLAIN ANALYZE runs its body, and the rewrite passes only secure
+		// a SELECT body. Any other body is classified as what it is.
+		body := v.ExplainStmt.GetQuery()
+		if body.GetSelectStmt() != nil {
+			return parser.StmtExplain
+		}
+		return statementKind(&pg.RawStmt{Stmt: body})
 	case *pg.Node_VariableSetStmt:
 		return parser.StmtSet
 	case *pg.Node_VariableShowStmt:

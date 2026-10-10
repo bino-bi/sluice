@@ -54,11 +54,23 @@ sequenceDiagram
 
 ## Parse
 
-The statement is parsed with pg_query, the real PostgreSQL grammar. If parsing fails, a regex
+The statement is parsed with pg_query, the real PostgreSQL grammar. An unquoted identifier that
+contains a non-letter Unicode character (for example a no-break space) is a parse error, because
+DuckDB would split it into different tokens than pg_query does. If parsing fails, a regex
 fallback still extracts table names so policy can evaluate — and deny — the request. A parse error
 (`ERR_SYNTAX`, `ERR_MULTIPLE_STATEMENTS`, `ERR_UNSUPPORTED_SYNTAX`) is only surfaced when policy
 would otherwise have allowed the query: a deny or reject always takes precedence, so a caller
 cannot use syntax probing to map what they are denied.
+
+## Function gate
+
+A cleanly parsed statement is checked for function calls before the rewrite cache and before
+policy evaluation. A call that is not on the built-in allowlist, a `FROM` function with a column
+or subquery argument, a qualified function name (`schema.f(x)` or the method form `x.f()`), a
+table name that contains path characters (`/ \ : * ? [`), or a `FROM` item other than a table,
+subquery, join, or function (`TABLESAMPLE`, `XMLTABLE`, `JSON_TABLE`) terminates with
+`ACL_REJECTED`. The request is audited with decision `reject` and no applied policies. See
+[Security model](security-model.md).
 
 ## Policy evaluation
 
@@ -90,10 +102,10 @@ within the window re-runs the pipeline once, consuming the grant. Otherwise the 
 
 ## Rewrite
 
-The rewriter applies the decision to the AST: `SELECT *` is expanded against the schema cache; row
+The rewriter applies the decision to the AST, in every `SELECT` of the statement including
+subqueries inside expressions: `SELECT *` is expanded against the schema cache; row
 filters are injected by wrapping the table in a subquery whose `WHERE` predicate uses bound `$N`
-parameters (values are never spliced into SQL text); column masks replace expressions in the target
-list; a `LIMIT` is injected when absent and a constant `LIMIT` above the cap is clamped; a sampling
+parameters (values are never spliced into SQL text); column masks replace the column references; a `LIMIT` is injected when absent and a constant `LIMIT` above the cap is clamped; a sampling
 instruction wraps the statement in `SELECT * FROM (<sql>) AS sluice_sample USING SAMPLE <r>%
 (<method>)`. Only `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and `PRAGMA` are allowed:
 `INSERT`/`UPDATE`/`DELETE` return `ACL_REJECTED`, and DDL/`COPY`/`ATTACH` return
@@ -132,6 +144,7 @@ CPU time and rows served; client streaming time is deliberately excluded).
 | Budget | `ERR_BUDGET_EXCEEDED` |
 | Input caps | `ERR_PAYLOAD_TOO_LARGE` |
 | Parse | `ERR_SYNTAX`, `ERR_MULTIPLE_STATEMENTS`, `ERR_UNSUPPORTED_SYNTAX` (surfaced only on allow) |
+| Function gate | `ACL_REJECTED` |
 | Policy | `ACL_DENIED`, `ACL_REJECTED` (or a policy's custom code) |
 | Approval | `ERR_APPROVAL_PENDING`, `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED`, `ERR_RATE_LIMITED` (broker full) |
 | Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_REWRITE_FAILED`, `ERR_MASK_UNSUPPORTED_CONTEXT` |

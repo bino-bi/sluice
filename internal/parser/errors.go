@@ -16,6 +16,12 @@ var (
 	ErrUnsupported        = errors.New("parser: unsupported statement kind")
 	ErrDeparseFailed      = errors.New("parser: deparse failed")
 	ErrInputTooLarge      = errors.New("parser: input exceeds MaxSQLBytes")
+	// ErrIdentifierChars reports an unquoted identifier that pg_query and
+	// DuckDB would split into different tokens.
+	ErrIdentifierChars = errors.New("unquoted identifier contains a non-letter Unicode character, quote the identifier")
+	// ErrTooDeep reports a statement whose nesting would overflow the C
+	// stack inside pg_query. Rejected before parsing.
+	ErrTooDeep = errors.New("parser: statement nesting is too deep")
 )
 
 // ParseError carries position information for logs and audit records. The

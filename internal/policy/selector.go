@@ -173,13 +173,15 @@ func compileClaimCheck(cc apitypes.ClaimCheck) (compiledClaimCheck, error) {
 func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]*compiledResource) (*compiledResource, error) {
 	out := &compiledResource{}
 	var err error
-	if out.catalogs, err = compileMatchers(r.Catalogs, "catalogs"); err != nil {
+	// Catalog, schema and table names are matched without regard to case,
+	// like DuckDB resolves them.
+	if out.catalogs, err = compileMatchers(lowerAll(r.Catalogs), "catalogs"); err != nil {
 		return nil, err
 	}
-	if out.schemas, err = compileMatchers(r.Schemas, "schemas"); err != nil {
+	if out.schemas, err = compileMatchers(lowerAll(r.Schemas), "schemas"); err != nil {
 		return nil, err
 	}
-	if out.tables, err = compileMatchers(r.Tables, "tables"); err != nil {
+	if out.tables, err = compileMatchers(lowerAll(r.Tables), "tables"); err != nil {
 		return nil, err
 	}
 	if out.columns, err = compileMatchers(r.Columns, "columns"); err != nil {
@@ -206,6 +208,14 @@ func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]
 		len(out.tables) == 0 && len(out.columns) == 0 && len(out.actions) == 0 &&
 		len(out.tagRules) == 0
 	return out, nil
+}
+
+func lowerAll(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strings.ToLower(s)
+	}
+	return out
 }
 
 func compileMatchers(patterns []string, field string) ([]apitypes.Matcher, error) {
@@ -495,13 +505,13 @@ func (r *compiledResource) matches(t parser.TableRef) bool {
 	if r == nil || r.empty {
 		return true
 	}
-	if len(r.catalogs) > 0 && !matchAny(r.catalogs, t.Catalog) {
+	if len(r.catalogs) > 0 && !matchAny(r.catalogs, strings.ToLower(t.Catalog)) {
 		return false
 	}
-	if len(r.schemas) > 0 && !matchAny(r.schemas, t.Schema) {
+	if len(r.schemas) > 0 && !matchAny(r.schemas, strings.ToLower(t.Schema)) {
 		return false
 	}
-	if len(r.tables) > 0 && !matchAny(r.tables, t.Table) {
+	if len(r.tables) > 0 && !matchAny(r.tables, strings.ToLower(t.Table)) {
 		return false
 	}
 	// Tag references: at least one referenced classification rule must also

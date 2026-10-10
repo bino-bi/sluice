@@ -62,6 +62,7 @@ flowchart LR
 | Agent queries a table nobody allowed | Default-deny + `SqlAccessPolicy` | `ACL_DENIED` |
 | Injected agent attempts `INSERT`/`UPDATE`/`DELETE` | Statement allowlist (SELECT-only execution) | `ACL_REJECTED` |
 | Injected agent attempts DDL, `COPY`, `ATTACH` | Statement allowlist | `ERR_UNSUPPORTED_SYNTAX` |
+| Reading around policy through a function (`query_table`, `read_csv`, `duckdb_settings`, `current_setting`) | Function allowlist (default-deny, before the rewrite cache) | `ACL_REJECTED` |
 | Cross-tenant row access | `RowFilterPolicy` — predicates injected as bound `$N` parameters | Rows filtered |
 | Reading PII columns | `ColumnMaskPolicy` (partial, hash, fpe, fake, ...) | Values masked |
 | Bulk exfiltration in one query | `QueryRewritePolicy` LIMIT clamp + sampling | Result bounded |

@@ -5,6 +5,8 @@ package queryservice
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -138,6 +140,31 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 	}
 
+	// 1c. Function gate. Runs before the rewrite cache and policy so a
+	// memoised Allow cannot bypass it. Policy keys on table references and
+	// cannot see what a function reads. shape is empty on a parse error;
+	// such a request never executes.
+	if reason := parser.CheckFunctions(shape); reason != "" {
+		rec.Decision = audit.DecisionReject
+		rec.Message = reason
+		s.emit(ctx, rec, start)
+		releaseSlot()
+		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
+	}
+
+	// 1d. Catalog used as schema. DuckDB resolves `shop.customers` as
+	// catalog shop with its default schema. The table walker and every
+	// policy read the same name as schema.table, so no filter or mask
+	// written for shop.main.customers would match it.
+	if name := s.catalogAsSchema(tables); name != "" {
+		reason := fmt.Sprintf("table name %q is ambiguous, write catalog.schema.table", name)
+		rec.Decision = audit.DecisionReject
+		rec.Message = reason
+		s.emit(ctx, rec, start)
+		releaseSlot()
+		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
+	}
+
 	// 2. Policy evaluation + rewrite, memoised when the cache is enabled.
 	// The key binds the raw SQL text and full identity to the active
 	// snapshot; a hit skips both Evaluate and Rewrite. Everything else
@@ -198,11 +225,14 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	// requires a parseable query to proceed. (Unreachable on a cache hit:
 	// caching requires a clean parse.)
 	if parseErr != nil {
-		setErrorCode(rec, parseErr)
+		// Audit the same code the client receives; the raw sentinel maps to
+		// ERR_INTERNAL otherwise.
+		apiErr := parseErrToAPI(parseErr, qid)
+		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
 		releaseSlot()
-		return nil, parseErrToAPI(parseErr, qid)
+		return nil, apiErr
 	}
 
 	// 3b. Approval gate. A decision carrying an approval requirement holds
@@ -491,6 +521,10 @@ func parseErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodePayloadTooLarge, err).WithQueryID(qid)
 	case stderrors.Is(err, parser.ErrUnsupported):
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
+	case stderrors.Is(err, parser.ErrTooDeep):
+		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrTooDeep.Error())
+	case stderrors.Is(err, parser.ErrIdentifierChars):
+		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierChars.Error())
 	case stderrors.Is(err, parser.ErrSyntax):
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid)
 	}
@@ -532,4 +566,27 @@ func execErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
+}
+
+// catalogAsSchema returns the first two-part table name whose schema part
+// is the name of an attached catalog, or "".
+func (s *Service) catalogAsSchema(tables []parser.TableRef) string {
+	if s.opts.Catalogs == nil {
+		return ""
+	}
+	var catalogs []string
+	for _, t := range tables {
+		if t.Catalog != "" || t.Schema == "" {
+			continue
+		}
+		if catalogs == nil {
+			catalogs = s.opts.Catalogs()
+		}
+		for _, c := range catalogs {
+			if strings.EqualFold(c, t.Schema) {
+				return t.Schema + "." + t.Table
+			}
+		}
+	}
+	return ""
 }

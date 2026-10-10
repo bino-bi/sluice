@@ -4,6 +4,7 @@ package policy
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
@@ -338,6 +339,8 @@ func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
 // tableKey renders a parser.TableRef as "catalog.schema.table". Empty
 // catalog stays empty so the rewriter can resolve it against the default
 // catalog.
+// tableKey is lower case: DuckDB resolves names without regard to case and
+// the rewriter looks tables up by this key.
 func tableKey(t parser.TableRef) string {
-	return t.Catalog + "." + t.Schema + "." + t.Table
+	return strings.ToLower(t.Catalog + "." + t.Schema + "." + t.Table)
 }

@@ -146,6 +146,11 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		if err := validateStatementKind(req.AST.Statement()); err != nil {
 			return nil, err
 		}
+		// Function gate. The passes below only secure tables, subqueries
+		// and joins; queryservice runs the same check before its cache.
+		if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
+			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
+		}
 	}
 
 	// Step 3: pass-through fast path.
@@ -186,6 +191,9 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		salts:          r.opts.Salts,
 	}
 
+	if err := state.checkMaskedAliases(clone); err != nil {
+		return nil, err
+	}
 	if err := state.applyExpandStar(clone); err != nil {
 		return nil, err
 	}
@@ -250,6 +258,19 @@ type state struct {
 	params    []any
 	rewrites  []string
 	postMasks []PostMask
+
+	// wrappers maps each row-filter wrapper to the table it wraps. The
+	// mask pass resolves the wrapper's alias to that table. A subquery the
+	// caller wrote is not in here: it is masked in its own SELECT.
+	wrappers map[*pg.RangeSubselect]*pg.RangeVar
+	// subAliases counts the aliases generated for unaliased FROM subqueries.
+	subAliases int
+	// selectDepth is the nesting level of the SELECT the mask pass is in.
+	selectDepth int
+	// localAliases holds the FROM tables of that SELECT alone.
+	localAliases aliasMap
+	// schemaIndex finds schema cache entries by lower-case key.
+	schemaIndex map[string]*schema.Entry
 }
 
 // needsMutation reports whether the decision requires any AST change.

@@ -1,0 +1,22 @@
+{
+  "outcome": "allow",
+  "sql": "WITH recent AS (SELECT customer_id FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) orders) SELECT r.*, c.id, c.name, NULL AS email, c.tenant_id, c.created_at, generate_series.*, sluice_sub1.* FROM recent r JOIN (SELECT * FROM shop.main.customers WHERE tenant_id = $2) c ON c.id = r.customer_id, generate_series(1, 2), (SELECT 1 AS one) sluice_sub1",
+  "changed": true,
+  "params": [
+    "acme",
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "3b9b095137397ca4",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}

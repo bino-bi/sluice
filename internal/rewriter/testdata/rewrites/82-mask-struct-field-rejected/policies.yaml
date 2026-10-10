@@ -1,0 +1,29 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-profiles
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["profiles"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-info
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["profiles"]
+          columns: ["info"]
+  mask:
+    type: "null"

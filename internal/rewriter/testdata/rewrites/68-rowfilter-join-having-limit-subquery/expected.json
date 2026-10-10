@@ -1,0 +1,25 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT o.tenant_id, count(*) FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) o JOIN (SELECT * FROM shop.main.customers WHERE tenant_id = $2) c ON c.id = o.customer_id AND (SELECT count(*) FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $3) customers) \u003e 2 GROUP BY o.tenant_id HAVING count(*) \u003c (SELECT count(*) FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $4) orders) LIMIT (SELECT count(*) FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $5) customers)",
+  "changed": true,
+  "params": [
+    "acme",
+    "acme",
+    "acme",
+    "acme",
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "d7719766d12c171e",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}

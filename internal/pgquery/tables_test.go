@@ -44,6 +44,21 @@ func TestExtractTablesNestedExpressions(t *testing.T) {
 			sql:  "SELECT (SELECT ssn FROM pg.hr.emp LIMIT 1) AS first_ssn",
 			want: []string{"emp"},
 		},
+		{
+			name: "quoted names in another letter case",
+			sql:  `SELECT 1 FROM "PG"."HR"."Emp", pg.public."Other"`,
+			want: []string{"emp", "other"},
+		},
+		{
+			name: "subquery in values list",
+			sql:  "SELECT v.x FROM (VALUES ((SELECT ssn FROM pg.hr.emp LIMIT 1))) v(x), pg.public.other",
+			want: []string{"emp", "other"},
+		},
+		{
+			name: "subquery on the left of IN",
+			sql:  "SELECT dept FROM pg.public.other WHERE (SELECT max(ssn) FROM pg.hr.emp) IN (SELECT ssn FROM pg.hr.mgr)",
+			want: []string{"emp", "mgr", "other"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +76,21 @@ func TestExtractTablesNestedExpressions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A quoted CTE name is folded like a table name, so a reference to it is
+// still recognised as the CTE.
+func TestExtractTablesQuotedCTENameIsNotATable(t *testing.T) {
+	sql := `WITH "Totals" AS (SELECT id FROM pg.public.orders) SELECT id FROM "Totals"`
+	ast, err := newTestParser(t).Parse(context.Background(), sql)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, ref := range ast.Tables() {
+		if ref.Table != "orders" {
+			t.Fatalf("unexpected table %+v, the CTE must not be listed", ref)
+		}
 	}
 }
 

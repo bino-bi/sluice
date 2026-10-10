@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_UNSUPPORTED_SYNTAX",
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}
