@@ -34,8 +34,8 @@ func tenantFilter(tables ...string) *apitypes.RowFilterPolicy {
 // A filtered table without an alias gets a wrapper named after the table,
 // and pg_query deparses a lower-case name bare. DuckDB reads some names as
 // a keyword: semi, anti, asof and positional change the join type and drop
-// the wrapper's name, so the mask pass cannot follow it. Others break the
-// statement. Such a table needs an alias.
+// the wrapper's name. Others break the statement. Such a table needs an
+// alias.
 func TestRewrite_WrapperAliasKeywordRefused(t *testing.T) {
 	rw := buildRewriter(t)
 	user := &identity.UserCtx{Subject: "u", Claims: map[string]any{"tenant_id": "t-1"}}

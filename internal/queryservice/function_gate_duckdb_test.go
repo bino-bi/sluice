@@ -49,6 +49,19 @@ func (c *countingExecutor) Execute(ctx context.Context, req executor.Request) (*
 // test needs no extension download.
 func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice.Service, *countingExecutor, *fakeAudit) {
 	t.Helper()
+	return newHelloSluiceServiceWithSchema(t, nil, extraPolicies...)
+}
+
+// newHelloSluiceServiceWithSchema is newHelloSluiceService with a fixed
+// schema cache for the rewriter. Nil keeps the live one.
+func newHelloSluiceServiceWithSchema(t *testing.T, cache schema.Cache, extraPolicies ...string) (*queryservice.Service, *countingExecutor, *fakeAudit) {
+	t.Helper()
+	return newSeededHelloSluiceService(t, cache, "", extraPolicies...)
+}
+
+// newSeededHelloSluiceService runs extraSeed after the example seed.
+func newSeededHelloSluiceService(t *testing.T, cache schema.Cache, extraSeed string, extraPolicies ...string) (*queryservice.Service, *countingExecutor, *fakeAudit) {
+	t.Helper()
 	ctx := context.Background()
 
 	dbPath := filepath.Join(t.TempDir(), "shop.duckdb")
@@ -60,7 +73,7 @@ func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice
 	if err != nil {
 		t.Fatalf("open seed db: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, string(seed)); err != nil {
+	if _, err := db.ExecContext(ctx, string(seed)+extraSeed); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := db.Close(); err != nil {
@@ -123,6 +136,9 @@ func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice
 		t.Fatalf("apply snapshot: %v", err)
 	}
 
+	if cache == nil {
+		cache = schema.New(schema.Options{Loader: schema.NewLoader(reg, exec.DB())})
+	}
 	p := pgquery.New(parser.Options{})
 	ex := &countingExecutor{inner: exec}
 	a := &fakeAudit{}
@@ -131,7 +147,7 @@ func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice
 		Policy: eng,
 		Rewriter: rewriter.New(rewriter.Options{
 			Parser:     p,
-			Schema:     schema.New(schema.Options{Loader: schema.NewLoader(reg, exec.DB())}),
+			Schema:     cache,
 			Salts:      secrets.NewSaltStore(secrets.NewResolver(secrets.ResolverOptions{})),
 			ParseCheck: parseCheck,
 		}),

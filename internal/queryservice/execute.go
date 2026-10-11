@@ -19,7 +19,6 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
-	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -506,32 +505,14 @@ func toAPIError(err error, qid string) error {
 	if ae := pkgerr.FromError(err); ae != nil && ae.Code != pkgerr.CodeInternal {
 		return ae.WithQueryID(qid)
 	}
-	// Rewriter sentinels.
 	switch {
-	case stderrors.Is(err, rewriter.ErrMaskPostQueryContext):
-		return pkgerr.Wrap(pkgerr.CodeMaskContext, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrUnsupportedSyntax):
-		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrDeparseFailed):
-		return pkgerr.Wrap(pkgerr.CodeRewriteFailed, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrStatementRejected):
-		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrDeny):
 		return pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrReject):
 		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
-	case stderrors.Is(err, schema.ErrUnknownCatalog):
-		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
-	case stderrors.Is(err, executor.ErrOutOfMemory):
-		// Only the DuckDB parse check runs during the rewrite.
-		return pkgerr.Wrap(pkgerr.CodePayloadTooLarge, err).WithQueryID(qid).
-			WithMessage("statement too large for the DuckDB parse check; send a shorter statement (for example a shorter IN list) or retry later")
-	case stderrors.Is(err, context.Canceled):
-		return pkgerr.Wrap(pkgerr.CodeCanceled, err).WithQueryID(qid)
-	case stderrors.Is(err, context.DeadlineExceeded):
-		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
 	}
-	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
+	// Rewriter sentinels, context and schema cache errors.
+	return pkgerr.Wrap(rewriter.ErrorCode(err), err).WithQueryID(qid)
 }
 
 func parseErrToAPI(err error, qid string) error {

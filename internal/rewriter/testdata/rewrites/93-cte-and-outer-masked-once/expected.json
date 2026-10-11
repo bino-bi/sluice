@@ -1,0 +1,17 @@
+{
+  "outcome": "allow",
+  "sql": "WITH employees AS (SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, sha256(concat($1, sluice_src.email::varchar)) AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees) SELECT employees.email, x.email AS again FROM employees JOIN (SELECT sluice_src.id, sluice_src.name, sha256(concat($2, sluice_src.email::varchar)) AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) x ON x.id = employees.id",
+  "changed": true,
+  "params": [
+    "golden-salt",
+    "golden-salt"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "ac57ca940e6a022d",
+  "masks": [
+    "pg.hr.employees.email=hash"
+  ]
+}

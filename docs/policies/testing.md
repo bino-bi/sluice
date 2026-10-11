@@ -61,31 +61,38 @@ How assertions compare:
 - `rewrittenSql` and `rewrittenSqlContains` are **whitespace-normalised** on both sides.
 - `errorCode` asserts the error a failing rewrite raises — see the
   [error code reference](../reference/error-codes.md). A case that sets it always runs the
-  rewrite, and fails when the rewrite succeeds.
+  rewrite, and fails when the rewrite succeeds. An `allow` case without `errorCode` fails when
+  the rewrite fails.
 
-### Schema fixtures for `SELECT *`
+### Schema fixtures for masked tables
 
-The test runner has no live datasource, so by itself it cannot expand `SELECT *` against a
-schema — a star case combined with a column mask would fail with a schema-missing rewrite error.
-A suite that needs star expansion declares its tables in an optional top-level `schema:` block:
+A table with a column mask is read through a subquery that lists its columns (see
+[Column masks](column-masks.md)). The test runner has no live datasource, so a suite that reads a
+masked table declares its columns in a top-level `schema:` block. Without it the case fails with
+a rewrite error that asks for the block. A table with only a row filter needs none, with one
+exception: on a query with a post-query mask, every table under a `SELECT *` of the outermost
+select list needs an entry. Without it the case fails with `ERR_MASK_UNSUPPORTED_CONTEXT`. A
+star there over a subquery, a CTE or a table function fails with the same code whatever the
+`schema:` block lists: name the columns in the query.
 
 ```yaml
 schema:
-  pg.public.customers: [id, email, tenant_id]   # catalog.schema.table: column list
+  pg.public.customers: [id, email, tenant_id]   # catalog.schema.table: columns in table order
 
 cases:
-  - name: star expands and masks email
+  - name: star reads email masked
     identity: { subject: alice, groups: [analysts] }
     sql: "SELECT * FROM pg.public.customers"
     expect:
       outcome: allow
       masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(customers.email"]
+      rewrittenSqlContains: ["substr(sluice_src.email"]
 ```
 
 Keys must be fully-qualified three-part `catalog.schema.table` names, matching the three-part
-table names in the test SQL. The block is static fixture data, never introspection — keep it in
-sync with the real table by hand. Suites without a `schema:` block behave exactly as before.
+table names in the test SQL. List the columns in the order of the real table: the rewritten SQL
+lists them in that order, and so does `SELECT *`. The block is static fixture data, never
+introspection. Keep it in sync with the real table by hand.
 
 ## Running suites
 
@@ -106,10 +113,13 @@ instead of passing it.
 
 The repository ships a runnable example in `examples/policies/`: an allow for the `analysts`
 group, a tenant row filter on `orders`, and a partial mask on `customers.email`. Its main suite,
-`examples/policies/tests/basic.yaml` (a second suite, `select-star.yaml`, demonstrates the
-`schema:` fixture block):
+`examples/policies/tests/basic.yaml` (a second suite, `select-star.yaml`, reads the masked table
+with `SELECT *`):
 
 ```yaml
+schema:
+  pg.public.customers: [id, email, tenant_id]
+
 cases:
   - name: analyst reads orders with tenant filter
     identity: { subject: alice, groups: [analysts], claims: { tenant_id: acme } }
@@ -132,7 +142,7 @@ cases:
     expect:
       outcome: allow
       masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(email"]
+      rewrittenSqlContains: ["substr(sluice_src.email"]
 ```
 
 ```console
@@ -140,7 +150,7 @@ $ sluice policy test examples/policies
 PASS  analyst reads orders with tenant filter
 PASS  non-analyst is denied by default
 PASS  email is partially masked
-PASS  star expands and masks email via schema fixture
+PASS  star reads email masked via schema fixture
 
 4 passed, 0 failed, 4 total
 ```

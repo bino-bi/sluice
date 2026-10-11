@@ -80,24 +80,29 @@ The rewritten SQL is never logged. To inspect it, write a policy test
 with a `rewrittenSqlContains` expectation and run
 `./bin/sluice policy test policies.d`, or use
 `./bin/sluice policy explain` to see which policies fire for a given
-subject and table. For the query above, the effective SQL is roughly:
+subject and table. A policy test runs without the data source, so it
+needs a `schema:` block that lists the columns of `customers`. For the
+query above, the effective SQL is:
 
 ```sql
-SELECT id,
-       NULL              AS email,
-       '+1-555-REDACTED' AS phone,
-       'REDACTED'        AS ssn,
-       birth_date
-FROM   shop.main.customers
+SELECT id, email, phone, ssn, birth_date
+FROM   (SELECT sluice_src.id,
+               sluice_src.tenant_id,
+               NULL              AS email,
+               '+1-555-REDACTED' AS phone,
+               'REDACTED'        AS ssn,
+               sluice_src.birth_date,
+               sluice_src.created_at
+        FROM   shop.main.customers sluice_src) customers
 ORDER  BY id
 ```
 
-The substitution is not limited to the target list: masked column
-references are replaced everywhere in the statement — SELECT list,
+The masks are applied in the subquery that replaces the table, so the
+rest of the statement only sees masked values: the SELECT list,
 `WHERE`/`HAVING`, `GROUP BY`/`ORDER BY`, and `JOIN` conditions. A
-predicate like `WHERE email LIKE '%acme%'` is rewritten to compare
-against `NULL` and returns no rows, so a masked column cannot be used
-to filter on plaintext values either.
+predicate like `WHERE email LIKE '%acme%'` compares against `NULL` and
+returns no rows, so a masked column cannot be used to filter on
+plaintext values either.
 
 ## Not for production
 

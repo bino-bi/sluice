@@ -1,12 +1,12 @@
 {
   "outcome": "allow",
-  "sql": "SELECT a, b + NULL AS total FROM pg.public.t",
+  "sql": "SELECT a, b + c AS total FROM (SELECT sluice_src.a, sluice_src.b, NULL AS c FROM pg.public.t sluice_src) t",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/mask-c",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "54e89534d8671be5",
+  "fingerprint": "075c7713aee764a6",
   "masks": [
     "pg.public.t.c=null"
   ]

@@ -35,5 +35,6 @@ var (
 
 	// ErrOutOfMemory is returned by ParseTrees when DuckDB runs out of
 	// memory building the trees, so the statement is too large to check.
+	// It comes wrapped in an ERR_PAYLOAD_TOO_LARGE APIError.
 	ErrOutOfMemory = errors.New("executor: out of memory")
 )

@@ -5,7 +5,6 @@ package rewriter_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -153,8 +152,8 @@ func runGoldenFixture(t *testing.T, dir string) {
 		t.Fatalf("evaluate: %v", err)
 	}
 
-	// Optional schema.yaml provides a static table→columns fixture so
-	// SELECT-* expansion scenarios run without a live datasource.
+	// Optional schema.yaml provides a static table→columns fixture, so
+	// masked tables and SELECT-* expansion run without a live datasource.
 	var schemaCache schema.Cache
 	if data, err := os.ReadFile(filepath.Join(dir, "schema.yaml")); err == nil {
 		var tables map[string][]string
@@ -199,16 +198,11 @@ func runGoldenFixture(t *testing.T, dir string) {
 	got := goldenExpected{Outcome: string(dec.Outcome)}
 	switch {
 	case rewriteErr != nil:
-		var apiErr *pkgerr.APIError
-		switch {
-		case errors.As(rewriteErr, &apiErr):
-			got.ErrorCode = string(apiErr.Code)
-			got.DenyPolicy = apiErr.Policy
-		case errors.Is(rewriteErr, rewriter.ErrMaskPostQueryContext):
-			got.ErrorCode = string(pkgerr.CodeMaskContext)
-		case errors.Is(rewriteErr, rewriter.ErrUnsupportedSyntax):
-			got.ErrorCode = string(pkgerr.CodeUnsupportedSyntax)
+		// The code a client gets. ERR_INTERNAL is no expected outcome.
+		if code := rewriter.ErrorCode(rewriteErr); code != pkgerr.CodeInternal {
+			got.ErrorCode = string(code)
 		}
+		got.DenyPolicy = pkgerr.FromError(rewriteErr).Policy
 	case res != nil:
 		got.SQL = res.SQL
 		got.Changed = res.Changed
@@ -222,6 +216,11 @@ func runGoldenFixture(t *testing.T, dir string) {
 	}
 	if parseErr != nil && rewriteErr != nil && got.ErrorCode == "" {
 		got.ErrorCode = "ERR_SYNTAX"
+	}
+	// An unmapped error would be recorded as an empty result, and -update
+	// would write that into the fixture.
+	if rewriteErr != nil && got.ErrorCode == "" {
+		t.Fatalf("rewrite error has no error code: %v", rewriteErr)
 	}
 	if dec.DenyReason != nil {
 		got.DenyPolicy = dec.DenyReason.PolicyName

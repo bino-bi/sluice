@@ -5,7 +5,6 @@ package queryservice_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,8 +39,9 @@ func TestExecute_ParseCheckErrorCodes(t *testing.T) {
 		{"checker failure", 0, func(context.Context, context.CancelFunc) error {
 			return errors.New("parse instance gone")
 		}, pkgerr.CodeInternal},
+		// executor.ParseTrees returns its out-of-memory error like this.
 		{"out of memory", 0, func(context.Context, context.CancelFunc) error {
-			return fmt.Errorf("%w: Out of Memory Error", executor.ErrOutOfMemory)
+			return pkgerr.Wrap(pkgerr.CodePayloadTooLarge, executor.ErrOutOfMemory).WithMessage("send a shorter statement")
 		}, pkgerr.CodePayloadTooLarge},
 		{"canceled", 0, func(ctx context.Context, cancel context.CancelFunc) error {
 			cancel()

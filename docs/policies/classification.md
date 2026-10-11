@@ -45,7 +45,8 @@ all rules are folded into a tag → resource index; each selector that reference
 - A rule that names only `columns` (no `catalogs`, `schemas` or `tables`) matches every table.
   That is what a mask by its tag wants (mask the column wherever it occurs), but an `effect: allow`
   by such a tag would cover every table, so it is a **compile error**. Name the tables in the rule
-  to grant access by tag.
+  to grant access by tag. A mask by such a tag makes every table a query reads a masked table, so
+  each one needs a schema cache entry (see [Column masks](column-masks.md)).
 - File order does not matter; the index is built before any policy compiles.
 
 For [column masks](column-masks.md) the classification also supplies the columns: a

@@ -72,7 +72,7 @@ allowed to wire them together.
 | `internal/rewriter` | AST rewriting: star expansion, row filters, masks, LIMIT, sampling |
 | `internal/executor` | Runs rewritten SQL on DuckDB and streams rows |
 | `internal/datasource` | Attaches the six source types to DuckDB as read-only catalogs |
-| `internal/schema` | Column-metadata cache for star expansion and mask resolution |
+| `internal/schema` | Column-metadata cache: the column lists of masked tables and star expansion |
 | `internal/audit` | Hash-chained JSONL records, sinks, bounded dispatcher |
 | `internal/approval` | In-memory approval broker, capability tokens, webhook notifier |
 | `internal/ratelimit` | Per-subject token buckets |

@@ -153,9 +153,9 @@ as `$N` parameters — never spliced into the SQL text. A tenant and a region fi
 -- before
 SELECT id FROM orders
 -- after, both filters restrictive
-SELECT id FROM (SELECT * FROM orders WHERE tenant_id = $1 AND region = $2) orders
+SELECT id FROM (SELECT * FROM orders sluice_src WHERE sluice_src.tenant_id = $1 AND sluice_src.region = $2) orders
 -- after, second filter permissive
-SELECT id FROM (SELECT * FROM orders WHERE tenant_id = $1 OR region = $2) orders
+SELECT id FROM (SELECT * FROM orders sluice_src WHERE sluice_src.tenant_id = $1 OR sluice_src.region = $2) orders
 ```
 
 ## Recipes

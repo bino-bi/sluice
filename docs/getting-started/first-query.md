@@ -47,7 +47,7 @@ spec:
       value: "{{ subject.tenantId }}"
 ```
 
-Sluice rewrites each matching table into a filtered subquery — `... FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers` — binding the caller's `tenantId` as a parameter. That is why only the two `acme` rows ever leave the gateway.
+Sluice rewrites each matching table into a filtered subquery, such as `... FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $1) orders`, and binds the caller's `tenantId` as a parameter. That is why only the two `acme` rows ever leave the gateway. `customers` also has the email mask, so its subquery lists the columns and returns `NULL AS email`.
 
 ## Sharpen the mask: from null to partial
 

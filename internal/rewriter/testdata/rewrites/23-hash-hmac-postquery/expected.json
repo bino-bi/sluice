@@ -1,12 +1,12 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, email FROM pg.hr.employees",
+  "sql": "SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, sluice_src.email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/hmac-email",
     "SqlAccessPolicy/allow-hr"
   ],
-  "fingerprint": "378322db32f486ea",
+  "fingerprint": "284bb5c19118d177",
   "masks": [
     "pg.hr.employees.email=hash"
   ],

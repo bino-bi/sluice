@@ -3,6 +3,7 @@
 package rewriter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,22 +14,27 @@ import (
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
-// applyExpandStar walks every SelectStmt in the parse tree and replaces
-// each SELECT * (or t.*) entry with explicit ColumnRef nodes derived
-// from schema.Cache. When the cache is not populated the star is left
-// intact unless a mask or filter applies to the table — in which case
-// we refuse with ErrSchemaMissing (the mask substitution pass needs
-// explicit references to do its work).
+// applyExpandStar replaces a SELECT * (or t.*) entry with explicit
+// ColumnRef nodes derived from schema.Cache when the decision has a
+// post-query mask. Those masks bind to result column positions, so the
+// outer select list is always expanded. A star in a nested SELECT is
+// expanded when its own FROM holds a table with a post-query mask: it
+// would hand the masked column to its parent under a name the guard walk
+// cannot follow. A table with a post-query mask must have a cache entry;
+// other tables are expanded when the cache knows them. Every other star
+// stays: DuckDB expands it over the table wrappers, which hold the masked
+// values.
 func (s *state) applyExpandStar(raw *pg.ParseResult) error {
-	if raw == nil || len(raw.Stmts) == 0 {
+	if raw == nil || len(raw.Stmts) == 0 || !s.hasPostQueryMasks() {
 		return nil
 	}
+	s.topSelect = raw.Stmts[0].GetStmt().GetSelectStmt()
 	// EXISTS returns no columns. `EXISTS (SELECT * ...)` becomes
 	// `EXISTS (SELECT 1 ...)`, so the star needs neither the schema cache
 	// nor a mask.
 	_ = walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
 		if sl, ok := m.Interface().(*pg.SubLink); ok && sl.SubLinkType == pg.SubLinkType_EXISTS_SUBLINK {
-			if sel := sl.Subselect.GetSelectStmt(); sel != nil && sel.Larg == nil && hasStarTarget(sel.TargetList) {
+			if sel := sl.Subselect.GetSelectStmt(); isLoneStarSelect(sel) {
 				one := &pg.Node{Node: &pg.Node_AConst{AConst: &pg.A_Const{Val: &pg.A_Const_Ival{Ival: &pg.Integer{Ival: 1}}}}}
 				sel.TargetList = []*pg.Node{{Node: &pg.Node_ResTarget{ResTarget: &pg.ResTarget{Val: one}}}}
 			}
@@ -44,6 +50,19 @@ func (s *state) applyExpandStar(raw *pg.ParseResult) error {
 		}
 	}
 	return nil
+}
+
+// isLoneStarSelect reports whether the select list of sel is one star and
+// nothing in sel depends on it. An item next to the star can change the
+// row count (unnest) or be read by its alias. ORDER BY, GROUP BY and
+// DISTINCT ON can name a select list position.
+func isLoneStarSelect(sel *pg.SelectStmt) bool {
+	if sel == nil || sel.Larg != nil || len(sel.TargetList) != 1 || !hasStarTarget(sel.TargetList) {
+		return false
+	}
+	// Plain SELECT DISTINCT holds one empty node.
+	distinctOn := len(sel.DistinctClause) > 0 && sel.DistinctClause[0].GetNode() != nil
+	return len(sel.SortClause) == 0 && len(sel.GroupClause) == 0 && !distinctOn
 }
 
 func (s *state) expandStarInNode(n *pg.Node) error {
@@ -87,9 +106,9 @@ func (s *state) expandStarInSelect(sel *pg.SelectStmt) error {
 			}
 		}
 	}
-	// A star left in a nested SELECT over a masked table would hand the
-	// raw column to the enclosing query under a name the mask pass cannot
-	// follow, so nested SELECTs are expanded wherever they sit.
+	// A star left in a nested SELECT over a post-masked table would hand
+	// the raw column to the enclosing query under a name the guard walk
+	// cannot follow, so nested SELECTs are visited wherever they sit.
 	for _, from := range sel.FromClause {
 		if err := eachNodeSubquery(from, s.expandStarInSelect); err != nil {
 			return err
@@ -121,22 +140,20 @@ func (s *state) expandStarInSelect(sel *pg.SelectStmt) error {
 	for _, f := range sel.FromClause {
 		entries = appendFromEntries(entries, f, aliases, s.defaultCatalog)
 	}
-
-	// Determine whether the query needs expansion at all. If no active
-	// row filter / column mask touches any of the FROM tables, leave
-	// the `*` alone — DuckDB will expand it at execution time.
-	if !s.fromNeedsExpansion(aliases) {
+	// DuckDB expands a star over the FROM items of its own SELECT only, so
+	// this one hands no post-masked column on.
+	if sel != s.topSelect && !s.fromHasPostMask(aliases) {
 		return nil
 	}
 	if s.schema == nil {
 		return fmt.Errorf("%w: schema cache not configured", ErrSchemaMissing)
 	}
-	// A star over `a RIGHT JOIN b USING (k)` returns k once, taken from
-	// whichever side has the row. Listing a.k and b.k instead would return
-	// NULL keys for unmatched rows.
-	if hasBareStar(sel.TargetList) && hasOuterMergedJoin(sel.FromClause) {
+	// A star over `a JOIN b USING (k)` returns k once, for an outer join
+	// from the side that has the row. Listing a.k and b.k instead would
+	// return it twice, with NULL keys for unmatched rows.
+	if hasBareStar(sel.TargetList) && hasMergedJoin(sel.FromClause) {
 		return pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(
-			"SELECT * over a RIGHT or FULL join with USING or NATURAL is not supported on a filtered or masked table, list the columns")
+			"SELECT * over a join with USING or NATURAL is not supported with post-query masks, list the columns")
 	}
 
 	newTargets := make([]*pg.Node, 0, len(sel.TargetList))
@@ -157,24 +174,14 @@ func (s *state) expandStarInSelect(sel *pg.SelectStmt) error {
 		}
 		if len(expanded) == 0 {
 			// A table has columns. An empty list means the schema cache is
-			// wrong, and keeping the star would skip the masks.
+			// wrong, and a star kept here would keep a post-query masked
+			// column out of the plan.
 			return fmt.Errorf("%w: no columns known for the star", ErrSchemaMissing)
 		}
 		newTargets = append(newTargets, expanded...)
 	}
 	sel.TargetList = newTargets
 	return nil
-}
-
-// fromNeedsExpansion reports whether any table in the FROM clause has an
-// active row filter or column mask on the current decision.
-func (s *state) fromNeedsExpansion(aliases aliasMap) bool {
-	for _, ref := range aliases {
-		if s.needsExpansion(ref.Catalog + "." + ref.Schema + "." + ref.Table) {
-			return true
-		}
-	}
-	return false
 }
 
 // hasStarTarget scans a TargetList for any ResTarget that is a bare `*`
@@ -225,7 +232,7 @@ func detectStar(rt *pg.ResTarget) (*pg.Node, string, bool) {
 // fromEntry is one FROM item as star expansion sees it. A table gets its
 // columns from the schema cache. Any other item (subquery, function) is
 // opaque: its columns are whatever it produces, and a subquery has
-// already been expanded and masked on its own.
+// already been expanded on its own.
 type fromEntry struct {
 	alias string // lower case, usable as a qualifier
 	table bool
@@ -300,19 +307,26 @@ func hasBareStar(targets []*pg.Node) bool {
 	return false
 }
 
-// hasOuterMergedJoin reports whether a FROM list holds a RIGHT or FULL
-// join that merges columns (USING or NATURAL).
-func hasOuterMergedJoin(from []*pg.Node) bool {
+// hasMergedJoin reports whether a FROM list holds a join that merges
+// columns (USING or NATURAL).
+func hasMergedJoin(from []*pg.Node) bool {
 	for _, n := range from {
 		j := n.GetJoinExpr()
 		if j == nil {
 			continue
 		}
-		outer := j.Jointype == pg.JoinType_JOIN_RIGHT || j.Jointype == pg.JoinType_JOIN_FULL
-		if outer && (j.IsNatural || len(j.UsingClause) > 0) {
+		if j.IsNatural || len(j.UsingClause) > 0 || hasMergedJoin([]*pg.Node{j.Larg, j.Rarg}) {
 			return true
 		}
-		if hasOuterMergedJoin([]*pg.Node{j.Larg, j.Rarg}) {
+	}
+	return false
+}
+
+// fromHasPostMask reports whether one of the FROM tables in aliases has a
+// post-query mask.
+func (s *state) fromHasPostMask(aliases aliasMap) bool {
+	for _, ref := range aliases {
+		if s.tableHasPostMask(ref.Catalog + "." + ref.Schema + "." + ref.Table) {
 			return true
 		}
 	}
@@ -320,11 +334,10 @@ func hasOuterMergedJoin(from []*pg.Node) bool {
 }
 
 // expandOneStar returns the targets that replace one `*` or `t.*`. A
-// table with a row filter or a mask becomes its column list. Every other
-// item keeps a star of its own (`q.*`): a subquery is already expanded and
-// masked, a function or an unprotected table has nothing to mask, and a
-// CTE reference is not in the schema cache at all. An unqualified star
-// covers every FROM item, in FROM order.
+// table becomes its column list. Every other item keeps a star of its own
+// (`q.*`): a subquery is already expanded, a function has nothing to mask,
+// and a CTE reference is not in the schema cache at all. An unqualified
+// star covers every FROM item, in FROM order.
 func (s *state) expandOneStar(aliases aliasMap, entries []fromEntry, qualifier string) ([]*pg.Node, error) {
 	if qualifier != "" {
 		qualifier = foldName(qualifier)
@@ -350,15 +363,18 @@ func (s *state) expandOneStar(aliases aliasMap, entries []fromEntry, qualifier s
 // starTargets returns the targets one FROM item contributes to a star.
 func (s *state) starTargets(aliases aliasMap, e *fromEntry) ([]*pg.Node, error) {
 	if e.table {
-		if ref := aliases[e.alias]; s.needsExpansion(ref.Catalog + "." + ref.Schema + "." + ref.Table) {
+		if ref := aliases[e.alias]; s.tableHasPostMask(ref.Catalog + "." + ref.Schema + "." + ref.Table) {
 			return s.tableColumns(aliases, e.alias)
 		}
 		// Post-query masks bind to result column positions, so no star may
-		// stay. A CTE reference is not in the schema cache and keeps it.
-		if s.hasPostQueryMasks() {
-			if cols, err := s.tableColumns(aliases, e.alias); err == nil && len(cols) > 0 {
-				return cols, nil
-			}
+		// stay. A CTE reference is not in the schema cache and keeps it. A
+		// load that failed is not such a miss and keeps its error.
+		cols, err := s.tableColumns(aliases, e.alias)
+		switch {
+		case err == nil && len(cols) > 0:
+			return cols, nil
+		case err != nil && !errors.Is(err, schema.ErrUnknownTable) && !errors.Is(err, schema.ErrUnknownCatalog):
+			return nil, err
 		}
 		return []*pg.Node{newResTargetStar(e.alias)}, nil
 	}
@@ -375,22 +391,13 @@ func (s *state) starTargets(aliases aliasMap, e *fromEntry) ([]*pg.Node, error) 
 	return []*pg.Node{newResTargetStar(e.alias)}, nil
 }
 
-// needsExpansion reports whether a table has a row filter or a mask.
-func (s *state) needsExpansion(tableKey string) bool {
-	if _, ok := s.decision.RowFilters[tableKey]; ok {
-		return true
-	}
-	return s.tableHasMask(tableKey)
-}
-
 // tableColumns returns one `alias.column` target per column of the table
 // registered under alias.
 func (s *state) tableColumns(aliases aliasMap, alias string) ([]*pg.Node, error) {
 	ref := aliases[alias]
-	key := schema.Key{Catalog: ref.Catalog, Schema: ref.Schema, Table: ref.Table}
-	entry, err := s.schemaEntry(key)
+	entry, err := s.tableEntry(ref.Catalog + "." + ref.Schema + "." + ref.Table)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrSchemaMissing, key, err)
+		return nil, err
 	}
 	out := make([]*pg.Node, 0, len(entry.Columns))
 	for _, col := range entry.Columns {

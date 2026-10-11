@@ -19,9 +19,9 @@ func CheckFunctions(s QueryShape) string {
 	}
 	for _, f := range s.Functions {
 		// A qualifier could resolve to a macro stored in an attached
-		// database, and DuckDB reads col.f() as f(col), which the mask pass
-		// does not see as a use of col. pg_query itself writes LIKE ...
-		// ESCAPE and SIMILAR TO as pg_catalog calls.
+		// database, and DuckDB reads col.f() as f(col), which the
+		// post-query mask checks do not see as a use of col. pg_query
+		// itself writes LIKE ... ESCAPE and SIMILAR TO as pg_catalog calls.
 		if !qualifierAllowed(f) {
 			return fmt.Sprintf("qualified function name %q is not allowed, write f(x) instead of schema.f(x) or x.f()", clip(f.Qualifier+"."+f.Name))
 		}
@@ -29,8 +29,9 @@ func CheckFunctions(s QueryShape) string {
 			if _, ok := tableFunctions[f.Name]; !ok {
 				return fmt.Sprintf("table function %q is not allowed", f.Name)
 			}
-			// The mask and row-filter passes do not walk FROM function
-			// arguments, so a column or subquery there would be read raw.
+			// The post-query mask checks do not walk FROM function
+			// arguments, so a post-masked column there, also in a
+			// subquery, would be read raw.
 			if f.DynamicArgs {
 				return fmt.Sprintf("arguments of table function %q must not contain columns or subqueries", f.Name)
 			}

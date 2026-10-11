@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM pg.hr.employees WHERE CASE WHEN email IS NULL THEN NULL ELSE concat(substr(email::varchar, 1, $1), repeat($2, GREATEST((length(email::varchar) - $1) - $3, 0)), substr(email::varchar, GREATEST((length(email::varchar) - $3) + 1, $1 + 1))) END = 'a@b.c'",
+  "sql": "SELECT id FROM (SELECT sluice_src.id, sluice_src.name, CASE WHEN sluice_src.email IS NULL THEN NULL ELSE concat(substr(sluice_src.email::varchar, 1, $1), repeat($2, GREATEST((length(sluice_src.email::varchar) - $1) - $3, 0)), substr(sluice_src.email::varchar, GREATEST((length(sluice_src.email::varchar) - $3) + 1, $1 + 1))) END AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees WHERE email = 'a@b.c'",
   "changed": true,
   "params": [
     1,
@@ -11,7 +11,7 @@
     "ColumnMaskPolicy/mask-email",
     "SqlAccessPolicy/allow-hr"
   ],
-  "fingerprint": "42990b6d08ac18c6",
+  "fingerprint": "928f27f039a87d23",
   "masks": [
     "pg.hr.employees.email=partial"
   ]

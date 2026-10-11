@@ -5,6 +5,7 @@ package rewriter
 import (
 	"cmp"
 	"fmt"
+	"strings"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -14,14 +15,21 @@ import (
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
-// applyInjectFilter walks every SelectStmt's FROM tree and replaces each
-// RangeVar whose table key has a compiled row filter with a
-// RangeSubselect wrapping `SELECT * FROM <original> WHERE <pred>`. The
-// original alias is preserved so outer column references keep resolving.
-// Every SelectStmt means every one: CTE bodies, FROM subqueries,
-// set-operation arms and subqueries inside expressions.
-func (s *state) applyInjectFilter(raw *pg.ParseResult) error {
-	if raw == nil || len(s.decision.RowFilters) == 0 {
+// wrapperSource is the alias of the table inside every wrapper. Every
+// column sluice writes into a wrapper is qualified with it. DuckDB binds a
+// qualified name to an outer FROM item or struct column of that name too,
+// so the query may not use it.
+const wrapperSource = "sluice_src"
+
+// applyWrapTables replaces each RangeVar of a table with a row filter or a
+// column mask with a wrapper, `(SELECT ... FROM t AS sluice_src WHERE
+// <pred>) alias`. The alias the query wrote moves to the wrapper. A masked
+// table's wrapper lists the cached columns with the SQL masks applied, so
+// the rest of the statement only sees masked values. A table with only a
+// filter keeps SELECT *. Every SelectStmt is walked: CTE bodies, FROM
+// subqueries, set-operation arms and subqueries inside expressions.
+func (s *state) applyWrapTables(raw *pg.ParseResult) error {
+	if raw == nil || len(s.decision.RowFilters) == 0 && len(s.decision.ColumnMasks) == 0 {
 		return nil
 	}
 	for _, stmt := range raw.Stmts {
@@ -35,13 +43,59 @@ func (s *state) applyInjectFilter(raw *pg.ParseResult) error {
 	return s.checkWrapperQualifiers(raw)
 }
 
+// checkReservedName refuses the wrapper's inner alias anywhere in the
+// statement, as a name or inside a literal that could become one, such as
+// a JSON key.
+func (s *state) checkReservedName(raw *pg.ParseResult) error {
+	if len(s.decision.RowFilters) == 0 && len(s.decision.ColumnMasks) == 0 {
+		return nil
+	}
+	return walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		found := false
+		m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			if fd.Kind() == protoreflect.StringKind && !fd.IsList() {
+				found = strings.Contains(foldName(v.String()), wrapperSource)
+			}
+			return !found
+		})
+		if found {
+			return false, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(
+				"the name " + wrapperSource + " is reserved, choose another name")
+		}
+		return true, nil
+	})
+}
+
+// verifyWrapped refuses a statement that still reads a filtered or masked
+// table directly. The wrap walk must reach every table; a form it misses
+// fails here instead of being read raw.
+func (s *state) verifyWrapped(raw *pg.ParseResult) error {
+	if len(s.decision.RowFilters) == 0 && len(s.decision.ColumnMasks) == 0 {
+		return nil
+	}
+	return walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		rv, ok := m.Interface().(*pg.RangeVar)
+		if !ok {
+			return true, nil
+		}
+		if _, inner := s.wrapped[rv]; inner {
+			return false, nil
+		}
+		key := tableKeyOf(rv, s.defaultCatalog)
+		if _, filtered := s.decision.RowFilters[key]; filtered || s.tableHasMask(key) {
+			return false, fmt.Errorf("%w: table %s read without its policy wrapper", ErrUnsupportedSyntax, key)
+		}
+		return false, nil
+	})
+}
+
 // checkWrapperQualifiers refuses a column qualified with the schema or
-// catalog of a table the filter wrapped under its own name, such as
+// catalog of a table sluice wrapped under its own name, such as
 // main.t.id. The wrapper is named t alone, so DuckDB cannot resolve the
 // column. Writing t.id instead could bind to another t in a nested SELECT.
 func (s *state) checkWrapperQualifiers(raw *pg.ParseResult) error {
 	var named []*pg.RangeVar
-	for _, rv := range s.wrappers {
+	for _, rv := range s.wrapped {
 		if rv.Alias == nil || rv.Alias.Aliasname == "" {
 			named = append(named, rv)
 		}
@@ -163,7 +217,7 @@ func (s *state) injectInFromItem(n *pg.Node) (*pg.Node, error) {
 	}
 	switch v := n.Node.(type) {
 	case *pg.Node_RangeVar:
-		return s.maybeWrapRangeVar(v.RangeVar)
+		return s.wrapRangeVar(v.RangeVar)
 	case *pg.Node_JoinExpr:
 		if v.JoinExpr == nil {
 			return n, nil
@@ -197,17 +251,16 @@ func (s *state) injectInFromItem(n *pg.Node) (*pg.Node, error) {
 	return n, nil
 }
 
-// maybeWrapRangeVar checks whether rv has an active row filter. If so,
-// it returns a RangeSubselect wrapping `SELECT * FROM <rv> WHERE <pred>`
-// with the original alias preserved. Otherwise the original RangeVar is
-// returned verbatim.
-func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
+// wrapRangeVar returns the wrapper of rv when its table has a row filter
+// or a column mask. Otherwise rv is returned as it is.
+func (s *state) wrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 	if rv == nil {
 		return nil, nil
 	}
 	key := tableKeyOf(rv, s.defaultCatalog)
-	filter, ok := s.decision.RowFilters[key]
-	if !ok {
+	filter, filtered := s.decision.RowFilters[key]
+	masked := s.tableHasMask(key)
+	if !filtered && !masked {
 		return &pg.Node{Node: &pg.Node_RangeVar{RangeVar: rv}}, nil
 	}
 
@@ -216,8 +269,8 @@ func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 	alias := rv.Alias
 	if alias == nil || alias.Aliasname == "" {
 		// The deparse writes a lower-case name bare, and DuckDB reads some
-		// names as a keyword: semi changes the join type and drops the name,
-		// so the mask pass can no longer follow the wrapper.
+		// names as a keyword: semi changes the join type and drops the
+		// wrapper's name.
 		if parser.IsUnsafeBareAlias(rv.Relname) {
 			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
 				WithMessage(fmt.Sprintf("give table %q an alias", rv.Relname))
@@ -225,42 +278,73 @@ func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 		alias = &pg.Alias{Aliasname: rv.Relname}
 	}
 
-	// Build: SELECT * FROM <original> WHERE <pred>
+	src := &pg.RangeVar{
+		Catalogname: rv.Catalogname,
+		Schemaname:  rv.Schemaname,
+		Relname:     rv.Relname,
+		Inh:         rv.Inh,
+		Location:    rv.Location,
+		Alias:       &pg.Alias{Aliasname: wrapperSource},
+	}
 	inner := &pg.SelectStmt{
 		TargetList: []*pg.Node{selectStarTarget()},
-		FromClause: []*pg.Node{{Node: &pg.Node_RangeVar{RangeVar: rv}}},
+		FromClause: []*pg.Node{{Node: &pg.Node_RangeVar{RangeVar: src}}},
 	}
-
-	whereExpr, err := s.renderPredicate(filter.Predicate)
-	if err != nil {
-		return nil, fmt.Errorf("row filter %s: %w", key, err)
-	}
-	if whereExpr != nil {
+	// The filter params come first, then the mask params.
+	if filtered {
+		whereExpr, err := s.renderPredicate(filter.Predicate)
+		if err != nil {
+			return nil, fmt.Errorf("row filter %s: %w", key, err)
+		}
 		inner.WhereClause = whereExpr
+		s.rewrites = append(s.rewrites, "row-filter-wrapped:"+key)
 	}
-
-	// Strip the alias from the inner RangeVar so the outer RangeSubselect
-	// owns it — avoids "alias specified more than once" at deparse time.
-	if v, ok := inner.FromClause[0].Node.(*pg.Node_RangeVar); ok && v.RangeVar != nil {
-		inner.FromClause[0] = &pg.Node{Node: &pg.Node_RangeVar{RangeVar: &pg.RangeVar{
-			Catalogname: v.RangeVar.Catalogname,
-			Schemaname:  v.RangeVar.Schemaname,
-			Relname:     v.RangeVar.Relname,
-			Inh:         v.RangeVar.Inh,
-			Location:    v.RangeVar.Location,
-		}}}
+	if masked {
+		targets, err := s.projectColumns(key)
+		if err != nil {
+			return nil, err
+		}
+		inner.TargetList = targets
 	}
 
 	wrapped := &pg.RangeSubselect{
 		Subquery: &pg.Node{Node: &pg.Node_SelectStmt{SelectStmt: inner}},
 		Alias:    alias,
 	}
-	s.rewrites = append(s.rewrites, "row-filter-wrapped:"+key)
-	if s.wrappers == nil {
-		s.wrappers = make(map[*pg.RangeSubselect]*pg.RangeVar)
+	if s.wrapped == nil {
+		s.wrapped = make(map[*pg.RangeVar]*pg.RangeVar)
 	}
-	s.wrappers[wrapped] = rv
+	s.wrapped[src] = rv
 	return &pg.Node{Node: &pg.Node_RangeSubselect{RangeSubselect: wrapped}}, nil
+}
+
+// projectColumns lists the cached columns of a masked table in table
+// order. A column the cache does not know is not read at all, so a column
+// added at the source later cannot pass unmasked. A SQL mask is applied
+// here and nowhere else. A post-query masked column passes through raw.
+func (s *state) projectColumns(key string) ([]*pg.Node, error) {
+	entry, err := s.tableEntry(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(entry.Columns) == 0 {
+		return nil, fmt.Errorf("%w: no columns known for %s", ErrSchemaMissing, key)
+	}
+	out := make([]*pg.Node, 0, len(entry.Columns))
+	for _, col := range entry.Columns {
+		ref := columnRefFromString(wrapperSource, col.Name)
+		rt := &pg.ResTarget{Val: ref}
+		if m, ok := s.maskForResolvedColumn(key, col.Name); ok && !s.isPostQueryMask(m) {
+			expr, err := s.buildMaskExpr(m, key, col.Name, ref)
+			if err != nil {
+				return nil, fmt.Errorf("column %s.%s: %w", key, col.Name, err)
+			}
+			rt = &pg.ResTarget{Name: col.Name, Val: expr}
+			s.rewrites = append(s.rewrites, "column-mask:"+key+"."+col.Name)
+		}
+		out = append(out, &pg.Node{Node: &pg.Node_ResTarget{ResTarget: rt}})
+	}
+	return out, nil
 }
 
 // selectStarTarget builds a ResTarget whose Val is a lone `*`.
@@ -320,7 +404,7 @@ func (s *state) renderBool(children []*policy.CompiledPredicate, op pg.BoolExprT
 // values are emitted as ParamRef placeholders; s.params retains the
 // resolved Go values in positional order.
 func (s *state) renderLeaf(p *policy.CompiledPredicate) (*pg.Node, error) {
-	col := columnRefFromString(p.Column)
+	col := columnRefFromString(wrapperSource, p.Column)
 	switch string(p.Op) {
 	case "IsNull", "IsNotNull":
 		return s.renderNullCheck(col, string(p.Op)), nil
@@ -452,12 +536,11 @@ func betweenExpr(col, lo, hi *pg.Node, notBetween bool) *pg.Node {
 	}}}
 }
 
-// columnRefFromString returns a ColumnRef with one segment (unqualified).
-// Callers that need a qualified reference (e.g. t.col) should split on "."
-// before calling.
-func columnRefFromString(name string) *pg.Node {
+// columnRefFromString returns the ColumnRef qualifier.name. name is one
+// identifier, also when it holds a dot.
+func columnRefFromString(qualifier, name string) *pg.Node {
 	return &pg.Node{Node: &pg.Node_ColumnRef{ColumnRef: &pg.ColumnRef{
-		Fields: []*pg.Node{pg.MakeStrNode(name)},
+		Fields: []*pg.Node{pg.MakeStrNode(qualifier), pg.MakeStrNode(name)},
 	}}}
 }
 

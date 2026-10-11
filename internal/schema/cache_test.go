@@ -289,3 +289,175 @@ func TestNewPanicsWithoutLoader(t *testing.T) {
 	}()
 	_ = schema.New(schema.Options{})
 }
+
+// gatedLoader blocks every Load until release is closed. With firstEmpty
+// the first Load returns a catalog without tables.
+type gatedLoader struct {
+	release    chan struct{}
+	calls      atomic.Int32
+	sch        pkgds.Schema
+	firstEmpty bool
+}
+
+func (g *gatedLoader) Load(context.Context, string) (pkgds.Schema, error) {
+	n := g.calls.Add(1)
+	<-g.release
+	if g.firstEmpty && n == 1 {
+		return pkgds.Schema{}, nil
+	}
+	return g.sch, nil
+}
+
+// A lookup whose key differs from the cached one only in case, or names a
+// table that does not exist, misses also after a load. Requests that
+// waited for that load must not each run their own.
+func TestCacheConcurrentMissesOfUncachedKeyDedupe(t *testing.T) {
+	loader := &gatedLoader{release: make(chan struct{}), sch: pkgds.Schema{Schemas: []pkgds.SchemaNS{{
+		Name:   "main",
+		Tables: []pkgds.Table{{Name: "Customers", Columns: []pkgds.Column{{Name: "id"}}}},
+	}}}}
+	c := schema.New(schema.Options{Loader: loader})
+
+	const n = 20
+	var started, done sync.WaitGroup
+	for range n {
+		started.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			started.Done()
+			_, err := c.Get(context.Background(), schema.Key{Catalog: "shop", Schema: "main", Table: "customers"})
+			if !errors.Is(err, schema.ErrUnknownTable) {
+				t.Errorf("err = %v, want ErrUnknownTable", err)
+			}
+		}()
+	}
+	started.Wait()
+	// Let every goroutine reach the catalog lock before the first load ends.
+	time.Sleep(50 * time.Millisecond)
+	close(loader.release)
+	done.Wait()
+
+	if got := loader.calls.Load(); got != 1 {
+		t.Errorf("Load called %d times for %d concurrent misses, want 1", got, n)
+	}
+	if len(c.All()) != 1 {
+		t.Errorf("All() = %d entries, want the loaded table", len(c.All()))
+	}
+}
+
+// A request that waited for a load must not skip its own when that load
+// left the catalog without entries, as InvalidateAll does after a load.
+// The first load here returns no tables, so the waiter must load again.
+func TestCacheWaiterReloadsEmptyCatalog(t *testing.T) {
+	loader := &gatedLoader{release: make(chan struct{}), firstEmpty: true, sch: pkgds.Schema{Schemas: []pkgds.SchemaNS{{
+		Name:   "main",
+		Tables: []pkgds.Table{{Name: "customers", Columns: []pkgds.Column{{Name: "id"}}}},
+	}}}}
+	c := schema.New(schema.Options{Loader: loader})
+
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := c.Get(context.Background(), schema.Key{Catalog: "shop", Schema: "main", Table: "customers"})
+			errs <- err
+		}()
+	}
+	// Let both goroutines reach the catalog lock before the first load ends.
+	time.Sleep(50 * time.Millisecond)
+	close(loader.release)
+
+	var found, unknown int
+	for range 2 {
+		switch err := <-errs; {
+		case err == nil:
+			found++
+		case errors.Is(err, schema.ErrUnknownTable):
+			unknown++
+		default:
+			t.Errorf("Get: %v", err)
+		}
+	}
+	if found != 1 || unknown != 1 {
+		t.Errorf("%d lookups found the table and %d did not, want 1 and 1", found, unknown)
+	}
+	if got := loader.calls.Load(); got != 2 {
+		t.Errorf("Load called %d times, want 2", got)
+	}
+}
+
+// A miss after InvalidateAll loads the catalog again.
+func TestCacheMissAfterInvalidateAllReloads(t *testing.T) {
+	loader := newFakeLoader()
+	loader.set("pg", sampleSchema("pg"))
+	c := schema.New(schema.Options{Loader: loader})
+	ctx := context.Background()
+	key := schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	c.InvalidateAll()
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatalf("Get after InvalidateAll: %v", err)
+	}
+	if n := loader.callCount("pg"); n != 2 {
+		t.Errorf("Load called %d times, want 2", n)
+	}
+}
+
+// A reload must not take a table that still exists out of the cache, not
+// even for a moment: a reader would see a masked table as unknown.
+func TestCacheReloadKeepsEntriesVisible(t *testing.T) {
+	loader := newFakeLoader()
+	loader.set("pg", sampleSchema("pg"))
+	c := schema.New(schema.Options{Loader: loader})
+	ctx := context.Background()
+	if _, err := c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var missing atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if len(c.All()) != 2 {
+				missing.Add(1)
+			}
+		}
+	}()
+	// Every miss of an unknown table reloads the catalog.
+	for range 2000 {
+		_, _ = c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "ghosts"})
+	}
+	close(stop)
+	wg.Wait()
+	if n := missing.Load(); n != 0 {
+		t.Errorf("All() lost a table during a reload %d times", n)
+	}
+}
+
+// A table dropped at the source leaves the cache on the next load.
+func TestCacheReloadDropsRemovedTable(t *testing.T) {
+	loader := newFakeLoader()
+	loader.set("pg", sampleSchema("pg"))
+	c := schema.New(schema.Options{Loader: loader})
+	ctx := context.Background()
+	if _, err := c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}); err != nil {
+		t.Fatal(err)
+	}
+	sch := sampleSchema("pg")
+	sch.Schemas[0].Tables = sch.Schemas[0].Tables[:1] // orders only
+	loader.set("pg", sch)
+	_, _ = c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "ghosts"})
+	if got := c.All(); len(got) != 1 || got[0].Key.Table != "orders" {
+		t.Errorf("All() = %v, want orders only", got)
+	}
+}

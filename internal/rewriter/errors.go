@@ -2,7 +2,13 @@
 
 package rewriter
 
-import "errors"
+import (
+	"context"
+	"errors"
+
+	"github.com/bino-bi/sluice/internal/schema"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+)
 
 // Sentinel errors returned from Rewrite.
 var (
@@ -20,9 +26,10 @@ var (
 	// ErrDeparseFailed wraps a backend deparse failure.
 	ErrDeparseFailed = errors.New("rewriter: deparse failed")
 
-	// ErrSchemaMissing indicates a SELECT * where the schema cache has no
-	// columns for the target table.
-	ErrSchemaMissing = errors.New("rewriter: schema not available for expansion")
+	// ErrSchemaMissing indicates the schema cache has no columns for a
+	// table the rewrite must list: a masked table, or a star over a table
+	// with a post-query mask.
+	ErrSchemaMissing = errors.New("rewriter: table columns not in the schema cache")
 
 	// ErrMaskUnsupported marks a mask type without a registered provider.
 	ErrMaskUnsupported = errors.New("rewriter: mask provider not enabled")
@@ -39,3 +46,33 @@ var (
 	// backend — the MVP rewriter is pg_query-only.
 	ErrForeignAST = errors.New("rewriter: AST is not from pg_query backend")
 )
+
+// ErrorCode returns the client error code of an error from Rewrite: the
+// code of an APIError in the chain, else the code of the sentinel.
+// ErrSchemaMissing also wraps a schema load that failed or was canceled.
+// Those keep their own codes, so only a table that a loaded catalog does
+// not have is a rewrite failure. Any other error is CodeInternal.
+func ErrorCode(err error) pkgerr.Code {
+	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeInternal {
+		return ae.Code
+	}
+	switch {
+	case errors.Is(err, ErrMaskPostQueryContext):
+		return pkgerr.CodeMaskContext
+	case errors.Is(err, ErrUnsupportedSyntax):
+		return pkgerr.CodeUnsupportedSyntax
+	case errors.Is(err, ErrDeparseFailed):
+		return pkgerr.CodeRewriteFailed
+	case errors.Is(err, ErrStatementRejected):
+		return pkgerr.CodeACLRejected
+	case errors.Is(err, context.Canceled):
+		return pkgerr.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return pkgerr.CodeTimeout
+	case errors.Is(err, schema.ErrUnknownCatalog), errors.Is(err, schema.ErrLoadFailed):
+		return pkgerr.CodeDataSourceUnavailable
+	case errors.Is(err, ErrSchemaMissing):
+		return pkgerr.CodeRewriteFailed
+	}
+	return pkgerr.CodeInternal
+}

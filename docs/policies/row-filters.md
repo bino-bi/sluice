@@ -3,17 +3,17 @@
 # Row filters
 
 `RowFilterPolicy` narrows which rows a subject can see. At rewrite time the gateway wraps every
-matched table in a subquery carrying the filter as a **parameterized WHERE clause** — values bind
+matched table in a subquery carrying the filter as a **parameterized WHERE clause**. Values bind
 as `$N` positional parameters and never appear in the SQL text:
 
 ```sql
 -- client sends
 SELECT id FROM shop.main.orders
 -- sluice executes ($1 = "t-42")
-SELECT id FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) orders
+SELECT id FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $1) orders
 ```
 
-The wrap happens on the parsed AST, after `SELECT *` expansion, and covers every occurrence of
+The wrap happens on the parsed AST and covers every occurrence of
 the table in the statement: joins, FROM subqueries, CTE bodies, set-operation arms, and
 subqueries inside expressions (select list, `WHERE`, `HAVING`, `JOIN ... ON`, `ORDER BY`,
 `LIMIT`, `VALUES`). Table names are matched without regard to letter case, also when quoted. Write tables of an
@@ -24,6 +24,12 @@ The original alias is preserved so outer column references keep resolving.
 A filtered table without an alias gets a wrapper named after the table. When that lower-case
 name is one DuckDB reads as a keyword (`semi`, `anti`, `asof`, `positional`, `by`, `qualify`,
 ...), the query is refused with `ERR_UNSUPPORTED_SYNTAX`. Give the table an alias.
+Inside the subquery the table is named `sluice_src`, and the filter columns are qualified with
+that name. The name is reserved: a statement that contains `sluice_src` is refused with
+`ERR_UNSUPPORTED_SYNTAX`. Make sure each filter column exists in every table the filter matches,
+also under a wildcard table pattern: Sluice does not check it.
+When the table also has a column mask, the same subquery lists the table's columns and applies
+the masks (see [Column masks](column-masks.md)).
 
 A filter carries exactly one of two bodies: a structured predicate tree (`filter.predicate`) or a
 CEL expression (`filter.expression`). Both compile to the same parameterized form.
@@ -170,8 +176,9 @@ is not checked.
 | A quoted name that only DuckDB reads as a keyword, as a CTE name, column list entry, column reference or window name, and a PostgreSQL keyword as a named argument | `WITH "at" AS (...)`, `struct_pack("default" := id)` | Another name |
 | A bare alias that DuckDB reads as a keyword (`ERR_SYNTAX`) | `SELECT 1 at` | `SELECT 1 AS "at"` |
 | `U&'...'` strings and `\u` escapes in `E'...'` strings (`ERR_SYNTAX`) | `E'\u0041'` | The character itself, or `E'\x41'` |
-| A column qualified with the schema or catalog of a filtered table that has no alias | `SELECT main.orders.id FROM main.orders` | `orders.id`, or give the table an alias |
-| A filtered table without an alias whose name DuckDB reads as a keyword (see above) | `SELECT count(*) FROM main."by"` | Give the table an alias |
+| A column qualified with the schema or catalog of a filtered or masked table that has no alias | `SELECT main.orders.id FROM main.orders` | `orders.id`, or give the table an alias |
+| A filtered or masked table without an alias whose name DuckDB reads as a keyword (see above) | `SELECT count(*) FROM main."by"` | Give the table an alias |
+| The name `sluice_src`, also inside a longer name or a string | `SELECT id AS sluice_src FROM shop.main.orders` | Another name |
 
 Some of these forms give the same rows in both readings (`EXTRACT(days FROM d)`, `ARRAY[[1, 2]]`),
 but DuckDB builds another tree for them, so they are refused too.

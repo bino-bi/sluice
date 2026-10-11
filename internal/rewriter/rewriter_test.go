@@ -13,7 +13,9 @@ import (
 	"github.com/bino-bi/sluice/internal/pgquery"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 	"github.com/bino-bi/sluice/pkg/mask"
 )
 
@@ -26,7 +28,40 @@ func buildRewriter(t *testing.T) *rewriter.Rewriter {
 	return rewriter.New(rewriter.Options{
 		Parser:         p,
 		DefaultCatalog: "pg",
+		Schema:         testSchema(),
 	})
+}
+
+// testSchema lists the tables the buildRewriter tests read. A masked
+// table must have an entry.
+func testSchema() schema.Cache {
+	return staticSchema(map[string][]string{
+		"pg.public.orders":                  {"id", "customer_id", "total", "tenant_id"},
+		"pg.public.customers":               {"id", "name", "email", "tenant_id"},
+		"pg.public.users":                   {"id", "ssn_last4"},
+		"pg.public.secrets":                 {"id", "token"},
+		"pg.public.customer_orders_history": {"id", "customer_id"},
+		"pg.hr.employees":                   {"id", "ssn", "email"},
+		"pg.hr.emp":                         {"id", "ssn"},
+		"pg.hr.other":                       {"id", "ssn"},
+		"pg.hr.badge":                       {"id"},
+		"pg.a.t":                            {"c"},
+	})
+}
+
+// staticSchema maps catalog.schema.table keys to their columns in table
+// order.
+func staticSchema(tables map[string][]string) schema.Cache {
+	var entries []*schema.Entry
+	for key, cols := range tables {
+		parts := strings.Split(key, ".")
+		e := &schema.Entry{Key: schema.Key{Catalog: parts[0], Schema: parts[1], Table: parts[2]}}
+		for _, c := range cols {
+			e.Columns = append(e.Columns, pkgds.Column{Name: c})
+		}
+		entries = append(entries, e)
+	}
+	return schema.NewStatic(entries)
 }
 
 func evaluate(t *testing.T, sql string, user *identity.UserCtx, policies ...apitypes.Object) (*policy.Decision, parser.AST) {

@@ -45,8 +45,7 @@ import (
 // Corpus lines are "<outcome> <sql>". The outcome is one of:
 //   - same: served, and both modes return the expected rows;
 //   - rawfails: DuckDB refuses the raw statement;
-//   - an error code: the gateway refuses the statement with it;
-//   - knownbug-commit3: a known bug, reported as skipped.
+//   - an error code: the gateway refuses the statement with it.
 //
 // A served statement whose rows differ from the expected rows fails the
 // test whatever its outcome says.
@@ -58,11 +57,6 @@ const (
 	diffPostMask   = "#PM#"
 	diffConstMaskN = 2
 )
-
-// knownBugCommit3 tags a line commit 3 fixes: a constant mask that is a
-// whole ORDER BY, GROUP BY or DISTINCT ON key is inlined as a literal.
-// DuckDB reads an integer there as a column position and refuses a string.
-const knownBugCommit3 = "knownbug-commit3"
 
 // diffSeedSQL creates the tables with the 6 rows of tenant k. Secrets are
 // set per database by diffOracleSQL and diffFullSQL.
@@ -88,6 +82,7 @@ CREATE TABLE u AS SELECT id, b AS a, a AS b, upper(s) AS s, d + 7 AS d, ts, tz, 
 CREATE TABLE v AS SELECT id, a, s, d, flag, tenant, 0 AS secret_n FROM t;
 CREATE TABLE "semi" AS SELECT id, a, tenant FROM t;
 CREATE TABLE "by" AS SELECT id, a, tenant FROM t;
+CREATE TABLE kw AS SELECT id, tenant, secret AS "current_date" FROM t;
 `
 
 // diffOracleSQL gives every masked column the mask output.
@@ -95,6 +90,7 @@ var diffOracleSQL = fmt.Sprintf(`
 UPDATE t SET secret = '%s';
 UPDATE u SET secret = '%s';
 UPDATE v SET secret_n = %d;
+UPDATE kw SET "current_date" = '%[2]s';
 `, diffConstMask, diffPostMask, diffConstMaskN)
 
 // diffFullSQL sets the real secrets and adds 3 rows of tenant z to every
@@ -103,15 +99,17 @@ const diffFullSQL = `
 UPDATE t SET secret = CASE WHEN id = 3 THEN NULL ELSE 's' || id END;
 UPDATE u SET secret = 'u' || id;
 UPDATE v SET secret_n = CASE WHEN id = 4 THEN NULL ELSE 10 + id END;
+UPDATE kw SET "current_date" = 'c' || id;
 INSERT INTO t SELECT id + 6, a, b, s, d, ts, tz, iv, j, l, st, flag, n, f, bl, 'z', 'zs' || id FROM t WHERE id IN (1, 2, 5);
 INSERT INTO u SELECT id + 6, a, b, s, d, ts, tz, iv, j, l, st, flag, n, f, bl, 'z', 'zu' || id FROM u WHERE id IN (1, 2, 5);
 INSERT INTO v SELECT id + 6, a, s, d, flag, 'z', 20 + id FROM v WHERE id IN (1, 2, 5);
 INSERT INTO "semi" SELECT id + 6, a, 'z' FROM "semi" WHERE id IN (1, 2, 5);
 INSERT INTO "by" SELECT id + 6, a, 'z' FROM "by" WHERE id IN (1, 2, 5);
+INSERT INTO kw SELECT id + 6, 'z', 'zc' || id FROM kw WHERE id IN (1, 2, 5);
 `
 
 // diffTables are the tables of the seed, all under the tenant filter.
-var diffTables = []string{"t", "u", "v", "semi", "by"}
+var diffTables = []string{"t", "u", "v", "semi", "by", "kw"}
 
 type diffWorld struct {
 	oracle, full *executor.Executor
@@ -211,6 +209,7 @@ func diffEngine(t *testing.T) *policy.Engine {
 		maskPolicy("mask-t-secret", "t", []string{"secret"},
 			apitypes.MaskSpec{Type: apitypes.MaskConstant, Args: apitypes.MaskArgs{Value: diffConstMask}}),
 		fpeMask("u", "secret"),
+		fpeMask("kw", "current_date"),
 		maskPolicy("mask-v-secret-n", "v", []string{"secret_n"},
 			apitypes.MaskSpec{Type: apitypes.MaskConstant, Args: apitypes.MaskArgs{Value: diffConstMaskN}}),
 	}
@@ -259,7 +258,7 @@ func readCorpus(t *testing.T, path string) []corpusLine {
 
 func validOutcome(s string) bool {
 	switch s {
-	case "same", "rawfails", knownBugCommit3:
+	case "same", "rawfails":
 		return true
 	}
 	return strings.HasPrefix(s, "ERR_") || strings.HasPrefix(s, "ACL_")
@@ -273,7 +272,7 @@ func TestDifferential(t *testing.T) {
 		"SELECT id FROM t", "SELECT id FROM u", "SELECT id FROM v",
 		`SELECT id FROM "semi"`, `SELECT id FROM "by"`,
 		"SELECT secret FROM t WHERE tenant = 'k'", "SELECT secret FROM u WHERE tenant = 'k'",
-		"SELECT secret_n FROM v WHERE tenant = 'k'",
+		"SELECT secret_n FROM v WHERE tenant = 'k'", `SELECT "current_date" FROM kw WHERE tenant = 'k'`,
 	} {
 		want, err := runDiffSQL(context.Background(), w.oracle, sql, nil, nil)
 		if err != nil {
@@ -334,9 +333,6 @@ func (w *diffWorld) checkLine(t *testing.T, l corpusLine) {
 		t.Fatalf("corpus line uses the volatile function %s: %s", fn, l.sql)
 	}
 	res := w.run(t, l.sql)
-	if l.outcome == knownBugCommit3 {
-		t.Skipf("%s (%s): %s", knownBugCommit3, res, l.sql)
-	}
 	if res.mismatch != "" {
 		t.Fatalf("served statement returns other rows than raw\n raw:    %s\n served: %s\n %s", l.sql, res.served, res.mismatch)
 	}
@@ -420,23 +416,36 @@ func (w *diffWorld) run(t *testing.T, sql string) diffResult {
 	return out
 }
 
+// diffSQLMasks names the SQL-masked column of each table that has one.
+var diffSQLMasks = map[string]string{"t": "secret", "v": "secret_n"}
+
 // checkNotes asserts the rewrite applied the policies: a wrapper for each
-// table, and a mask when the statement names a secret.
+// table with the note of its SQL mask, and a post-query mask when a
+// statement that reads no SQL-masked table names a secret.
 func checkNotes(t *testing.T, sql string, ast parser.AST, res *rewriter.RewriteResult) {
 	t.Helper()
 	if !res.Changed {
 		t.Fatalf("served unchanged: %s", sql)
 	}
+	sqlMasked := false
 	for _, tr := range ast.Tables() {
 		key := strings.ToLower(tr.Catalog + "." + tr.Schema + "." + tr.Table)
 		if !slices.Contains(res.Rewrites, "row-filter-wrapped:"+key) {
 			t.Fatalf("no row filter on %s (notes %v): %s", key, res.Rewrites, sql)
 		}
+		if col, ok := diffSQLMasks[strings.ToLower(tr.Table)]; ok {
+			sqlMasked = true
+			if !slices.Contains(res.Rewrites, "column-mask:"+key+"."+col) {
+				t.Fatalf("no mask on %s.%s (notes %v): %s", key, col, res.Rewrites, sql)
+			}
+		}
 	}
-	if strings.Contains(strings.ToLower(sql), "secret") && !slices.ContainsFunc(res.Rewrites, func(n string) bool {
-		return strings.HasPrefix(n, "column-mask:") || strings.HasPrefix(n, "post-mask:")
+	// The wrapper of u adds no note. Its secret is only served as a bound
+	// select item.
+	if !sqlMasked && strings.Contains(strings.ToLower(sql), "secret") && !slices.ContainsFunc(res.Rewrites, func(n string) bool {
+		return strings.HasPrefix(n, "post-mask:")
 	}) {
-		t.Fatalf("no mask applied (notes %v): %s", res.Rewrites, sql)
+		t.Fatalf("no post-query mask applied (notes %v): %s", res.Rewrites, sql)
 	}
 }
 
@@ -579,29 +588,17 @@ func diffParseCode(err error) string {
 
 // diffRewriteCode maps a rewrite error as queryservice does.
 func diffRewriteCode(err error) string {
-	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeInternal {
-		return string(ae.Code)
-	}
-	switch {
-	case errors.Is(err, rewriter.ErrMaskPostQueryContext):
-		return string(pkgerr.CodeMaskContext)
-	case errors.Is(err, rewriter.ErrUnsupportedSyntax):
-		return string(pkgerr.CodeUnsupportedSyntax)
-	case errors.Is(err, rewriter.ErrDeparseFailed):
-		return string(pkgerr.CodeRewriteFailed)
-	case errors.Is(err, rewriter.ErrStatementRejected):
-		return string(pkgerr.CodeACLRejected)
-	}
-	return string(pkgerr.CodeInternal)
+	return string(rewriter.ErrorCode(err))
 }
 
 // TestDifferentialKeywords puts each DuckDB keyword, quoted, where pg_query
 // deparses a name bare, and where the mutators write one: the wrapper
-// alias, star expansion, the mask alias and the filter column. The served
-// statement must return the raw rows, or the gateway must refuse it.
+// alias, star expansion, a wrapper column, the mask alias and the filter
+// column. The served statement must return the raw rows, or the gateway
+// must refuse it.
 func TestDifferentialKeywords(t *testing.T) {
 	if testing.Short() {
-		t.Skip("runs every DuckDB keyword in 12 positions")
+		t.Skip("runs every DuckDB keyword in 13 positions")
 	}
 	ctx := context.Background()
 	db := newDiffDB(t, `CREATE TABLE t (id INTEGER, a INTEGER, tenant VARCHAR); INSERT INTO t VALUES (1, 1, 'k'), (2, 1, 'k');`)
@@ -618,8 +615,8 @@ func TestDifferentialKeywords(t *testing.T) {
 	for _, w := range words {
 		// Every row passes the filters and holds the mask value 1, so the
 		// policies change no rows.
-		fmt.Fprintf(&seed, `CREATE TABLE main."%[1]s" (id INTEGER, "%[1]s" INTEGER, tenant VARCHAR); INSERT INTO main."%[1]s" VALUES (1, 1, 'k'), (2, 1, 'k');`+"\n", w)
-		entries = append(entries, &schema.Entry{Key: schema.Key{Schema: "main", Table: w}, Columns: columns("id", w, "tenant")})
+		fmt.Fprintf(&seed, `CREATE TABLE main."%[1]s" (id INTEGER, "%[1]s" INTEGER, tenant VARCHAR, m INTEGER); INSERT INTO main."%[1]s" VALUES (1, 1, 'k', 1), (2, 1, 'k', 1);`+"\n", w)
+		entries = append(entries, &schema.Entry{Key: schema.Key{Schema: "main", Table: w}, Columns: columns("id", w, "tenant", "m")})
 	}
 	if _, err := db.DB().ExecContext(ctx, seed.String()); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -642,6 +639,13 @@ func TestDifferentialKeywords(t *testing.T) {
 		})
 		masked := keywordDecision(map[string]*policy.CompiledPredicate{key: tenantK},
 			policy.NewMask(key, w, apitypes.MaskConstant, pkgmask.Args{Value: 1}, "kw-mask"))
+		// The mask is on m, so the wrapper lists the keyword column as it is.
+		maskedOther := keywordDecision(map[string]*policy.CompiledPredicate{key: tenantK},
+			policy.NewMask(key, "m", apitypes.MaskConstant, pkgmask.Args{Value: 1}, "kw-mask"))
+		// A star is only expanded when the decision has a post-query mask.
+		// This one is on a table the statement does not read.
+		expanded := keywordDecision(map[string]*policy.CompiledPredicate{key: tenantK},
+			policy.NewMask("..t", "a", apitypes.MaskFPE, pkgmask.Args{}, "kw-post"))
 		for _, c := range []struct {
 			position string
 			sql      string
@@ -655,8 +659,9 @@ func TestDifferentialKeywords(t *testing.T) {
 			{"WINDOW name", "SELECT sum(id) OVER " + q + " FROM t WINDOW " + q + " AS (ORDER BY id)", onT},
 			{"named-arg label", "SELECT struct_pack(" + q + " := id) FROM t", onT},
 			{"wrapper alias", "SELECT count(*), max(t.id) FROM main." + q + " JOIN t ON true", onW},
-			{"star expansion", "SELECT * FROM main." + q + " AS k", onW},
+			{"star expansion", "SELECT * FROM main." + q + " AS k", expanded},
 			{"star over the wrapper", "SELECT * FROM main." + q, onW},
+			{"wrapper column", "SELECT k." + q + " FROM main." + q + " AS k", maskedOther},
 			{"mask alias", "SELECT k." + q + " FROM main." + q + " AS k", masked},
 			{"filter column", "SELECT id FROM main." + q + " AS k", onColumn},
 		} {
@@ -672,6 +677,9 @@ func TestDifferentialKeywords(t *testing.T) {
 				refused[c.position]++
 				continue
 			}
+			if c.position == "star expansion" && strings.HasPrefix(res.SQL, "SELECT *") {
+				t.Errorf("%s %q: the star was not expanded: %s", c.position, w, res.SQL)
+			}
 			want, err := runDiffSQL(ctx, db, c.sql, nil, nil)
 			if err != nil {
 				t.Errorf("%s %q: raw fails: %v", c.position, w, err)
@@ -679,10 +687,6 @@ func TestDifferentialKeywords(t *testing.T) {
 			}
 			got, err := runDiffSQL(ctx, db, res.SQL, res.Params, res)
 			switch {
-			case err != nil && c.position == "filter column" && strings.Contains(err.Error(), "Parser Error"):
-				// Known limitation: the filter column is written bare and
-				// the statement fails closed.
-				refused[c.position]++
 			case err != nil:
 				t.Errorf("%s %q: served statement fails\n raw:    %s\n served: %s\n %v", c.position, w, c.sql, res.SQL, err)
 			default:

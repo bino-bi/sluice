@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT c.id, NULL AS \"EMAIL\", NULL AS \"Email\" FROM (SELECT * FROM \"SHOP\".main.\"Customers\" WHERE tenant_id = $1) c",
+  "sql": "SELECT c.id, \"EMAIL\", \"C\".\"Email\" FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM \"SHOP\".main.\"Customers\" sluice_src WHERE sluice_src.tenant_id = $1) c",
   "changed": true,
   "params": [
     "acme"
@@ -10,7 +10,7 @@
     "RowFilterPolicy/filter-tenant",
     "SqlAccessPolicy/allow-analytics"
   ],
-  "fingerprint": "7aeb0150caa9798a",
+  "fingerprint": "078c0874eeb12c38",
   "masks": [
     "shop.main.customers.email=null"
   ],

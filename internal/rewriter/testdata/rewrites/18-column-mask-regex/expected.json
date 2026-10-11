@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, regexp_replace(email::varchar, $1, $2, 'g') AS email FROM pg.hr.employees",
+  "sql": "SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, regexp_replace(sluice_src.email::varchar, $1, $2, 'g') AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees",
   "changed": true,
   "params": [
     "[^@]",
@@ -10,7 +10,7 @@
     "ColumnMaskPolicy/mask-email",
     "SqlAccessPolicy/allow-hr"
   ],
-  "fingerprint": "5bc25ee381c28365",
+  "fingerprint": "2a0d1182e7e4a98d",
   "masks": [
     "pg.hr.employees.email=regex"
   ]

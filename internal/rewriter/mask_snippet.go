@@ -42,9 +42,6 @@ func (s *state) renderMaskSnippet(snippet string, params []pkgmask.Param, orig *
 	if rt == nil || rt.Val == nil {
 		return nil, fmt.Errorf("%w: snippet has no expression", ErrMaskUnsupported)
 	}
-	if !isAtomicSnippet(rt.Val) {
-		return nil, fmt.Errorf("%w: the top node of the snippet must be a function call, CASE, COALESCE, GREATEST, LEAST, NULLIF, cast, column, constant or parameter; wrap an operator such as || or AT TIME ZONE in coalesce(...)", ErrMaskUnsupported)
-	}
 	if err := s.snippets.check(s.ctx, src, parsed); err != nil {
 		return nil, err
 	}
@@ -58,33 +55,6 @@ func (s *state) renderMaskSnippet(snippet string, params []pkgmask.Param, orig *
 		s.params = append(s.params, p.Value)
 	}
 	return expr, nil
-}
-
-// syntaxCallsInParens are the pg_catalog functions pg_query writes in SQL
-// syntax inside their own parentheses, such as TRIM(BOTH FROM x).
-var syntaxCallsInParens = map[string]bool{
-	"btrim": true, "ltrim": true, "rtrim": true, "extract": true,
-	"substring": true, "position": true, "overlay": true, "normalize": true,
-}
-
-// isAtomicSnippet reports whether the deparse writes n as one unit, so n
-// keeps its meaning in any expression the snippet is spliced into. The
-// parse check only sees the snippet on its own. Other functions in SQL
-// syntax are not one unit: x AT TIME ZONE 'UTC' || 'a' loses its parentheses.
-func isAtomicSnippet(n *pg.Node) bool {
-	switch v := n.Node.(type) {
-	case *pg.Node_FuncCall:
-		fc := v.FuncCall
-		return fc.Funcformat == pg.CoercionForm_COERCE_EXPLICIT_CALL ||
-			len(fc.Funcname) == 2 && fc.Funcname[0].GetString_().GetSval() == "pg_catalog" &&
-				syntaxCallsInParens[fc.Funcname[1].GetString_().GetSval()]
-	case *pg.Node_AExpr:
-		return v.AExpr.Kind == pg.A_Expr_Kind_AEXPR_NULLIF
-	case *pg.Node_CaseExpr, *pg.Node_CoalesceExpr, *pg.Node_MinMaxExpr, *pg.Node_TypeCast,
-		*pg.Node_ColumnRef, *pg.Node_AConst, *pg.Node_ParamRef:
-		return true
-	}
-	return false
 }
 
 // maxSnippetMemo bounds the texts a snippetMemo keeps. A provider that puts

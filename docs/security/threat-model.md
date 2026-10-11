@@ -84,10 +84,17 @@ are enforced per `SubjectBinding` — see [Subjects, keys & budgets](../policies
 
 ## Residual risks
 
-- **CASE oracle in column masks.** A masked column can still be referenced in
-  `WHERE email = 'victim@example.com'` — the result-set shape leaks whether
-  the value exists. Deny such predicates with a `QueryRejectPolicy` where
-  this matters; see [Column masks](../policies/column-masks.md).
+- **What a mask output shows.** A query only sees the output of a SQL mask,
+  so `WHERE email = 'victim@example.com'` under a `'***'` mask matches
+  nothing. The output itself can still tell something: a `partial` mask
+  shows its prefix, an unsalted `sha256` hash can be checked against guessed
+  values, and equal hashes show equal inputs. See
+  [Column masks](../policies/column-masks.md).
+- **A filter column the table does not have.** Sluice does not check that a
+  row filter column exists in each table the filter matches. When it does
+  not, a crafted query can make the filter test a value it builds itself, and
+  the rows are served unfiltered. Keep the filter column in every matched
+  table, also under wildcard table patterns.
 - **Jailbreak of the agent itself.** Sluice bounds *what data an agent can
   obtain*, not what the agent does with data it is legitimately allowed to
   read. A hijacked agent can still exfiltrate its permitted slice through its

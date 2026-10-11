@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT orders.id, orders.tenant_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders UNION SELECT * FROM mysql_erp.archive.orders",
+  "sql": "SELECT * FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) orders UNION SELECT * FROM mysql_erp.archive.orders",
   "changed": true,
   "params": [
     "t-42"
@@ -9,7 +9,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "8934f3691db59b14",
+  "fingerprint": "cd6403c45e78edc2",
   "filters": [
     "pg.public.orders"
   ]

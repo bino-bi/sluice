@@ -1,0 +1,23 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id, status FROM (SELECT sluice_src.id, CASE WHEN sluice_src.status IS NULL THEN NULL ELSE concat(substr(sluice_src.status::varchar, 1, $2), repeat($3, GREATEST((length(sluice_src.status::varchar) - $2) - $4, 0)), substr(sluice_src.status::varchar, GREATEST((length(sluice_src.status::varchar) - $4) + 1, $2 + 1))) END AS status, sluice_src.total FROM pg.public.orders sluice_src WHERE sluice_src.status \u003c\u003e $1) orders WHERE status = 'o***'",
+  "changed": true,
+  "params": [
+    "void",
+    1,
+    "*",
+    0
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-status",
+    "RowFilterPolicy/hide-void",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "3b9cc853962c39e4",
+  "masks": [
+    "pg.public.orders.status=partial"
+  ],
+  "filters": [
+    "pg.public.orders"
+  ]
+}

@@ -9,6 +9,7 @@ package policytest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,14 +28,13 @@ import (
 	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/internal/secrets"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
-	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
 // Suite is a file of test cases. Schema optionally maps fully-qualified
-// "catalog.schema.table" names to column lists so SELECT-* expansion works
-// without a live datasource; it is static fixture data, never
-// introspection.
+// "catalog.schema.table" names to column lists in table order. A table
+// with a column mask needs an entry, because the rewrite lists its
+// columns. It is static fixture data, never introspection.
 type Suite struct {
 	Cases  []Case              `json:"cases" yaml:"cases"`
 	Schema map[string][]string `json:"schema,omitempty" yaml:"schema,omitempty"`
@@ -89,8 +89,8 @@ type Runner struct {
 }
 
 // NewRunner loads the policy directory, compiles it, and wires the
-// parser + rewriter. It has no live schema cache; a suite that needs
-// SELECT-* expansion declares its tables in the `schema:` block instead.
+// parser + rewriter. It has no live schema cache; a suite that reads a
+// masked table declares its columns in the `schema:` block instead.
 // The caller must Close the runner.
 func NewRunner(ctx context.Context, policyDir string, strict bool) (*Runner, error) {
 	if !parserbackend.Implemented {
@@ -298,12 +298,14 @@ func (r *Runner) runCase(ctx context.Context, rw *rewriter.Rewriter, c Case) Cas
 		}
 		res, rerr := rw.Rewrite(ctx, rewriter.RewriteRequest{AST: ast, Decision: dec, User: user, Facts: facts, Raw: c.SQL})
 		if rerr != nil {
-			if c.Expect.ErrorCode != "" {
-				if code := errorCode(rerr); code != c.Expect.ErrorCode {
-					fail("errorCode: want %q got %q", c.Expect.ErrorCode, code)
-				}
-			} else if needRewrite {
-				fail("rewrite error: %v", rerr)
+			hint := ""
+			if errors.Is(rerr, rewriter.ErrSchemaMissing) {
+				hint = "; add a `schema:` block that lists the columns of the table"
+			}
+			if c.Expect.ErrorCode == "" {
+				fail("rewrite error: %v%s", rerr, hint)
+			} else if code := string(rewriter.ErrorCode(rerr)); code != c.Expect.ErrorCode {
+				fail("errorCode: want %q got %q: %v%s", c.Expect.ErrorCode, code, rerr, hint)
 			}
 			return cr
 		}
@@ -374,13 +376,6 @@ func postMaskKeys(res *rewriter.RewriteResult) []string {
 		out = append(out, pm.TableKey+"."+pm.Column+"="+string(pm.Type))
 	}
 	return out
-}
-
-func errorCode(err error) string {
-	if ae := pkgerr.FromError(err); ae != nil {
-		return string(ae.Code)
-	}
-	return ""
 }
 
 func normalise(s string) string { return strings.Join(strings.Fields(s), " ") }

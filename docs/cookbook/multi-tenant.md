@@ -98,7 +98,7 @@ Repeat with `X-Api-Key: beta.supersecret` — the result sets are disjoint
 (`beta` sees rows 3 and 4 only). The rewritten SQL is:
 
 ```sql
-SELECT id, tenant_id, email FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers ORDER BY id
+SELECT id, tenant_id, email FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers ORDER BY id
 ```
 
 The third tenant, `gamma`, has rows in the table but no `SubjectBinding` — no

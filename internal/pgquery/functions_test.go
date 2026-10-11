@@ -130,7 +130,7 @@ func TestCollectFunctions(t *testing.T) {
 			},
 		},
 		{
-			// A quoted name is a column to pg_query and to the mask pass.
+			// A quoted name is a column to pg_query and to the rewriter.
 			name:      "only the unquoted session keyword is a call",
 			sql:       `SELECT "current_user", "user", t."user", user FROM t`,
 			wantFuncs: []parser.FuncRef{fn("user")},

@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT p.id, p.info.ssn FROM (SELECT sluice_src.id, NULL AS info FROM shop.main.profiles sluice_src) p",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-info",
+    "SqlAccessPolicy/allow-profiles"
+  ],
+  "fingerprint": "79cfb4d5b8d7b90f",
+  "masks": [
+    "shop.main.profiles.info=null"
+  ]
+}

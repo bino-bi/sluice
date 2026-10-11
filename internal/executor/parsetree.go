@@ -11,6 +11,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/parser"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 // Parse instance sizing. json_serialize_sql of a 1 MiB IN list needs about
@@ -44,7 +45,9 @@ const parseTreesSQL = "SELECT json_serialize_sql($1::VARCHAR)::VARCHAR, json_ser
 
 // ParseTrees returns DuckDB's parse trees of a and b as json_serialize_sql
 // JSON. A statement DuckDB cannot parse yields a tree that starts with
-// {"error":true. Both texts are bound as values and never run.
+// {"error":true. Both texts are bound as values and never run. An
+// out-of-memory error carries its client code and message, so callers map
+// it like any other APIError.
 func (e *Executor) ParseTrees(ctx context.Context, a, b string) (string, string, error) {
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
@@ -60,7 +63,8 @@ func (e *Executor) ParseTrees(ctx context.Context, a, b string) (string, string,
 	var treeA, treeB string
 	if err := conn.QueryRowContext(ctx, parseTreesSQL, a, b).Scan(&treeA, &treeB); err != nil {
 		if de := (*duckdb.Error)(nil); errors.As(err, &de) && de.Type == duckdb.ErrorTypeOutOfMemory {
-			return "", "", fmt.Errorf("%w: %w", ErrOutOfMemory, err)
+			return "", "", pkgerr.Wrap(pkgerr.CodePayloadTooLarge, fmt.Errorf("%w: %w", ErrOutOfMemory, err)).WithMessage(
+				"statement too large for the DuckDB parse check; send a shorter statement (for example a shorter IN list) or retry later")
 		}
 		return "", "", wrapRunErr(err)
 	}

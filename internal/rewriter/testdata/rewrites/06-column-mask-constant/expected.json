@@ -1,12 +1,12 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, '***' AS email FROM pg.public.customers",
+  "sql": "SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, '***' AS email FROM pg.public.customers sluice_src) customers",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/mask-email",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "3b36da4db7d394a8",
+  "fingerprint": "b036df318107351f",
   "masks": [
     "pg.public.customers.email=constant"
   ]

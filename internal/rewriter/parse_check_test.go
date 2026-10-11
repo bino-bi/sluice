@@ -189,3 +189,17 @@ func TestRewrite_ParseCheckSkipped(t *testing.T) {
 		t.Error("limited SELECT skipped the check")
 	}
 }
+
+// executor.ParseTrees returns its out-of-memory error with the client code
+// attached. The rewrite keeps that code, also for the policy runner, which
+// maps a rewrite error with ErrorCode alone.
+func TestRewrite_ParseCheckOutOfMemoryCode(t *testing.T) {
+	fc := &fakeChecker{fn: func(context.Context, string, string) (string, string, error) {
+		return "", "", pkgerr.New(pkgerr.CodePayloadTooLarge)
+	}}
+	rw, req := filtered(t, fc, "SELECT id FROM pg.public.orders")
+	_, err := rw.Rewrite(context.Background(), req)
+	if got := rewriter.ErrorCode(err); got != pkgerr.CodePayloadTooLarge {
+		t.Fatalf("ErrorCode(%v) = %s, want ERR_PAYLOAD_TOO_LARGE", err, got)
+	}
+}

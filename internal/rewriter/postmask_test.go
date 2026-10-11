@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 func fpeMask(table, column string) *apitypes.ColumnMaskPolicy {
@@ -44,8 +46,8 @@ func TestPostMask_BareTargetListRecorded(t *testing.T) {
 	if res.ResultColumnCount != 2 {
 		t.Errorf("ResultColumnCount = %d, want 2", res.ResultColumnCount)
 	}
-	// The SQL is unchanged (no substitution for post-query masks).
-	if got := normaliseSQL(res.SQL); got != "SELECT id, ssn FROM pg.hr.employees" {
+	// The wrapper passes the post-query masked column through raw.
+	if got := normaliseSQL(res.SQL); got != "SELECT id, ssn FROM (SELECT sluice_src.id, sluice_src.ssn, sluice_src.email FROM pg.hr.employees sluice_src) employees" {
 		t.Errorf("SQL altered: %q", got)
 	}
 }
@@ -142,6 +144,120 @@ func TestPostMask_OtherPositionsServed(t *testing.T) {
 			t.Errorf("%s: %v", sql, err)
 		} else if len(res.PostMasks) != 1 {
 			t.Errorf("%s: PostMasks = %+v, want 1", sql, res.PostMasks)
+		}
+	}
+}
+
+// In a nested SELECT an unqualified name that an outer table masks after
+// the query is refused, also when a masked table of the nested SELECT has
+// a column of that name. DuckDB binds the name outward where the inner
+// table is not visible, such as the condition of an earlier join. The
+// qualified name is served.
+func TestPostMask_NestedUnqualifiedNameRefused(t *testing.T) {
+	rw := buildRewriter(t)
+	policies := []apitypes.Object{allowAll(0), fpeMask("employees", "ssn"),
+		maskPolicy("null-other-id", "other", []string{"id"}, apitypes.MaskSpec{Type: apitypes.MaskNull})}
+	const values = "(VALUES ('1'), ('2')) g(x) JOIN (VALUES (1)) h(y) ON g.x = ssn"
+	for sql, refused := range map[string]bool{
+		"SELECT e.id, (SELECT ssn FROM pg.hr.other o LIMIT 1) AS s FROM pg.hr.employees e":                                      true,
+		"SELECT e.id, (SELECT min(g.x) FROM " + values + " JOIN pg.hr.other o ON true) AS s FROM pg.hr.employees e":             true,
+		"SELECT e.id, (SELECT min(g.x) FROM " + values + ", pg.hr.other o) AS s FROM pg.hr.employees e":                         true,
+		"SELECT e.id, (SELECT o.id FROM pg.hr.other o ORDER BY o.id LIMIT length(ssn)) AS s FROM pg.hr.employees e":             true,
+		"SELECT e.id, (SELECT o.ssn FROM pg.hr.other o LIMIT 1) AS s FROM pg.hr.employees e":                                    false,
+		"SELECT e.id, (SELECT min(g.x) FROM (VALUES ('1')) g(x) JOIN pg.hr.other o ON g.x = o.ssn) AS s FROM pg.hr.employees e": false,
+	} {
+		dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, policies...)
+		res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+		switch {
+		case refused && err == nil:
+			t.Errorf("%s: served %q, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, res.SQL)
+		case refused && pkgerr.FromError(err).Code != pkgerr.CodeMaskContext:
+			t.Errorf("%s: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, err)
+		case !refused && err != nil:
+			t.Errorf("%s: %v", sql, err)
+		}
+	}
+
+	// The refusal says how to name the column of the inner table.
+	sql := "SELECT e.id, (SELECT ssn FROM pg.hr.other o LIMIT 1) AS s FROM pg.hr.employees e"
+	dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, policies...)
+	_, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+	if err == nil || !strings.Contains(pkgerr.FromError(err).Message, "qualify") {
+		t.Errorf("err = %v, want the advice to qualify the column", err)
+	}
+}
+
+// A table called alias, by its name or its alias, is refused: star
+// expansion would write alias.<col> for it, and DuckDB can read that as a
+// select alias. A subquery called alias keeps its own star and is served.
+func TestPostMask_TableCalledAliasRefused(t *testing.T) {
+	rw := buildRewriter(t)
+	for sql, refused := range map[string]bool{
+		"SELECT e.ssn FROM pg.hr.employees e, pg.hr.other alias":                               true,
+		`SELECT e.ssn FROM pg.hr.employees e JOIN pg.hr.other "ALIAS" ON true`:                 true,
+		"SELECT e.ssn FROM pg.hr.employees e, pg.hr.alias":                                     true,
+		"SELECT e.ssn FROM pg.hr.employees e WHERE e.id IN (SELECT id FROM pg.hr.other alias)": true,
+		"SELECT e.ssn FROM pg.hr.employees e, pg.hr.alias a":                                   false,
+		"SELECT e.ssn FROM pg.hr.employees e, (SELECT 1 AS one) alias":                         false,
+	} {
+		dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, allowAll(0), fpeMask("employees", "ssn"))
+		res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+		switch {
+		case refused && err == nil:
+			t.Errorf("%s: served %q, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, res.SQL)
+		case refused && rewriter.ErrorCode(err) != pkgerr.CodeMaskContext:
+			t.Errorf("%s: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, err)
+		case !refused && err != nil:
+			t.Errorf("%s: %v", sql, err)
+		}
+	}
+}
+
+// A star that stays in the outer select list leaves the result columns
+// unknown. The refusal names the star, also when the query reads no masked
+// column.
+func TestPostMask_ResidualStarMessage(t *testing.T) {
+	rw := buildRewriter(t)
+	for _, sql := range []string{
+		"SELECT * FROM (SELECT id FROM pg.hr.employees) q",
+		"WITH q AS (SELECT id FROM pg.hr.employees) SELECT * FROM q",
+		"SELECT e.id, g.* FROM pg.hr.employees e, generate_series(1, 2) AS g(i)",
+	} {
+		dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, allowAll(0), fpeMask("employees", "ssn"))
+		_, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+		if !errors.Is(err, rewriter.ErrMaskPostQueryContext) || !strings.Contains(pkgerr.FromError(err).Message, "list the columns") {
+			t.Errorf("%s: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT with the advice to list the columns", sql, err)
+		}
+	}
+}
+
+// Two tables in one FROM mask a column of the same name after the query.
+// The unqualified name could leave one of them unmasked, so it is refused.
+// A wildcard mask on a table that the schema cache shows without the
+// column does not count.
+func TestPostMask_AmbiguousNameRefused(t *testing.T) {
+	rw := buildRewriter(t)
+	fpe := fpeMask("employees", "ssn").Spec.Mask
+	policies := []apitypes.Object{allowAll(0), fpeMask("employees", "ssn"),
+		maskPolicy("fpe-other-ssn", "other", []string{"ssn"}, fpe),
+		maskPolicy("fpe-badge-all", "badge", []string{"*"}, fpe)}
+	for sql, refused := range map[string]bool{
+		"SELECT ssn FROM pg.hr.employees e JOIN pg.hr.other o ON o.id = e.id":               true,
+		"SELECT e.id FROM pg.hr.employees e JOIN pg.hr.other o ON o.id = e.id ORDER BY ssn": true,
+		"SELECT e.ssn, o.ssn FROM pg.hr.employees e JOIN pg.hr.other o ON o.id = e.id":      false,
+		"SELECT ssn FROM pg.hr.employees e JOIN pg.hr.badge b ON true":                      false,
+	} {
+		dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, policies...)
+		res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+		switch {
+		case refused && err == nil:
+			t.Errorf("%s: served %q, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, res.SQL)
+		case refused && rewriter.ErrorCode(err) != pkgerr.CodeMaskContext:
+			t.Errorf("%s: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, err)
+		case !refused && err != nil:
+			t.Errorf("%s: %v", sql, err)
+		case !refused && len(res.PostMasks) == 0:
+			t.Errorf("%s: no post-query mask bound in %q", sql, res.SQL)
 		}
 	}
 }

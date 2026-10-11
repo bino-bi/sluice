@@ -85,9 +85,9 @@ type CompiledFilter struct {
 	Policies  []string
 }
 
-// CompiledMask is the resolved mask to apply to a column reference. The
-// rewriter looks up Args and Type against pkgmask.Registry.Provider at
-// substitution time.
+// CompiledMask is the resolved mask for the columns of one table that
+// match Column. The rewriter looks up Args and Type against
+// pkgmask.Registry.Provider when it rewrites the query.
 type CompiledMask struct {
 	TableKey string // catalog.schema.table
 	Column   string

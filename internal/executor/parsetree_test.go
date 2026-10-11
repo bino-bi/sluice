@@ -12,6 +12,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 func newParseExec(t *testing.T, maxSQLBytes int) *executor.Executor {
@@ -155,15 +156,18 @@ func TestParseTreesMaxSize(t *testing.T) {
 	}
 }
 
-// A statement whose trees do not fit is ErrOutOfMemory, so the query
-// service can tell the caller to send a shorter one. Any maxSQLBytes under
-// 256 KiB gives the 256 MiB floor, which a 1 MiB SELECT 1,1,... does not
-// fit into.
+// A statement whose trees do not fit is ErrOutOfMemory. The error carries
+// the client code and a message that tells the caller to send a shorter
+// one. Any maxSQLBytes under 256 KiB gives the 256 MiB floor, which a 1 MiB
+// SELECT 1,1,... does not fit into.
 func TestParseTreesOutOfMemory(t *testing.T) {
 	e := newParseExec(t, 1<<10)
 	sql := "SELECT 1" + strings.Repeat(",1", parser.DefaultMaxSQLBytes/2)
 	_, _, err := e.ParseTrees(context.Background(), sql, sql)
 	if !errors.Is(err, executor.ErrOutOfMemory) {
 		t.Fatalf("err = %v, want ErrOutOfMemory", err)
+	}
+	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodePayloadTooLarge || !strings.Contains(ae.Message, "shorter statement") {
+		t.Fatalf("client error = %s (%s), want ERR_PAYLOAD_TOO_LARGE with a hint", ae.Code, ae.Message)
 	}
 }

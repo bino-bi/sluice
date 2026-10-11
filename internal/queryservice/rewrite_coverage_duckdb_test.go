@@ -4,6 +4,7 @@ package queryservice_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/schema"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -70,7 +73,7 @@ func TestExecute_RowFilterReachesSubqueries(t *testing.T) {
 // TestExecute_MaskReachesEveryUseOfTheColumn locks that customers.email is
 // masked however the statement gets at it.
 func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
-	svc, ex, _ := newHelloSluiceService(t)
+	svc, _, _ := newHelloSluiceService(t)
 
 	// The mask must be applied: no result cell may hold an address.
 	masked := []struct{ name, sql string }{
@@ -92,6 +95,7 @@ func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
 		{"alias declared in upper case", `SELECT c.email FROM shop.main.customers "C"`},
 		{"quoted table name as qualifier", `SELECT "CUSTOMERS".email FROM shop.main.customers`},
 		{"quoted column in a function", `SELECT lower("EMAIL") FROM shop.main.customers`},
+		{"select alias behind the alias prefix", "SELECT c.email AS e, alias.e AS m FROM shop.main.customers c"},
 	}
 	for _, tc := range masked {
 		t.Run("masked/"+tc.name, func(t *testing.T) {
@@ -108,47 +112,6 @@ func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
 			// EXISTS over a NULL email matches nothing.
 			if tc.name == "star in an expression subquery" && fmt.Sprint(rows) != "[[0]]" {
 				t.Fatalf("rows = %v, want [[0]]", rows)
-			}
-		})
-	}
-
-	// Forms the mask pass cannot follow must be refused, not served.
-	refused := []struct{ name, sql string }{
-		{"whole row", "SELECT c FROM shop.main.customers c"},
-		{"whole row, table name", "SELECT customers FROM shop.main.customers"},
-		{"whole row as function argument", "SELECT to_json(c) AS j FROM shop.main.customers c"},
-		{"whole row field access", "SELECT (c).email AS e FROM shop.main.customers c"},
-		{"whole row subscript", "SELECT c['email'] AS e FROM shop.main.customers c"},
-		{"whole row in a predicate", "SELECT id FROM shop.main.customers c WHERE CAST(c AS VARCHAR) LIKE '%alice@%'"},
-		{"whole row inside a subquery", "SELECT x FROM (SELECT c AS x FROM shop.main.customers c) q"},
-		{"whole row from an outer scope", "SELECT (SELECT to_json(c)) AS j FROM shop.main.customers c"},
-		{"whole row, alias named like a column of an outer table", "SELECT (SELECT placed_at FROM shop.main.customers placed_at ORDER BY id LIMIT 1) AS x FROM shop.main.orders o LIMIT 1"},
-		{"two FROM items under one alias", "SELECT c.email FROM shop.main.customers c JOIN shop.main.orders c ON total_cents > 0 AND name IS NOT NULL LIMIT 2"},
-		{"table and CTE under one alias", "WITH t AS (SELECT 1 AS x) SELECT c.email FROM shop.main.customers c, t c LIMIT 2"},
-		{"positional column reference", "SELECT #3 FROM shop.main.customers"},
-		{"inner alias hides the outer masked table", "SELECT (SELECT c.email FROM shop.main.orders c LIMIT 1) AS e FROM shop.main.customers c"},
-		{"CTE alias hides the outer masked table", "WITH k AS (SELECT 1 AS one) SELECT (SELECT c.email FROM k c LIMIT 1) AS e FROM shop.main.customers c"},
-		{"star in a pattern match", "SELECT c.* LIKE '%mail' FROM shop.main.customers c"},
-		{"star as a sort key", "SELECT id FROM shop.main.customers c ORDER BY c.*"},
-		{"whole row, quoted alias in upper case", `SELECT "C" FROM shop.main.customers c`},
-		{"column alias list on the table", "SELECT c.e2 FROM shop.main.customers AS c(i, n, e2, t, cr)"},
-		{"join alias", "SELECT j.email FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j"},
-		{"join alias with column list", "SELECT j.c3 FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j(c1, c2, c3)"},
-	}
-	for _, tc := range refused {
-		t.Run("refused/"+tc.name, func(t *testing.T) {
-			before := ex.calls
-			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
-				SQL: tc.sql, User: helloUser(), Origin: queryservice.OriginREST,
-			})
-			if err == nil {
-				t.Fatalf("query was served: %v", drainRows(t, res))
-			}
-			if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
-				t.Fatalf("code = %s (%s), want %s", ae.Code, ae.Message, pkgerr.CodeMaskContext)
-			}
-			if ex.calls != before {
-				t.Fatal("executor was reached")
 			}
 		})
 	}
@@ -316,28 +279,6 @@ func TestExecute_MaskWithSameColumnNameInTwoTables(t *testing.T) {
 	}
 }
 
-// SELECT * over a RIGHT or FULL join with USING merges the join column.
-// Listing both sides instead would return NULL keys, so it is refused.
-func TestExecute_StarOverOuterUsingJoinIsRefused(t *testing.T) {
-	svc, _, _ := newHelloSluiceService(t)
-	for _, sql := range []string{
-		"SELECT q.id FROM (SELECT * FROM shop.main.customers c RIGHT JOIN shop.main.orders o USING (id)) q",
-		"SELECT * FROM shop.main.orders o FULL JOIN shop.main.customers c USING (id)",
-		"SELECT * FROM shop.main.customers c NATURAL RIGHT JOIN shop.main.orders o",
-	} {
-		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
-			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
-		})
-		if err == nil {
-			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, drainRows(t, res))
-			continue
-		}
-		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
-			t.Errorf("%s: code = %s, want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code)
-		}
-	}
-}
-
 const adminUsersPolicies = `
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SqlAccessPolicy
@@ -370,23 +311,15 @@ spec:
     type: "null"
 `
 
-// A masked table without a row filter stays a plain table in the rewritten
-// SQL, so its schema-qualified name also names the whole row.
+// A masked table without a row filter is wrapped too. The wrapper is named
+// after the table, so a schema-qualified name no longer names the table or
+// its row. The whole row and #2 are served masked
+// (TestExecute_FormerMaskRefusalsServeMaskedValues).
 func TestExecute_MaskOnTableWithoutRowFilter(t *testing.T) {
 	svc, _, _ := newHelloSluiceService(t, adminUsersPolicies)
 
-	run := func(sql string) ([][]any, error) {
-		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
-			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return drainRows(t, res), nil
-	}
-
+	// DuckDB cannot bind the name, so these fail at run time.
 	for _, sql := range []string{
-		"SELECT admin_users FROM shop.main.admin_users",
 		"SELECT main.admin_users FROM shop.main.admin_users",
 		"SELECT shop.main.admin_users FROM shop.main.admin_users",
 		`SELECT "MAIN".admin_users FROM shop.main.admin_users`,
@@ -394,25 +327,32 @@ func TestExecute_MaskOnTableWithoutRowFilter(t *testing.T) {
 		"SELECT (main.admin_users).username AS u FROM shop.main.admin_users",
 		"SELECT q.x FROM (SELECT main.admin_users AS x FROM shop.main.admin_users) q",
 		"SELECT id FROM shop.main.admin_users WHERE CAST(main.admin_users AS VARCHAR) LIKE '%root%'",
-		"SELECT #2 FROM shop.main.admin_users",
 	} {
-		rows, err := run(sql)
+		if rows, err := runRows(svc, sql); err == nil || len(rows) > 0 {
+			t.Errorf("%s: served %v (err %v), want an error and no rows", sql, rows, err)
+		}
+	}
+
+	for _, sql := range []string{
+		"SELECT main.admin_users.username FROM shop.main.admin_users ORDER BY id",
+		"SELECT shop.main.admin_users.username FROM shop.main.admin_users ORDER BY 1",
+	} {
+		rows, err := runRows(svc, sql)
 		if err == nil {
-			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, rows)
+			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, rows)
 			continue
 		}
-		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
-			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code, ae.Message)
 		}
 	}
 
 	for sql, want := range map[string]string{
-		"SELECT id, username, role FROM shop.main.admin_users ORDER BY id":            "[[1 <nil> superuser] [2 <nil> maintainer]]",
-		"SELECT main.admin_users.username FROM shop.main.admin_users ORDER BY id":     "[[<nil>] [<nil>]]",
-		"SELECT shop.main.admin_users.username FROM shop.main.admin_users ORDER BY 1": "[[<nil>] [<nil>]]",
-		"SELECT * FROM shop.main.admin_users ORDER BY id LIMIT 1":                     "[[1 <nil> superuser]]",
+		"SELECT id, username, role FROM shop.main.admin_users ORDER BY id": "[[1 <nil> superuser] [2 <nil> maintainer]]",
+		"SELECT a.username FROM shop.main.admin_users a ORDER BY a.id":     "[[<nil>] [<nil>]]",
+		"SELECT * FROM shop.main.admin_users ORDER BY id LIMIT 1":          "[[1 <nil> superuser]]",
 	} {
-		rows, err := run(sql)
+		rows, err := runRows(svc, sql)
 		if err != nil {
 			t.Errorf("%s: %v", sql, err)
 			continue
@@ -494,6 +434,235 @@ func TestExecute_PostQueryMaskOnlyInBareSelectItems(t *testing.T) {
 		}
 		if got := fmt.Sprint(rows); len(rows) != 2 || strings.Contains(got, "Alice") || strings.Contains(got, "Bob") {
 			t.Errorf("%s: rows = %s, want 2 rows with fake names", sql, got)
+		}
+	}
+}
+
+// peopleSeed has a STRUCT column with a post-query mask (info) and one
+// without a mask (addr).
+const peopleSeed = `
+CREATE TABLE people (id INTEGER, info STRUCT(ssn VARCHAR, city VARCHAR), addr STRUCT(city VARCHAR, zip VARCHAR));
+INSERT INTO people VALUES
+	(1, {'ssn': '111-22-3333', 'city': 'Berlin'}, {'city': 'Berlin', 'zip': '10115'}),
+	(2, {'ssn': '999-88-7777', 'city': 'Paris'}, {'city': 'Paris', 'zip': '75001'});
+`
+
+const peoplePolicies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-people
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["people"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: fake-people-info
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["people"]
+          columns: ["info"]
+  mask:
+    type: fake
+    args:
+      fakeType: name
+`
+
+// The wrapper passes a post-query masked column through raw, and the mask
+// is applied in Go to a bare select item. A form that carries the column
+// another way must stay refused for a table with a post-query mask.
+func TestExecute_PostQueryMaskKeepsRefusals(t *testing.T) {
+	svc, ex, _ := newSeededHelloSluiceService(t, nil, peopleSeed, fakeNamePolicy, peoplePolicies)
+	for _, sql := range []string{
+		"SELECT c FROM shop.main.customers c",
+		"SELECT to_json(c) AS j FROM shop.main.customers c",
+		"SELECT (c).name AS n FROM shop.main.customers c",
+		"SELECT c['name'] AS n FROM shop.main.customers c",
+		"SELECT id FROM shop.main.customers c WHERE CAST(c AS VARCHAR) LIKE '%Alice%'",
+		"SELECT #2 FROM shop.main.customers",
+		"SELECT c.* LIKE '%Alice%' FROM shop.main.customers c",
+		"SELECT c.n FROM shop.main.customers AS c(i, n)",
+		"SELECT j.name FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j",
+		"SELECT (SELECT c.name FROM shop.main.orders c LIMIT 1) AS n FROM shop.main.customers c",
+		// Two FROM items under one name.
+		"SELECT upper(c.name) AS n FROM shop.main.customers c, shop.main.orders c LIMIT 3",
+		"SELECT c.name AS n FROM shop.main.customers c JOIN shop.main.orders c ON true LIMIT 3",
+		// Field access into the masked column.
+		"SELECT c.name.x AS n FROM shop.main.customers c",
+		"SELECT p.id, p.info.ssn FROM shop.main.people p",
+		"SELECT id, info.ssn FROM shop.main.people",
+		"SELECT info.ssn FROM shop.main.people info",
+		"SELECT id FROM shop.main.people WHERE info.ssn LIKE '111%'",
+		// DuckDB reads alias.<name> as the select alias <name>.
+		"SELECT c.id, c.name AS n, alias.n AS m FROM shop.main.customers c ORDER BY c.id",
+		"SELECT c.id, c.name AS n, upper(alias.n) AS m FROM shop.main.customers c ORDER BY c.id",
+		"SELECT c.id, c.name AS n, (SELECT alias.n) AS m FROM shop.main.customers c ORDER BY c.id",
+		"SELECT c.id, c.name AS n FROM shop.main.customers c WHERE alias.n = 'Alice'",
+		"SELECT c.id, c.name AS n FROM shop.main.customers c ORDER BY alias.n DESC",
+		"SELECT c.name AS n, count(*) AS k FROM shop.main.customers c GROUP BY alias.n",
+		`SELECT c.id, c.name AS n, "ALIAS".n AS m FROM shop.main.customers c ORDER BY c.id`,
+		// A FROM item called alias does not hide the select alias.
+		"SELECT c.id, c.name AS n, alias.n AS m FROM shop.main.customers c, (SELECT 1 AS one) alias ORDER BY c.id",
+		// The prefix is refused for every item, masked or not.
+		"SELECT c.id AS i, alias.i AS j FROM shop.main.customers c",
+		// A qualifier that is no FROM item: a schema, a catalog, a STRUCT
+		// column, the select alias of a masked STRUCT item.
+		"SELECT main.customers.name FROM shop.main.customers",
+		"SELECT shop.main.customers.name FROM shop.main.customers",
+		"SELECT main.orders.id FROM shop.main.orders WHERE EXISTS (SELECT 1 FROM shop.main.customers)",
+		"SELECT id, addr.city FROM shop.main.people",
+		"SELECT p.id, p.info AS s, s.ssn AS leak FROM shop.main.people p ORDER BY p.id",
+		"SELECT c.id, (SELECT unknown.total_cents FROM shop.main.orders o LIMIT 1) AS t FROM shop.main.customers c",
+		// A CTE body does not see the FROM items of the SELECT that defines it.
+		"WITH q AS (SELECT addr.city AS s FROM shop.main.people) SELECT q.s FROM shop.main.orders addr, q",
+		// A column alias list or a join alias, also on a table without a mask.
+		"SELECT * FROM shop.main.orders AS o(customer_id, id) WHERE EXISTS (SELECT 1 FROM shop.main.customers) ORDER BY 1 LIMIT 1",
+		"SELECT * FROM shop.main.orders AS o(a, b), shop.main.customers c WHERE c.id = 1",
+		"SELECT * FROM (shop.main.orders o JOIN shop.main.orders o2 ON o2.id = o.id) AS j WHERE EXISTS (SELECT 1 FROM shop.main.customers)",
+		// The schema cache has no entry for a CTE reference, so its star stays.
+		"WITH q AS (SELECT id FROM shop.main.orders) SELECT * FROM q WHERE EXISTS (SELECT 1 FROM shop.main.customers)",
+		"WITH q AS (SELECT id FROM shop.main.orders) SELECT c.id, q.* FROM shop.main.customers c, q",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, rows)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+
+	// A table alias as qualifier and (col).field stay served, and so do the
+	// stars that star expansion keeps or drops.
+	for sql, want := range map[string]string{
+		"SELECT c.id, o.total_cents FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id ORDER BY o.id":                                            "[[1 12900] [1 4500] [2 19900]]",
+		"SELECT customers.id, q.n FROM shop.main.customers, (SELECT count(*) AS n FROM shop.main.orders o) q ORDER BY 1":                                                 "[[1 3] [2 3]]",
+		"SELECT c.id, g.i FROM shop.main.customers c, generate_series(1, 1) AS g(i) ORDER BY c.id":                                                                       "[[1 1] [2 1]]",
+		"SELECT p.id, (p.addr).city AS city FROM shop.main.people p ORDER BY p.id":                                                                                       "[[1 Berlin] [2 Paris]]",
+		"SELECT id, (addr).city AS city FROM shop.main.people ORDER BY id":                                                                                               "[[1 Berlin] [2 Paris]]",
+		"SELECT count(*) FROM shop.main.orders o WHERE EXISTS (SELECT * FROM shop.main.customers c WHERE c.id = o.customer_id)":                                          "[[3]]",
+		"SELECT count(*) FROM shop.main.orders o WHERE o.customer_id IN (SELECT q.cid FROM (SELECT x.*, c.id AS cid FROM shop.main.customers c, (SELECT 1 AS one) x) q)": "[[3]]",
+	} {
+		rows, err := runRows(svc, sql)
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != want {
+			t.Errorf("%s: rows = %s, want %s", sql, got, want)
+		}
+	}
+}
+
+const productsSeed = `
+CREATE TABLE products (id INTEGER, name TEXT, tenant_id TEXT);
+INSERT INTO products VALUES (1, 'Widget', 'acme'), (2, 'Gadget', 'acme');
+`
+
+// products is a second masked table with a column called name.
+const productsPolicies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-products
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["products"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-product-id
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["products"]
+          columns: ["id"]
+  mask:
+    type: "null"
+`
+
+// A join condition does not see the FROM items that follow it, so DuckDB
+// binds a name there to an outer table: the post-query masked column, or
+// the whole row under the table's alias. A later FROM item that has the
+// name as a column must not make the rewriter take it as bound there.
+func TestExecute_PostQueryMaskNameBoundOutward(t *testing.T) {
+	svc, ex, _ := newSeededHelloSluiceService(t, nil, productsSeed, fakeNamePolicy, productsPolicies)
+	const (
+		laterJoin = "FROM shop.main.orders o JOIN shop.main.orders o2 ON o2.id = o.id AND name = 'Alice' JOIN shop.main.products p ON true"
+		wholeRow  = "FROM range(1) a(i) JOIN range(1) b(j) ON to_json(placed_at)::VARCHAR LIKE '%Alice%' JOIN shop.main.orders o ON true"
+	)
+	for _, sql := range []string{
+		"SELECT c.id, (SELECT count(*) " + laterJoin + ") AS k FROM shop.main.customers c ORDER BY c.id",
+		"SELECT c.id FROM shop.main.customers c WHERE EXISTS (SELECT 1 " + laterJoin + ") ORDER BY c.id",
+		"SELECT c.id, (SELECT count(*) FROM shop.main.orders o JOIN shop.main.orders o2 ON o2.id = o.id AND name = 'Alice', shop.main.products p) AS k FROM shop.main.customers c ORDER BY c.id",
+		"SELECT c.id, (SELECT string_agg(g.ch, '' ORDER BY g.i) FROM (SELECT 1 AS one) x JOIN (SELECT a.i, chr(b.j::INT) AS ch FROM generate_series(1, 40) a(i), generate_series(32, 126) b(j)) g ON substr(name, g.i, 1) = g.ch LEFT JOIN shop.main.products p ON false) AS leaked FROM shop.main.customers c ORDER BY c.id",
+		// DuckDB binds a name in LIMIT outward too.
+		"SELECT c.id, (SELECT p.tenant_id FROM shop.main.products p ORDER BY p.tenant_id LIMIT length(name)) AS k FROM shop.main.customers c ORDER BY c.id",
+		// The outer alias is a column of orders.
+		"SELECT placed_at.id, (SELECT count(*) " + wholeRow + ") AS n FROM shop.main.customers placed_at ORDER BY 1",
+		"SELECT placed_at.id, (SELECT string_agg(chr(b.j::INT), '' ORDER BY p.k) FROM range(1, 30) p(k) JOIN range(32, 127) b(j) ON ascii(substr((placed_at).name, p.k::INT, 1)) = b.j JOIN shop.main.orders o ON o.id = 101) AS n FROM shop.main.customers placed_at ORDER BY 1",
+		"SELECT placed_at.id, string_agg(chr(b.j::INT), '' ORDER BY p.k) AS n FROM shop.main.customers placed_at CROSS JOIN range(1, 30) p(k) JOIN range(32, 127) b(j) ON ascii(substr((placed_at).name, p.k::INT, 1)) = b.j JOIN shop.main.orders o ON o.id = 101 GROUP BY 1 ORDER BY 1",
+		"SELECT placed_at.id, (SELECT o.id FROM shop.main.orders o ORDER BY o.id LIMIT length(to_json(placed_at)::VARCHAR)) AS k FROM shop.main.customers placed_at ORDER BY 1",
+		"SELECT o.placed_at FROM shop.main.orders o JOIN shop.main.customers placed_at ON placed_at.id = o.customer_id",
+		// main is a later FROM item with a column called customers.
+		"SELECT customers.id, (SELECT count(*) FROM range(1) a(i) JOIN range(1) b(j) ON to_json(main.customers)::VARCHAR LIKE '%Alice%' JOIN (SELECT 1 AS customers) main ON true) AS n FROM shop.main.customers ORDER BY 1",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, rows)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+
+	// A qualified name says which table is meant.
+	for sql, want := range map[string]string{
+		"SELECT c.id, (SELECT count(*) FROM shop.main.orders o JOIN shop.main.products p ON p.name = 'Widget') AS k FROM shop.main.customers c ORDER BY c.id": "[[1 3] [2 3]]",
+		"SELECT c.id, (SELECT max(p.name) FROM shop.main.products p) AS k FROM shop.main.customers c ORDER BY c.id":                                           "[[1 Widget] [2 Widget]]",
+		"SELECT x.id FROM shop.main.customers x JOIN shop.main.orders o ON o.customer_id = x.id AND o.placed_at IS NOT NULL ORDER BY o.id":                    "[[1] [1] [2]]",
+	} {
+		rows, err := runRows(svc, sql)
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != want {
+			t.Errorf("%s: rows = %s, want %s", sql, got, want)
 		}
 	}
 }
@@ -754,12 +923,11 @@ func TestExecute_WildcardMaskOnJoinedTables(t *testing.T) {
 			t.Errorf("%s: rows = %s, want %s", sql, got, want)
 		}
 	}
-	// id exists in both tables: a real ambiguity, refused.
-	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{
-		SQL: "SELECT tenant_id FROM shop.main.customers c JOIN shop.main.orders o USING (tenant_id)", User: helloUser(),
-	})
-	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeMaskContext {
-		t.Errorf("ambiguous masked column: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", err)
+	// USING merges tenant_id of both tables. Both sides are masked, so the
+	// join compares NULLs and matches nothing.
+	rows, err := runRows(svc, "SELECT tenant_id FROM shop.main.customers c JOIN shop.main.orders o USING (tenant_id)")
+	if err != nil || len(rows) > 0 {
+		t.Errorf("USING on a masked column: rows = %v, err = %v, want no rows", rows, err)
 	}
 }
 
@@ -1008,6 +1176,583 @@ func TestExecute_CallerParamsRefused(t *testing.T) {
 	for _, rec := range a.all() {
 		if rec.Decision != audit.DecisionError || rec.ErrorCode != string(pkgerr.CodeUnsupportedSyntax) {
 			t.Errorf("audit decision %s, error_code %q, want error and ERR_UNSUPPORTED_SYNTAX", rec.Decision, rec.ErrorCode)
+		}
+	}
+}
+
+// runRows executes sql and returns its rows, also the rows read before an
+// error stopped it.
+func runRows(svc *queryservice.Service, sql string) ([][]any, error) {
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Rows.Close() }()
+	var out [][]any
+	for res.Rows.Next() {
+		row := make([]any, len(res.Columns))
+		dest := make([]any, len(row))
+		for i := range row {
+			dest[i] = &row[i]
+		}
+		if err := res.Rows.Scan(dest...); err != nil {
+			return out, err
+		}
+		out = append(out, row)
+	}
+	return out, res.Rows.Err()
+}
+
+const nullTotalCentsPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: null-total-cents
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+          columns: ["total_cents"]
+  mask:
+    type: "null"
+`
+
+const constantTotalCentsPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: constant-total-cents
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+          columns: ["total_cents"]
+  mask:
+    type: constant
+    args:
+      value: 2
+`
+
+// constantEmailPolicy outranks the shipped null mask on email.
+const constantEmailPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: constant-email
+  priority: 60
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: constant
+    args:
+      value: "***"
+`
+
+// USING and NATURAL name the join column with a string, not a column
+// reference. A mask applied where a column is referenced does not reach
+// them, so the join compared the raw values: the matched rows show the
+// value, and the other side returns it. The join must compare masked
+// values. A masked value equals none of the probe values, so no row may
+// come back.
+func TestExecute_MergedJoinOnMaskedColumnComparesMaskedValues(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy string
+		sql    string
+		// DuckDB types NULL AS email as INTEGER, so comparing it with a
+		// string fails. That serves nothing either.
+		errOK bool
+	}{
+		{"USING on a null-masked number", nullTotalCentsPolicy,
+			"SELECT o.id, g.total_cents AS recovered FROM shop.main.orders o JOIN generate_series(0, 100000) AS g(total_cents) USING (total_cents) ORDER BY o.id", false},
+		{"NATURAL on a null-masked number", nullTotalCentsPolicy,
+			"SELECT o.id, g.total_cents AS recovered FROM shop.main.orders o NATURAL JOIN generate_series(0, 100000) AS g(total_cents) ORDER BY o.id", false},
+		{"USING on the null-masked email", "",
+			"SELECT c.id FROM shop.main.customers c JOIN (SELECT 'alice@acme.test' AS email) x USING (email)", true},
+		{"NATURAL on the null-masked email", "",
+			"SELECT c.id FROM shop.main.customers c NATURAL JOIN (SELECT 'alice@acme.test' AS email) x", true},
+		{"USING on a constant-masked email", constantEmailPolicy,
+			"SELECT x.email FROM shop.main.customers c JOIN (VALUES ('alice@acme.test'), ('bob@acme.test'), ('zz@x')) x(email) USING (email)", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var extra []string
+			if tc.policy != "" {
+				extra = append(extra, tc.policy)
+			}
+			svc, _, _ := newHelloSluiceService(t, extra...)
+			rows, err := runRows(svc, tc.sql)
+			if len(rows) > 0 {
+				t.Fatalf("rows = %v, want none: the join compared raw values", rows)
+			}
+			if err != nil && !tc.errOK {
+				t.Fatalf("execute: %v", err)
+			}
+		})
+	}
+}
+
+// A constant mask is a literal. As a whole ORDER BY, GROUP BY or DISTINCT
+// ON key DuckDB reads an integer literal as a select list position, so the
+// key must be the masked column, not the literal.
+func TestExecute_ConstantMaskSortKeyIsNotAPosition(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t, constantTotalCentsPolicy)
+	for sql, want := range map[string]string{
+		"SELECT id, customer_id FROM shop.main.orders ORDER BY total_cents DESC, id":                      "[[101 1] [102 1] [103 2]]",
+		"SELECT total_cents, count(*) AS n FROM shop.main.orders GROUP BY total_cents":                    "[[2 3]]",
+		"SELECT DISTINCT ON (total_cents) total_cents, id FROM shop.main.orders ORDER BY total_cents, id": "[[2 101]]",
+	} {
+		rows, err := runRows(svc, sql)
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != want {
+			t.Errorf("%s: rows = %s, want %s", sql, got, want)
+		}
+	}
+}
+
+const allowAdminUsersPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-admin-users-only
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["admin_users"]
+`
+
+const filterAdminTenantPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-admin-tenant
+  priority: 80
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["admin_users"]
+  combine: restrictive
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenantId }}"
+`
+
+// admin_users has no tenant_id column, and the cache says it has one, as
+// after the column was dropped at the source. DuckDB binds a filter column
+// the table lacks to an outer FROM item or struct column with that name.
+// The filter column is qualified with sluice_src, and a statement whose
+// text holds that name is refused. So a name the caller writes cannot take
+// the place of the table, and the filter fails closed. A name built at run
+// time still can: the residual risk in THREAT_MODEL.md, pinned at the end.
+func TestExecute_WrapperQualifierCannotBeCaptured(t *testing.T) {
+	cache := schema.NewStatic([]*schema.Entry{{
+		Key:     schema.Key{Catalog: "shop", Schema: "main", Table: "admin_users"},
+		Columns: []pkgds.Column{{Name: "id"}, {Name: "username"}, {Name: "role"}, {Name: "tenant_id"}},
+	}})
+	for name, policies := range map[string][]string{
+		"filter only":     {allowAdminUsersPolicy, filterAdminTenantPolicy},
+		"filter and mask": {adminUsersPolicies, filterAdminTenantPolicy},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, ex, _ := newHelloSluiceServiceWithSchema(t, cache, policies...)
+			for _, sql := range []string{
+				"SELECT a.id, a.role FROM (SELECT 'acme' AS tenant_id) x, shop.main.admin_users a",
+				"SELECT a.id, a.role FROM (SELECT 'acme' AS tenant_id) admin_users, shop.main.admin_users a",
+				"SELECT a.id, a.role FROM (SELECT 'acme' AS tenant_id) admin_users JOIN shop.main.admin_users a ON true",
+				"SELECT a.id, a.role FROM (SELECT struct_pack(tenant_id := 'acme') AS admin_users) s, shop.main.admin_users a",
+				"SELECT (SELECT count(*) FROM shop.main.admin_users a) AS n FROM (SELECT 'acme' AS tenant_id) admin_users",
+			} {
+				rows, err := runRows(svc, sql)
+				if err == nil || len(rows) > 0 {
+					t.Errorf("%s: served %v (err %v), want an error and no rows", sql, rows, err)
+				}
+			}
+			// The statement text may not hold the wrapper's own alias.
+			for _, sql := range []string{
+				"SELECT a.id, a.role FROM (SELECT 'acme' AS tenant_id) sluice_src, shop.main.admin_users a",
+				`SELECT a.id, a.role FROM (SELECT 'acme' AS tenant_id) "SLUICE_SRC" JOIN shop.main.admin_users a ON true`,
+				"SELECT a.id, a.role FROM (SELECT struct_pack(tenant_id := 'acme') AS sluice_src) s, shop.main.admin_users a",
+				"WITH sluice_src AS (SELECT 'acme' AS tenant_id) SELECT a.id, a.role FROM sluice_src, shop.main.admin_users a",
+				"SELECT sluice_src.id FROM shop.main.admin_users sluice_src",
+			} {
+				before := ex.calls
+				rows, err := runRows(svc, sql)
+				if err == nil {
+					t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, rows)
+					continue
+				}
+				if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+					t.Errorf("%s: code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code, ae.Message)
+				}
+				if ex.calls != before {
+					t.Errorf("%s: executor was reached", sql)
+				}
+			}
+			// Residual risk: the check reads the statement text, and this
+			// struct key only exists at run time. The filter then tests the
+			// caller's value and every row is served.
+			const runTime = `SELECT a.id, a.role FROM (SELECT unnest(from_json('{"sluice_' || 'src":{"tenant_id":"acme"}}', ` +
+				`'{"sluice_' || 'src":{"tenant_id":"VARCHAR"}}'))) s, shop.main.admin_users a ORDER BY a.id`
+			rows, err := runRows(svc, runTime)
+			if got := fmt.Sprint(rows); err != nil || got != "[[1 superuser] [2 maintainer]]" {
+				t.Errorf("run-time name: rows = %s, err = %v, want the unfiltered rows; when this changes, update the residual risk in THREAT_MODEL.md", got, err)
+			}
+		})
+	}
+}
+
+// The cache entry of customers predates the email column. The mask is on
+// email, so the column must stay hidden or fail, never come back raw.
+func TestExecute_StaleSchemaFailsClosed(t *testing.T) {
+	cache := schema.NewStatic([]*schema.Entry{{
+		Key:     schema.Key{Catalog: "shop", Schema: "main", Table: "customers"},
+		Columns: []pkgds.Column{{Name: "id"}, {Name: "name"}, {Name: "tenant_id"}, {Name: "created_at"}},
+	}})
+	svc, _, _ := newHelloSluiceServiceWithSchema(t, cache)
+	for _, sql := range []string{
+		"SELECT email FROM shop.main.customers",
+		"SELECT id, email FROM shop.main.customers WHERE email LIKE '%@%'",
+		"SELECT c.email FROM shop.main.customers c",
+		"SELECT * FROM shop.main.customers",
+		"SELECT q.email FROM (SELECT * FROM shop.main.customers) q",
+		"SELECT c FROM shop.main.customers c",
+		"SELECT to_json(c) AS j FROM shop.main.customers c",
+	} {
+		rows, err := runRows(svc, sql)
+		if got := fmt.Sprint(rows); strings.Contains(got, "@") {
+			t.Errorf("%s: unmasked email in result %s (err %v)", sql, got, err)
+		}
+	}
+}
+
+const keywordColumnsSeed = `
+CREATE TABLE kw (id INTEGER, "current_date" TEXT, "localtime" TEXT, "current_timestamp" TEXT);
+INSERT INTO kw VALUES (1, 'SECRET-A', 'SECRET-L1', 'SECRET-T1'), (2, 'SECRET-B', 'SECRET-L2', 'SECRET-T2');
+`
+
+const keywordColumnsPolicies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-kw
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["kw"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: fake-kw
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["kw"]
+          columns: ["current_date", "localtime", "current_timestamp"]
+  mask:
+    type: fake
+    args:
+      fakeType: name
+`
+
+// pg_query parses a bare CURRENT_DATE, LOCALTIME or CURRENT_TIMESTAMP as a
+// function, not as a column reference. DuckDB binds the word to a column,
+// a select alias or a table of that name first. With a post-query mask
+// behind the name, the word is refused like the column reference.
+func TestExecute_PostQueryMaskBehindKeywordName(t *testing.T) {
+	svc, ex, _ := newSeededHelloSluiceService(t, nil, keywordColumnsSeed, fakeNamePolicy, keywordColumnsPolicies)
+	for _, sql := range []string{
+		// A post-query masked column with the name of the keyword.
+		"SELECT id, current_date AS d FROM shop.main.kw ORDER BY id",
+		"SELECT id, CAST(current_date AS VARCHAR) AS d FROM shop.main.kw",
+		"SELECT id, concat(current_timestamp, '') AS d FROM shop.main.kw",
+		"SELECT id, lower(localtime) AS d FROM shop.main.kw",
+		"SELECT id FROM shop.main.kw WHERE CAST(current_date AS VARCHAR) LIKE 'SECRET-A%'",
+		"SELECT id FROM shop.main.kw ORDER BY localtime DESC",
+		"SELECT count(*) AS n FROM shop.main.kw GROUP BY localtime",
+		"SELECT k.id FROM shop.main.kw k JOIN shop.main.orders o ON CAST(current_date AS VARCHAR) LIKE 'SECRET-A%'",
+		// The select alias of a bound item.
+		"SELECT c.id, c.name AS localtime, localtime AS leak FROM shop.main.customers c",
+		"SELECT c.id, c.name AS current_date FROM shop.main.customers c ORDER BY current_date DESC",
+		"SELECT c.id, c.name AS current_date FROM shop.main.customers c WHERE CAST(current_date AS VARCHAR) LIKE 'Al%'",
+		// The alias of a table with a post-query mask: the whole row.
+		`SELECT current_date FROM shop.main.customers "current_date"`,
+		`SELECT CAST(localtime AS VARCHAR) AS j FROM shop.main.customers "localtime"`,
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, rows)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+
+	// The quoted name is a column reference and gets the mask.
+	rows, err := runRows(svc, `SELECT id, "current_date", "localtime" FROM shop.main.kw ORDER BY id`)
+	if got := fmt.Sprint(rows); err != nil || len(rows) != 2 || strings.Contains(got, "SECRET") {
+		t.Errorf("quoted names: rows = %s, err = %v, want two masked rows", got, err)
+	}
+	// Without a masked name behind it the keyword stays the function.
+	rows, err = runRows(svc, "SELECT id, current_date > DATE '2000-01-01' AS d FROM shop.main.customers ORDER BY id")
+	if got := fmt.Sprint(rows); err != nil || got != "[[1 true] [2 true]]" {
+		t.Errorf("function: rows = %s, err = %v, want [[1 true] [2 true]]", got, err)
+	}
+}
+
+// The cache entry of orders still lists ghost, a column the source no
+// longer has. Star expansion writes alias.ghost for it, and DuckDB reads
+// that as the select alias ghost: the raw value of the post-query masked
+// item, at a position no mask is bound to. A table called alias is refused.
+func TestExecute_PostQueryMaskTableNamedAliasRefused(t *testing.T) {
+	cache := schema.NewStatic([]*schema.Entry{{
+		Key:     schema.Key{Catalog: "shop", Schema: "main", Table: "customers"},
+		Columns: []pkgds.Column{{Name: "id"}, {Name: "name"}, {Name: "email"}, {Name: "tenant_id"}, {Name: "created_at"}},
+	}, {
+		Key: schema.Key{Catalog: "shop", Schema: "main", Table: "orders"},
+		Columns: []pkgds.Column{{Name: "id"}, {Name: "customer_id"}, {Name: "total_cents"}, {Name: "tenant_id"},
+			{Name: "placed_at"}, {Name: "ghost"}},
+	}})
+	svc, ex, _ := newHelloSluiceServiceWithSchema(t, cache, fakeNamePolicy)
+	for _, sql := range []string{
+		"SELECT c.name AS ghost, alias.* FROM shop.main.customers c, shop.main.orders alias LIMIT 2",
+		"SELECT c.name AS ghost, * FROM shop.main.customers c, shop.main.orders alias LIMIT 2",
+		`SELECT c.name AS ghost, "ALIAS".* FROM shop.main.customers c, shop.main.orders "ALIAS" LIMIT 2`,
+		"SELECT c.name AS ghost, alias.* FROM shop.main.customers c JOIN shop.main.orders alias ON true LIMIT 2",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, rows)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+}
+
+// stubLoader fails every catalog load with err. A nil err loads a catalog
+// without tables.
+type stubLoader struct{ err error }
+
+func (l stubLoader) Load(context.Context, string) (pkgds.Schema, error) {
+	return pkgds.Schema{}, l.err
+}
+
+// A masked table needs its columns from the schema cache. Only a table
+// that a loaded catalog does not have is a rewrite failure. A load that
+// fails keeps its own code: the client can retry it.
+func TestExecute_SchemaLoadErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want pkgerr.Code
+	}{
+		{"canceled during the load", fmt.Errorf("schema: borrow conn: %w", context.Canceled), pkgerr.CodeCanceled},
+		{"deadline during the load", fmt.Errorf("schema: introspect: %w", context.DeadlineExceeded), pkgerr.CodeTimeout},
+		{"load fails", errors.New("introspection failed"), pkgerr.CodeDataSourceUnavailable},
+		{"catalog not attached", schema.ErrUnknownCatalog, pkgerr.CodeDataSourceUnavailable},
+		{"table not in the loaded catalog", nil, pkgerr.CodeRewriteFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := schema.New(schema.Options{Loader: stubLoader{err: tc.err}})
+			svc, ex, a := newHelloSluiceServiceWithSchema(t, cache)
+			rows, err := runRows(svc, "SELECT id FROM shop.main.customers")
+			if err == nil {
+				t.Fatalf("served %v, want %s", rows, tc.want)
+			}
+			if ae := pkgerr.FromError(err); ae.Code != tc.want {
+				t.Fatalf("code = %s (%s), want %s", ae.Code, ae.Message, tc.want)
+			}
+			if ex.calls != 0 {
+				t.Fatal("executor was reached")
+			}
+			recs := a.all()
+			if len(recs) != 1 || recs[0].ErrorCode != string(tc.want) {
+				t.Fatalf("audit records = %+v, want one with %s", recs, tc.want)
+			}
+		})
+	}
+}
+
+// On a query with a post-query mask a star over orders, which has none, is
+// expanded from the schema cache too. A load that fails there keeps its
+// code. It is not a star the caller has to list.
+func TestExecute_SchemaLoadErrorCodesUnderStar(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want pkgerr.Code
+	}{
+		{"canceled during the load", fmt.Errorf("schema: borrow conn: %w", context.Canceled), pkgerr.CodeCanceled},
+		{"deadline during the load", fmt.Errorf("schema: introspect: %w", context.DeadlineExceeded), pkgerr.CodeTimeout},
+		{"load fails", errors.New("introspection failed"), pkgerr.CodeDataSourceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := schema.New(schema.Options{Loader: stubLoader{err: tc.err}})
+			svc, ex, _ := newHelloSluiceServiceWithSchema(t, cache, fakeNamePolicy)
+			for _, sql := range []string{
+				"SELECT * FROM shop.main.orders WHERE customer_id IN (SELECT id FROM shop.main.customers) ORDER BY id",
+				"SELECT o.* FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id",
+			} {
+				rows, err := runRows(svc, sql)
+				if err == nil {
+					t.Errorf("%s: served %v, want %s", sql, rows, tc.want)
+					continue
+				}
+				if ae := pkgerr.FromError(err); ae.Code != tc.want {
+					t.Errorf("%s: code = %s (%s), want %s", sql, ae.Code, ae.Message, tc.want)
+				}
+			}
+			if ex.calls != 0 {
+				t.Error("executor was reached")
+			}
+		})
+	}
+}
+
+// orders has a row filter and no mask. A post-query mask on a table read
+// only in a subquery must not refuse a star over orders.
+func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t, fakeNamePolicy)
+	sql := "SELECT * FROM shop.main.orders WHERE customer_id IN (SELECT id FROM shop.main.customers) ORDER BY id"
+	rows, err := runRows(svc, sql)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	want := "[[101 1 12900 acme 2026-03-01T12:00:00Z] [102 1 4500 acme 2026-03-02T14:20:00Z] [103 2 19900 acme 2026-03-05T10:10:00Z]]"
+	if got := fmt.Sprint(rows); got != want {
+		t.Fatalf("rows = %s, want %s", got, want)
+	}
+}
+
+// These forms were refused because a mask applied where a column is
+// referenced could not follow them. A SQL mask applied in the table wrapper
+// reaches every one, so they are served with the masked values.
+func TestExecute_FormerMaskRefusalsServeMaskedValues(t *testing.T) {
+	const (
+		aliceRow = "map[created_at:2026-01-03T10:00:00Z email:<nil> id:1 name:Alice tenant_id:acme]"
+		bobRow   = "map[created_at:2026-01-04T11:30:00Z email:<nil> id:2 name:Bob tenant_id:acme]"
+		rowsBoth = "[[" + aliceRow + "] [" + bobRow + "]]"
+		twoNulls = "[[<nil>] [<nil>]]"
+	)
+	cases := []struct {
+		name, sql string
+		want      string // exact rows, or "" to check only for addresses
+		n         int    // the row count when want is ""
+	}{
+		{"FROM item named like a masked column", "SELECT email.id FROM shop.main.orders email JOIN shop.main.customers c ON email.customer_id = c.id ORDER BY 1", "[[101] [102] [103]]", 0},
+		{"output alias named like the table alias in HAVING", "SELECT c.tenant_id, count(*) AS c FROM shop.main.customers c GROUP BY c.tenant_id HAVING c > 0", "[[acme 2]]", 0},
+		{"output alias named like the table in HAVING", "SELECT count(*) AS customers FROM shop.main.customers GROUP BY tenant_id HAVING customers > 1", "[[2]]", 0},
+		{"output alias named like the table alias in the select list", "SELECT c.tenant_id AS c, to_json(c) AS j FROM shop.main.customers c ORDER BY c.id",
+			"[[acme " + aliceRow + "] [acme " + bobRow + "]]", 0},
+		{"whole row", "SELECT c FROM shop.main.customers c ORDER BY c.id", rowsBoth, 0},
+		{"whole row, table name", "SELECT customers FROM shop.main.customers ORDER BY customers.id", rowsBoth, 0},
+		{"whole row as function argument", "SELECT to_json(c) AS j FROM shop.main.customers c ORDER BY c.id", rowsBoth, 0},
+		{"whole row field access", "SELECT (c).email AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},
+		{"whole row subscript", "SELECT c['email'] AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},
+		{"whole row in a predicate", "SELECT id FROM shop.main.customers c WHERE CAST(c AS VARCHAR) LIKE '%alice@%'", "[]", 0},
+		{"whole row inside a subquery", "SELECT x FROM (SELECT c AS x FROM shop.main.customers c) q", "", 2},
+		{"whole row from an outer scope", "SELECT (SELECT to_json(c)) AS j FROM shop.main.customers c", "", 2},
+		{"whole row, quoted alias in upper case", `SELECT "C" FROM shop.main.customers c`, "", 2},
+		{"whole row, alias named like a column of an outer table", "SELECT (SELECT placed_at FROM shop.main.customers placed_at ORDER BY id LIMIT 1) AS x FROM shop.main.orders o LIMIT 1", "", 1},
+		{"positional column reference", "SELECT #3 FROM shop.main.customers", twoNulls, 0},
+		{"column alias list on the table", "SELECT c.e2 FROM shop.main.customers AS c(i, n, e2, t, cr) ORDER BY c.i", twoNulls, 0},
+		{"join alias", "SELECT j.email FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j", "[[<nil>] [<nil>] [<nil>]]", 0},
+		{"join alias with column list", "SELECT j.c3 FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j(c1, c2, c3)", "[[<nil>] [<nil>] [<nil>]]", 0},
+		{"star in a pattern match", "SELECT c.* LIKE '%mail' FROM shop.main.customers c", twoNulls, 0},
+		{"star as a sort key", "SELECT id FROM shop.main.customers c ORDER BY c.*", "[[1] [2]]", 0},
+		{"inner alias hides the outer masked table", "SELECT (SELECT c.email FROM shop.main.orders c LIMIT 1) AS e FROM shop.main.customers c", twoNulls, 0},
+		{"CTE alias hides the outer masked table", "WITH k AS (SELECT 1 AS one) SELECT (SELECT c.email FROM k c LIMIT 1) AS e FROM shop.main.customers c", twoNulls, 0},
+		{"table and CTE under one alias", "WITH t AS (SELECT 1 AS x) SELECT c.email FROM shop.main.customers c, t c LIMIT 2", twoNulls, 0},
+		{"two FROM items under one alias", "SELECT c.email FROM shop.main.customers c JOIN shop.main.orders c ON total_cents > 0 AND name IS NOT NULL LIMIT 2", twoNulls, 0},
+		{"star over FULL JOIN USING", "SELECT * FROM shop.main.orders o FULL JOIN shop.main.customers c USING (id) ORDER BY 1",
+			"[[1 <nil> <nil> <nil> <nil> Alice <nil> acme 2026-01-03T10:00:00Z] [2 <nil> <nil> <nil> <nil> Bob <nil> acme 2026-01-04T11:30:00Z] " +
+				"[101 1 12900 acme 2026-03-01T12:00:00Z <nil> <nil> <nil> <nil>] [102 1 4500 acme 2026-03-02T14:20:00Z <nil> <nil> <nil> <nil>] " +
+				"[103 2 19900 acme 2026-03-05T10:10:00Z <nil> <nil> <nil> <nil>]]", 0},
+		{"star over RIGHT JOIN USING in a subquery", "SELECT q.id FROM (SELECT * FROM shop.main.customers c RIGHT JOIN shop.main.orders o USING (id)) q ORDER BY 1", "[[101] [102] [103]]", 0},
+		{"star over NATURAL RIGHT JOIN", "SELECT * FROM shop.main.customers c NATURAL RIGHT JOIN shop.main.orders o ORDER BY 1",
+			"[[101 <nil> <nil> acme <nil> 1 12900 2026-03-01T12:00:00Z] [102 <nil> <nil> acme <nil> 1 4500 2026-03-02T14:20:00Z] [103 <nil> <nil> acme <nil> 2 19900 2026-03-05T10:10:00Z]]", 0},
+	}
+	svc, _, _ := newHelloSluiceService(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := runRows(svc, tc.sql)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			got := fmt.Sprint(rows)
+			switch {
+			case strings.Contains(got, "@"):
+				t.Fatalf("unmasked email in result: %s", got)
+			case tc.want != "" && got != tc.want:
+				t.Fatalf("rows = %s, want %s", got, tc.want)
+			case tc.want == "" && len(rows) != tc.n:
+				t.Fatalf("got %d rows, want %d: %s", len(rows), tc.n, got)
+			}
+		})
+	}
+
+	// admin_users has a mask and no row filter.
+	svc, _, _ = newHelloSluiceService(t, adminUsersPolicies)
+	for sql, want := range map[string]string{
+		"SELECT admin_users FROM shop.main.admin_users ORDER BY admin_users.id": "[[map[id:1 role:superuser username:<nil>]] [map[id:2 role:maintainer username:<nil>]]]",
+		"SELECT #2 FROM shop.main.admin_users":                                  twoNulls,
+	} {
+		rows, err := runRows(svc, sql)
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != want {
+			t.Errorf("%s: rows = %s, want %s", sql, got, want)
 		}
 	}
 }

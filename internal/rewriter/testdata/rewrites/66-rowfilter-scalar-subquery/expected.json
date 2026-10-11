@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT (SELECT count(*) FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers) AS n",
+  "sql": "SELECT (SELECT count(*) FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers) AS n",
   "changed": true,
   "params": [
     "acme"
@@ -10,7 +10,7 @@
     "RowFilterPolicy/filter-tenant",
     "SqlAccessPolicy/allow-analytics"
   ],
-  "fingerprint": "8891ca0b578bd751",
+  "fingerprint": "2c2f3ee2a8cf976b",
   "masks": [
     "shop.main.customers.email=null"
   ],

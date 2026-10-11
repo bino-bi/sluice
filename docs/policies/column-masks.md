@@ -7,30 +7,70 @@ at one of two stages:
 
 | Stage | Providers | How |
 | ----- | --------- | --- |
-| SQL | `null`, `constant`, `partial`, `hash` (sha256), `regex`, `truncate` | the masked expression replaces the column reference in the rewritten query — plaintext never leaves DuckDB |
+| SQL | `null`, `constant`, `partial`, `hash` (sha256), `regex`, `truncate` | applied in a subquery that takes the place of the table in the rewritten query. Plaintext never leaves DuckDB |
 | Post-query | `hash` (hmac_sha256), `fpe`, `jitter`, `fake` | applied in Go to each result row as it streams, because the transform needs key material or logic SQL cannot express |
+
+A table with a column mask is read through a subquery that lists the columns of the table and
+applies the SQL masks:
+
+```sql
+-- client sends (null mask on email, row filter on tenant_id)
+SELECT c.email FROM shop.main.customers c
+-- sluice executes ($1 = the caller's tenant)
+SELECT c.email FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id,
+  sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) c
+```
 
 Matching rules to know:
 
 - A mask **matches nothing unless the selector sets `resources.columns`**. A clause with only
   tables silently masks no columns.
-- `SELECT *` cannot dodge a mask: star expansion (via the schema cache) runs before mask
-  substitution, so every expanded column is checked. This includes a star inside a FROM subquery,
-  a CTE, or a subquery in an expression.
-- A mask follows the column by name, without regard to letter case. Forms that reach the column
-  under another name are refused with `ERR_MASK_UNSUPPORTED_CONTEXT` when the table has a mask:
-  the table alias used as a value (`SELECT c FROM customers c`, `to_json(c)`, `(c).email`), a
-  column alias list (`customers AS c(a, b)`), and an alias on a join
-  (`(a JOIN b ON ...) AS j`). Select the columns by their own names instead.
-- The same code is returned for other forms that would get around the substitution: the
-  schema-qualified table used as a value (`main.customers`), two FROM items under one alias, a
-  positional reference (`#3`), dotted field access into a masked STRUCT column (`info.ssn`), and
-  an unqualified column that two tables of one FROM clause both mask. Qualify the column with the
-  table name in the last case.
-- A post-query masked column can only be a bare item of the outermost select list. Anywhere else
-  it is refused: inside an expression, in `ORDER BY` or `DISTINCT ON`, and inside a subquery or
-  CTE. That includes `SELECT *` in a subquery or CTE over such a table (list the columns you need
-  there), except inside `EXISTS (...)`.
+- A mask follows the column by name, without regard to letter case. The rest of the statement
+  only reads the subquery, so every use of a SQL-masked column gets the masked value: the select
+  list, `WHERE`, `GROUP BY`, `ORDER BY`, join conditions, `SELECT *`, the table alias as a value
+  (`SELECT c`, `to_json(c)`), column alias lists, `#2`, subqueries and CTEs. A `USING` or
+  `NATURAL` join compares the masked values.
+- **Every table with a mask needs an entry in the schema cache**, because the subquery lists its
+  columns. Without an entry the query is refused with `ERR_REWRITE_FAILED`. When the schema
+  cannot be loaded, or the catalog is not attached, the query fails with
+  `ERR_DATASOURCE_UNAVAILABLE`. Write the table with all three parts (`shop.main.customers`).
+- A column that the schema cache does not list is not read. A reload empties the cache, and a
+  catalog is loaded again as a whole on the next lookup that misses one of its tables (a table
+  not cached yet, a name that does not exist, an evicted entry). There is no timer. Until that
+  load a column added at the source is missing from `*` and a query that names it fails, and a
+  column dropped at the source makes every query on the table fail with `ERR_INTERNAL`. With
+  `cache.rewrite.enabled`, a repeated query keeps the old column list for up to
+  `cache.rewrite.ttl` after that load. Do not rely on a new column staying hidden: add its mask
+  before you add the column.
+- A mask rule that names only columns, with no tables, applies to every table it matches. Each of
+  these tables is read through the subquery and needs a schema cache entry, also a table that
+  does not have the column.
+- A row filter on the same table sits in the same subquery and tests the raw value. A mask on the
+  filter column does not change the filter; the query sees the masked value.
+- A masked column read without an alias gets the name of the source column, as an unmasked
+  column does: `SELECT "EMAIL"` returns a column named as the table defines it.
+- The masked column has the type of the mask output. A `null` mask is a `NULL` without the
+  column's type, which DuckDB reads as `INTEGER`. A `constant` mask has the type of its value, so
+  `value: "1900-01-01"` on a date column gives a text column. An expression that needs the
+  original type can fail: `birth_date < DATE '2000-01-01'` under that constant, or a `USING`
+  join of a null-masked text column with a text column.
+- `rowid` does not work on a masked table. A column qualified with the table's schema or catalog
+  (`main.customers.email`) is refused with `ERR_UNSUPPORTED_SYNTAX`; write `customers.email` or
+  use an alias. On a query with a post-query mask the code is `ERR_MASK_UNSUPPORTED_CONTEXT`.
+- On a query with a row filter or a mask, the name `sluice_src` is reserved for the table inside
+  the subquery. A statement that contains it anywhere, also inside a longer name or a string, is
+  refused with `ERR_UNSUPPORTED_SYNTAX`.
+- A post-query masked column passes through the subquery raw and is masked in Go. So it can only
+  be a bare item of the outermost select list. Anywhere else it is refused with
+  `ERR_MASK_UNSUPPORTED_CONTEXT`: inside an expression, in `ORDER BY` or `DISTINCT ON`, and inside
+  a subquery or CTE. That includes `SELECT *` in a subquery or CTE over such a table (list the
+  columns you need there). The exception is `EXISTS (SELECT * FROM ...)`: a star that is the
+  whole select list there is fine, unless the subquery has `ORDER BY`, `GROUP BY` or
+  `DISTINCT ON`. On a query with a post-query mask, `SELECT *` in the outermost select list is
+  expanded against the schema cache, so the cache needs an entry for each table the star covers.
+  Only tables are expanded: a star there over a subquery, a CTE or a table function is refused
+  with the same code, also when the query reads no masked column. List the columns. A star in a
+  subquery or CTE over tables without a post-query mask stays as it is.
 - A post-query mask is applied by result column position, and DuckDB still computes on the raw
   value. So when a select item carries a post-query mask, these forms are refused with the same
   code:
@@ -47,9 +87,45 @@ Matching rules to know:
     post-query mask, and the masked column is refused in the condition of any join. If the result
     still does not have the planned shape (column count, or the column name at a masked
     position), the query is refused before any row is served.
-- A star is only supported as a select item. `c.*` inside an expression is refused on a query
-  with masks. An alias in a subquery must not reuse the alias of an outer masked table for
-  another table.
+- The subquery cannot hide a post-query masked column that is reached under another name. So on a
+  table with a post-query mask these forms are refused with the same code too: the table alias
+  used as a value (`SELECT c FROM customers c`, `to_json(c)`, `(c).name`), the table behind its
+  schema (`main.customers`), dotted field access into the masked column, a subquery alias that
+  reuses the alias of the outer table for another table, and an unqualified column that two
+  tables in scope both mask (qualify it with the table name).
+- A bare `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME` or `LOCALTIMESTAMP` is
+  a function, but DuckDB binds the word to a column, a select alias or a table of that name
+  first. So the bare word is refused with the same code when that name is a post-query masked
+  column in scope, the alias of a select item with a post-query mask, or the alias of a table
+  with a post-query mask. Write the name in quotes (`"current_date"`) to select the column.
+- On a query with a post-query mask these forms are refused as well, on every table of the
+  query, masked or not:
+    - a column alias list on a table (`customers AS c(a, b)`) and a join alias
+      (`(a JOIN b ON ...) AS j`). A reference to a CTE counts as a table here: `q AS x(a, b)` is
+      refused, name the columns in the definition instead (`WITH q(a, b) AS (...)`). A column
+      alias list on a subquery or a table function is fine;
+    - two FROM items under one alias, a star inside an expression (`c.* LIKE ...`) and a
+      positional reference (`#3`);
+    - the `alias.` prefix (`SELECT ssn AS x, alias.x`). DuckDB reads `alias.x` as the select
+      alias `x`, on the raw value. A table called `alias`, by its name or its alias, is refused
+      for the same reason: give it another alias;
+    - a column reference with a qualifier that is not a table name or alias of a FROM clause in
+      scope. Sluice does not guess what DuckDB makes of such a qualifier. This covers a schema
+      or catalog in front of the table (`main.customers.id`) and a column in front of a STRUCT
+      field (`address.city`). Write `customers.id` or use an alias, and write `(address).city`
+      for the field;
+    - `SELECT *` in the outermost select list over a join with `USING` or `NATURAL`
+      (`ERR_UNSUPPORTED_SYNTAX`, list the columns).
+- Where DuckDB binds a name depends on the clause: a join condition does not see the tables
+  joined after it, and binds the name to an outer table instead. Sluice does not follow that. On
+  a table with a post-query mask it refuses a name that could reach the masked column, whatever
+  else the name could mean:
+    - in a subquery or CTE, an unqualified name that is the post-query masked column of a table
+      in scope, also when a table of the subquery has a column of that name. Qualify it:
+      `(SELECT max(t.name) FROM t)`;
+    - a column reference whose last name is the alias of the table (the table name when it has
+      no alias), also a real column of another table: `o.placed_at` next to
+      `customers placed_at`. Give the table another alias.
 - On a query with a mask, a few SQL forms that DuckDB reads in another way than PostgreSQL are
   refused with `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX`. They are listed, with what to write
   instead, in
@@ -85,7 +161,7 @@ spec:
 
 | Arg | Required | Constraint |
 | --- | -------- | ---------- |
-| `value` | yes | any scalar; bound as a parameter, never spliced into SQL |
+| `value` | yes | any scalar; written into the rewritten SQL as a constant, so the masked column has the type of the value |
 
 ```yaml
 apiVersion: sluice.bino.bi/v1alpha1

@@ -1,3 +1,8 @@
+# A masked table is read through a wrapper that lists its columns, so the
+# suite declares them: the runner has no live datasource.
+schema:
+  pg.public.customers: [id, email, tenant_id]
+
 cases:
   - name: analyst reads orders with tenant filter
     identity: { subject: alice, groups: [analysts], claims: { tenant_id: acme } }
@@ -20,4 +25,4 @@ cases:
     expect:
       outcome: allow
       masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(email"]
+      rewrittenSqlContains: ["substr(sluice_src.email"]

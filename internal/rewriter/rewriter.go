@@ -22,14 +22,14 @@ import (
 // Options configures a new Rewriter.
 type Options struct {
 	Parser         parser.Parser
-	Schema         schema.Cache // may be nil when SELECT-* expansion is not needed
+	Schema         schema.Cache // required to read a table with a column mask
 	Logger         *slog.Logger
 	Clock          func() time.Time
 	DefaultCatalog string
 	// DefaultDatabase is DuckDB's current_database(), the catalog of a
 	// table written without one. Unlike DefaultCatalog it does not change
 	// policy keys. It lets the rewriter refuse catalog.t.col on a table
-	// the filter wraps. Empty means unknown.
+	// sluice wraps. Empty means unknown.
 	DefaultDatabase string
 	// Masks resolves mask types beyond the null/constant fast paths.
 	// Nil falls back to mask.Default().
@@ -115,8 +115,8 @@ type PostMask struct {
 //  2. Deny / reject: return a typed APIError.
 //  3. Fast-path: pass-through when no mutation is required.
 //  4. Clone the AST, normalize it for DuckDB and refuse it when DuckDB
-//     reads its deparse in another way than req.Raw. Then apply
-//     expand-star → inject-filter → substitute-mask.
+//     reads its deparse in another way than req.Raw. Then plan the
+//     post-query masks and wrap each filtered or masked table.
 //  5. Deparse, compute fingerprint, return the result.
 //
 // Steps 4+ are only reached when req.AST != nil. The nil-AST branch
@@ -230,16 +230,22 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		snippets:        r.snippets,
 	}
 
-	if err := state.checkMaskedAliases(clone); err != nil {
+	if err := state.checkReservedName(clone); err != nil {
+		return nil, err
+	}
+	if err := state.checkPostMaskForms(clone); err != nil {
 		return nil, err
 	}
 	if err := state.applyExpandStar(clone); err != nil {
 		return nil, err
 	}
-	if err := state.applyInjectFilter(clone); err != nil {
+	if err := state.applyPostMasks(clone); err != nil {
 		return nil, err
 	}
-	if err := state.applySubstituteMask(clone); err != nil {
+	if err := state.applyWrapTables(clone); err != nil {
+		return nil, err
+	}
+	if err := state.verifyWrapped(clone); err != nil {
 		return nil, err
 	}
 	if err := state.applyRewrite(clone); err != nil {
@@ -306,18 +312,27 @@ type state struct {
 	// resultColumns is the select list length postMasks are bound to.
 	resultColumns int
 
-	// wrappers maps each row-filter wrapper to the table it wraps. The
-	// mask pass resolves the wrapper's alias to that table. A subquery the
-	// caller wrote is not in here: it is masked in its own SELECT.
-	wrappers map[*pg.RangeSubselect]*pg.RangeVar
+	// wrapped maps the RangeVar inside each wrapper to the RangeVar the
+	// query wrote.
+	wrapped map[*pg.RangeVar]*pg.RangeVar
 	// subAliases counts the aliases generated for unaliased FROM subqueries.
 	subAliases int
-	// selectDepth is the nesting level of the SELECT the mask pass is in.
+	// topSelect is the outer SELECT of the statement, for star expansion.
+	topSelect *pg.SelectStmt
+	// selectDepth is the nesting level of the SELECT the post-mask guard
+	// walk is in.
 	selectDepth int
 	// localAliases holds the FROM tables of that SELECT alone.
 	localAliases aliasMap
 	// schemaIndex finds schema cache entries by lower-case key.
 	schemaIndex map[string]*schema.Entry
+	// tables keeps the first schema cache answer per table key.
+	tables map[string]tableLookup
+}
+
+type tableLookup struct {
+	entry *schema.Entry
+	err   error
 }
 
 // needsMutation reports whether the decision requires any AST change.

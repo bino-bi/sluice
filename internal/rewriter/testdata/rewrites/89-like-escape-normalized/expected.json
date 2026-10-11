@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT o.id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) o WHERE like_escape(o.status, 'open!_%', '!') OR not_ilike_escape(o.note, '%#%%', '#')",
+  "sql": "SELECT o.id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) o WHERE like_escape(o.status, 'open!_%', '!') OR not_ilike_escape(o.note, '%#%%', '#')",
   "changed": true,
   "params": [
     "t-42"
@@ -9,7 +9,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "0f464f7a861aa204",
+  "fingerprint": "01a16cb0c9f187c7",
   "filters": [
     "pg.public.orders"
   ]

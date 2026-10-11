@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "WITH RECURSIVE x AS (SELECT id, parent_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders UNION ALL SELECT o.id, o.parent_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $2) o JOIN x ON o.parent_id = x.id) SELECT id FROM x",
+  "sql": "WITH RECURSIVE x AS (SELECT id, parent_id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) orders UNION ALL SELECT o.id, o.parent_id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $2) o JOIN x ON o.parent_id = x.id) SELECT id FROM x",
   "changed": true,
   "params": [
     "t-42",
@@ -10,7 +10,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "c2f1723e7b56f675",
+  "fingerprint": "b9f1a1a23ca5c74f",
   "filters": [
     "pg.public.orders"
   ]

@@ -42,6 +42,7 @@ func snippetRewriter(t *testing.T, fc *fakeChecker, p snippetMask) *rewriter.Rew
 		DefaultCatalog: "pg",
 		Masks:          reg,
 		ParseCheck:     fc,
+		Schema:         staticSchema(map[string][]string{"pg.public.orders": {"id", "secret"}}),
 	})
 }
 
@@ -93,7 +94,7 @@ func TestMaskSnippet_Normalized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	if !strings.Contains(res.SQL, "o.secret + to_days(trunc('14'::double precision)::int)") {
+	if !strings.Contains(res.SQL, "sluice_src.secret + to_days(trunc('14'::double precision)::int)") {
 		t.Errorf("SQL = %s, want the to_days expansion", res.SQL)
 	}
 	if n := snippetChecks(fc, snippet); n != 1 {
@@ -101,48 +102,25 @@ func TestMaskSnippet_Normalized(t *testing.T) {
 	}
 }
 
-// The snippet replaces a column inside the caller's expression. Only a top
-// node that the deparse writes as one unit keeps its meaning there.
-func TestMaskSnippet_NotAtomicRefused(t *testing.T) {
-	for _, snippet := range []string{
-		"__col__ || 'x'",
-		"__col__ + 1",
-		"-__col__",
-		"__col__ IS NULL",
-		"NOT __col__",
-		"__col__ = 1 AND true",
-		// pg_query writes these as function calls in SQL syntax, and the
-		// deparse drops their parentheses: x AT TIME ZONE 'UTC' || 'a'.
-		"__col__ AT TIME ZONE 'UTC'",
-		"__col__ IS NORMALIZED",
-	} {
-		t.Run(snippet, func(t *testing.T) {
-			fc := &fakeChecker{fn: trees(`{"error":false}`, `{"error":false}`)}
-			res, err := rewriteSecret(context.Background(), t, snippetRewriter(t, fc, snippetMask{snippet: snippet}), secretSQL)
-			if !errors.Is(err, rewriter.ErrMaskUnsupported) {
-				t.Fatalf("err = %v, SQL = %v, want ErrMaskUnsupported", err, res)
-			}
-			if n := snippetChecks(fc, snippet); n != 0 {
-				t.Errorf("snippet checked %d times, want 0", n)
-			}
-		})
-	}
-}
-
-// These top nodes are written with their own parentheses, so the splice
-// keeps their meaning inside an operator expression.
-func TestMaskSnippet_OwnParenthesesPass(t *testing.T) {
+// The snippet is a whole select item of the table wrapper, the position
+// the DuckDB check sees it in. So any top node keeps its meaning, also an
+// operator or a function in SQL syntax, and the query's expression reads
+// the wrapper column.
+func TestMaskSnippet_WholeWrapperItem(t *testing.T) {
 	for snippet, want := range map[string]string{
-		"greatest(__col__, 0)":                      "GREATEST(o.secret, 0) || 'x'",
-		"least(__col__, 0)":                         "LEAST(o.secret, 0) || 'x'",
-		"nullif(__col__, '')":                       "(NULLIF(o.secret, '')) || 'x'",
-		"trim(__col__)":                             "TRIM (BOTH  FROM o.secret) || 'x'",
-		"TRIM(LEADING 'a' FROM __col__)":            "TRIM (LEADING 'a' FROM o.secret) || 'x'",
-		"EXTRACT(year FROM __col__)":                "extract ('year' FROM o.secret) || 'x'",
-		"substring(__col__ FROM 1 FOR 3)":           "SUBSTRING(o.secret FROM 1 FOR 3) || 'x'",
-		"position('a' IN __col__)":                  "POSITION('a' IN o.secret) || 'x'",
-		"overlay(__col__ PLACING '*' FROM 1 FOR 2)": "OVERLAY(o.secret PLACING '*' FROM 1 FOR 2) || 'x'",
-		"normalize(__col__)":                        "normalize (o.secret) || 'x'",
+		"__col__ || 'x'":                            "sluice_src.secret || 'x' AS secret",
+		"__col__ IS NULL":                           "sluice_src.secret IS NULL AS secret",
+		"__col__ AT TIME ZONE 'UTC'":                "sluice_src.secret AT TIME ZONE 'UTC' AS secret",
+		"greatest(__col__, 0)":                      "GREATEST(sluice_src.secret, 0) AS secret",
+		"least(__col__, 0)":                         "LEAST(sluice_src.secret, 0) AS secret",
+		"nullif(__col__, '')":                       "NULLIF(sluice_src.secret, '') AS secret",
+		"trim(__col__)":                             "TRIM (BOTH  FROM sluice_src.secret) AS secret",
+		"TRIM(LEADING 'a' FROM __col__)":            "TRIM (LEADING 'a' FROM sluice_src.secret) AS secret",
+		"EXTRACT(year FROM __col__)":                "extract ('year' FROM sluice_src.secret) AS secret",
+		"substring(__col__ FROM 1 FOR 3)":           "SUBSTRING(sluice_src.secret FROM 1 FOR 3) AS secret",
+		"position('a' IN __col__)":                  "POSITION('a' IN sluice_src.secret) AS secret",
+		"overlay(__col__ PLACING '*' FROM 1 FOR 2)": "OVERLAY(sluice_src.secret PLACING '*' FROM 1 FOR 2) AS secret",
+		"normalize(__col__)":                        "normalize (sluice_src.secret) AS secret",
 	} {
 		t.Run(snippet, func(t *testing.T) {
 			res, err := rewriteSecret(context.Background(), t, snippetRewriter(t, duckChecker(t), snippetMask{snippet: snippet}),
@@ -150,8 +128,8 @@ func TestMaskSnippet_OwnParenthesesPass(t *testing.T) {
 			if err != nil {
 				t.Fatalf("rewrite: %v", err)
 			}
-			if !strings.Contains(res.SQL, want) {
-				t.Errorf("SQL = %s, want %s", res.SQL, want)
+			if !strings.Contains(res.SQL, want) || !strings.HasPrefix(res.SQL, "SELECT o.secret || 'x' FROM (") {
+				t.Errorf("SQL = %s, want %s in the wrapper", res.SQL, want)
 			}
 		})
 	}
@@ -167,8 +145,7 @@ func TestMaskSnippet_CheckRefuses(t *testing.T) {
 	}
 }
 
-// Every SQL snippet of a built-in provider passes the shape rule and the
-// DuckDB check.
+// Every SQL snippet of a built-in provider passes the DuckDB check.
 func TestMaskSnippet_BuiltinsPass(t *testing.T) {
 	args := map[string][]mask.Args{
 		"null":     {{}},

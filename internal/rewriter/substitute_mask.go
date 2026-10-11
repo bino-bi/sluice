@@ -3,7 +3,9 @@
 package rewriter
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -17,83 +19,43 @@ import (
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
-// applySubstituteMask walks every target-list ColumnRef, WHERE/HAVING
-// expression, and JOIN qualifier in the cloned AST and replaces each
-// masked column reference with the mask provider's SQL expression.
-//
-// MVP mask set: null + constant (pkg/mask builtins). The substitution is
-// a pure AST mutation — no text-level interpolation. Aliases are
-// preserved so downstream consumers see the expected column names.
-func (s *state) applySubstituteMask(raw *pg.ParseResult) error {
-	if raw == nil || len(s.decision.ColumnMasks) == 0 {
+// applyPostMasks plans the post-query masks (FPE, fake, jitter, hmac):
+// bare top-level select items are recorded for Go-side masking. The table
+// wrapper passes such a column through raw, so the guard walk then refuses
+// every use of it that planPostMasks cannot follow. It runs before the
+// tables are wrapped and changes nothing.
+func (s *state) applyPostMasks(raw *pg.ParseResult) error {
+	if raw == nil || !s.hasPostQueryMasks() {
 		return nil
 	}
-	// Post-query masks (FPE, fake, jitter, hmac) are planned first: bare
-	// top-level select items are recorded for Go-side masking, and any
-	// other use of such a column is refused. The SQL substitution pass
-	// then leaves those columns untouched.
-	if s.hasPostQueryMasks() {
-		if err := s.planPostMasks(raw); err != nil {
-			return err
-		}
+	if err := s.planPostMasks(raw); err != nil {
+		return err
 	}
-	for _, stmt := range raw.Stmts {
-		if stmt == nil {
-			continue
-		}
-		if err := s.maskInNode(stmt.Stmt, nil); err != nil {
-			return err
-		}
-	}
-	return nil
+	// planPostMasks only passes a statement that is one plain SELECT.
+	return s.guardSelect(raw.Stmts[0].Stmt.GetSelectStmt(), nil)
 }
 
-func (s *state) maskInNode(n *pg.Node, aliases aliasMap) error {
-	if n == nil {
-		return nil
-	}
-	switch v := n.Node.(type) {
-	case *pg.Node_SelectStmt:
-		if v.SelectStmt != nil {
-			return s.maskInSelect(v.SelectStmt, aliases)
-		}
-	case *pg.Node_RangeSubselect:
-		if v.RangeSubselect != nil {
-			return s.maskInNode(v.RangeSubselect.Subquery, aliases)
-		}
-	case *pg.Node_ExplainStmt:
-		// Rewrite refuses EXPLAIN when a filter or mask applies. This arm
-		// is a backstop in case that gate changes.
-		if v.ExplainStmt != nil {
-			return s.maskInNode(v.ExplainStmt.Query, aliases)
-		}
-	}
-	return nil
-}
-
-func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
+func (s *state) guardSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 	if sel == nil {
 		return nil
 	}
 
-	// Build the alias map for this SELECT so column resolution sees the
-	// wrapped row-filter subqueries as their original tables.
 	aliases := aliasMap{}
 	for alias, ref := range outerAliases {
 		aliases[alias] = ref
 	}
 	local := aliasMap{}
 	for _, f := range sel.FromClause {
-		s.recordFromItemForMask(f, local)
+		s.recordFromItem(f, local)
 	}
 	for alias, ref := range local {
 		// DuckDB falls back to the outer table when the inner one lacks the
 		// column, the lookup below does not.
 		if outer, ok := outerAliases[alias]; ok {
 			outerKey := outer.Catalog + "." + outer.Schema + "." + outer.Table
-			if outerKey != ref.Catalog+"."+ref.Schema+"."+ref.Table && s.tableHasMask(outerKey) {
+			if outerKey != ref.Catalog+"."+ref.Schema+"."+ref.Table && s.tableHasPostMask(outerKey) {
 				return pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
-					"the name %q hides an outer table with masked columns, give it another alias", alias))
+					"the name %q hides an outer table with post-query masked columns, give it another alias", alias))
 			}
 		}
 		aliases[alias] = ref
@@ -114,38 +76,35 @@ func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 				continue
 			}
 			if c, ok := cte.Node.(*pg.Node_CommonTableExpr); ok && c.CommonTableExpr != nil {
-				if err := s.maskInNode(c.CommonTableExpr.Ctequery, outerAliases); err != nil {
+				if err := s.guardSelect(c.CommonTableExpr.Ctequery.GetSelectStmt(), outerAliases); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	for _, f := range sel.FromClause {
-		// A row-filter wrapper holds `SELECT *` and the policy predicate,
-		// nothing the caller wrote. Masking it would mask the predicate.
-		if rs, ok := f.Node.(*pg.Node_RangeSubselect); ok && rs.RangeSubselect != nil && !s.isWrapper(rs.RangeSubselect) {
-			if err := s.maskInNode(rs.RangeSubselect.Subquery, aliases); err != nil {
+		if rs, ok := f.Node.(*pg.Node_RangeSubselect); ok && rs.RangeSubselect != nil {
+			if err := s.guardSelect(rs.RangeSubselect.Subquery.GetSelectStmt(), aliases); err != nil {
 				return err
 			}
 		}
 		if j, ok := f.Node.(*pg.Node_JoinExpr); ok && j.JoinExpr != nil {
-			if err := s.maskInJoin(j.JoinExpr, aliases); err != nil {
+			if err := s.guardJoin(j.JoinExpr, aliases); err != nil {
 				return err
 			}
 		}
 	}
 	if sel.Larg != nil {
-		if err := s.maskInSelect(sel.Larg, aliases); err != nil {
+		if err := s.guardSelect(sel.Larg, aliases); err != nil {
 			return err
 		}
 	}
 	if sel.Rarg != nil {
-		if err := s.maskInSelect(sel.Rarg, aliases); err != nil {
+		if err := s.guardSelect(sel.Rarg, aliases); err != nil {
 			return err
 		}
 	}
 
-	// Output names the caller wrote, before substitution adds its own.
 	outputNames := map[string]bool{}
 	for _, t := range sel.TargetList {
 		if name := t.GetResTarget().GetName(); name != "" {
@@ -153,246 +112,104 @@ func (s *state) maskInSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 		}
 	}
 
-	// TargetList. A bare column ref is substituted in place (preserving
-	// the column alias); anything else — function calls, CASE, casts,
-	// arithmetic — is walked so refs nested inside it are substituted too.
-	for i, t := range sel.TargetList {
-		rt, ok := t.Node.(*pg.Node_ResTarget)
-		if !ok || rt.ResTarget == nil {
-			continue
-		}
-		newVal, origName, err := s.maybeSubstituteColumnRef(rt.ResTarget.Val, aliases)
-		if err != nil {
-			return err
-		}
-		if newVal == nil {
-			if err := s.maskInExpr(rt.ResTarget.Val, aliases); err != nil {
+	// Every expression-bearing clause. VALUES rows too: `(VALUES (c.name))`
+	// in a subquery reads the outer column.
+	for _, list := range [][]*pg.Node{
+		sel.TargetList, {sel.WhereClause, sel.HavingClause, sel.LimitCount, sel.LimitOffset},
+		sel.GroupClause, sel.DistinctClause, sel.WindowClause, sel.ValuesLists,
+	} {
+		for _, n := range list {
+			if err := s.guardExpr(n, aliases); err != nil {
 				return err
 			}
-			continue
-		}
-		// Preserve column alias so the client sees the expected name.
-		if rt.ResTarget.Name == "" && origName != "" {
-			rt.ResTarget.Name = origName
-		}
-		rt.ResTarget.Val = newVal
-		sel.TargetList[i] = t
-	}
-
-	// Every other expression-bearing clause.
-	if err := s.maskExprSlot(&sel.WhereClause, aliases); err != nil {
-		return err
-	}
-	if err := s.maskExprSlot(&sel.HavingClause, aliases); err != nil {
-		return err
-	}
-	for _, list := range [][]*pg.Node{
-		sel.GroupClause, sel.DistinctClause, sel.WindowClause,
-	} {
-		if err := s.maskExprList(list, aliases); err != nil {
-			return err
 		}
 	}
-	for i := range sel.SortClause {
+	for _, sb := range sel.SortClause {
 		// `count(*) AS customers ... ORDER BY customers` sorts by the
 		// output column, not by the table of that name.
-		if name := loneColumnName(sel.SortClause[i].GetSortBy().GetNode()); name != "" && outputNames[name] {
+		if name := loneColumnName(sb.GetSortBy().GetNode()); name != "" && outputNames[name] {
 			// An ambiguous name is fine here too: the output column it
-			// sorts by is already masked.
+			// sorts by is checked as a select item.
 			if _, _, masked, err := s.lookupMaskForColumn(aliases, "", name); err != nil || !masked {
 				continue
 			}
 		}
-		if err := s.maskExprSlot(&sel.SortClause[i], aliases); err != nil {
-			return err
-		}
-	}
-	if err := s.maskExprSlot(&sel.LimitCount, aliases); err != nil {
-		return err
-	}
-	if err := s.maskExprSlot(&sel.LimitOffset, aliases); err != nil {
-		return err
-	}
-	// VALUES rows. `(VALUES (c.email))` in a subquery reads the outer column.
-	return s.maskExprList(sel.ValuesLists, aliases)
-}
-
-// maskExprSlot offers the node itself for substitution (a bare masked
-// column ref) and otherwise walks its expression tree.
-func (s *state) maskExprSlot(slot **pg.Node, aliases aliasMap) error {
-	if slot == nil || *slot == nil {
-		return nil
-	}
-	repl, _, err := s.maybeSubstituteColumnRef(*slot, aliases)
-	if err != nil {
-		return err
-	}
-	if repl != nil {
-		*slot = repl
-		return nil
-	}
-	return s.maskInExpr(*slot, aliases)
-}
-
-func (s *state) maskExprList(list []*pg.Node, aliases aliasMap) error {
-	for i := range list {
-		if err := s.maskExprSlot(&list[i], aliases); err != nil {
+		if err := s.guardExpr(sb, aliases); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *state) maskInJoin(j *pg.JoinExpr, aliases aliasMap) error {
+func (s *state) guardJoin(j *pg.JoinExpr, aliases aliasMap) error {
 	if j == nil {
 		return nil
 	}
 	for _, arg := range []*pg.Node{j.Larg, j.Rarg} {
 		switch v := arg.GetNode().(type) {
 		case *pg.Node_RangeSubselect:
-			if v.RangeSubselect != nil && !s.isWrapper(v.RangeSubselect) {
-				if err := s.maskInNode(v.RangeSubselect.Subquery, aliases); err != nil {
+			if v.RangeSubselect != nil {
+				if err := s.guardSelect(v.RangeSubselect.Subquery.GetSelectStmt(), aliases); err != nil {
 					return err
 				}
 			}
 		case *pg.Node_JoinExpr:
-			if err := s.maskInJoin(v.JoinExpr, aliases); err != nil {
+			if err := s.guardJoin(v.JoinExpr, aliases); err != nil {
 				return err
 			}
 		}
 	}
-	return s.maskExprSlot(&j.Quals, aliases)
+	return s.guardExpr(j.Quals, aliases)
 }
 
-func (s *state) isWrapper(rs *pg.RangeSubselect) bool {
-	_, ok := s.wrappers[rs]
-	return ok
-}
-
-// maskInExpr performs in-place substitution anywhere inside an
-// expression tree. Nested query scopes re-enter the structured walk so
-// alias maps rebuild; every other node is descended generically via
-// protobuf reflection, so no expression context (function args, CASE
-// arms, casts, sort keys, …) can carry a masked column unsubstituted.
-func (s *state) maskInExpr(n *pg.Node, aliases aliasMap) error {
+// guardExpr checks every column reference in an expression of the current
+// SELECT. A nested SELECT is checked in its own scope. The walk is by
+// reflection, so no expression context can hide a reference.
+func (s *state) guardExpr(n *pg.Node, aliases aliasMap) error {
 	if n == nil {
 		return nil
 	}
-	switch v := n.Node.(type) {
-	case *pg.Node_SelectStmt, *pg.Node_RangeSubselect, *pg.Node_ExplainStmt:
-		return s.maskInNode(n, aliases)
-	case *pg.Node_SubLink:
-		if v.SubLink == nil {
-			return nil
+	return walkTree(n.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		switch v := m.Interface().(type) {
+		case *pg.SelectStmt:
+			return false, s.guardSelect(v, aliases)
+		case *pg.ColumnRef:
+			return false, s.guardColumnRef(v, aliases)
+		case *pg.SQLValueFunction:
+			cr := &pg.ColumnRef{Fields: []*pg.Node{pg.MakeStrNode(sqlValueName(v))}}
+			return false, s.guardColumnRef(cr, aliases)
 		}
-		if err := s.maskInNode(v.SubLink.Subselect, aliases); err != nil {
-			return err
-		}
-		// The test expression (left-hand side of IN/ANY) belongs to the
-		// enclosing scope, not the subselect.
-		return s.maskExprSlot(&v.SubLink.Testexpr, aliases)
-	}
-	return s.maskWalkMessage(n.ProtoReflect(), aliases)
-}
-
-// maskWalkMessage descends into every populated message field looking
-// for *pg.Node slots. A node that is a masked bare column ref is
-// replaced in place; anything else recurses through maskInExpr so
-// nested scopes keep their delegation.
-func (s *state) maskWalkMessage(m protoreflect.Message, aliases aliasMap) error {
-	var walkErr error
-	m.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
-		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() {
-			return true
-		}
-		if fd.IsList() {
-			list := val.List()
-			for i := 0; i < list.Len(); i++ {
-				item := list.Get(i).Message()
-				node, ok := item.Interface().(*pg.Node)
-				if !ok {
-					if walkErr = s.maskWalkMessage(item, aliases); walkErr != nil {
-						return false
-					}
-					continue
-				}
-				repl, _, err := s.maybeSubstituteColumnRef(node, aliases)
-				if err != nil {
-					walkErr = err
-					return false
-				}
-				if repl != nil {
-					list.Set(i, protoreflect.ValueOfMessage(repl.ProtoReflect()))
-					continue
-				}
-				if walkErr = s.maskInExpr(node, aliases); walkErr != nil {
-					return false
-				}
-			}
-			return true
-		}
-		msg := val.Message()
-		node, ok := msg.Interface().(*pg.Node)
-		if !ok {
-			walkErr = s.maskWalkMessage(msg, aliases)
-			return walkErr == nil
-		}
-		repl, _, err := s.maybeSubstituteColumnRef(node, aliases)
-		if err != nil {
-			walkErr = err
-			return false
-		}
-		if repl != nil {
-			m.Set(fd, protoreflect.ValueOfMessage(repl.ProtoReflect()))
-			return true
-		}
-		walkErr = s.maskInExpr(node, aliases)
-		return walkErr == nil
+		return true, nil
 	})
-	return walkErr
 }
 
-// maybeSubstituteColumnRef inspects n; if it is a ColumnRef that
-// resolves (via aliases) to a masked column, returns the replacement
-// expression node. Otherwise returns (nil, "", nil).
-func (s *state) maybeSubstituteColumnRef(n *pg.Node, aliases aliasMap) (*pg.Node, string, error) {
-	if n == nil {
-		return nil, "", nil
-	}
-	cr, ok := n.Node.(*pg.Node_ColumnRef)
-	if !ok || cr.ColumnRef == nil {
-		return nil, "", nil
-	}
-	qualifier, column := splitColumnRef(cr.ColumnRef)
+// guardColumnRef refuses a reference that hands a post-query masked value
+// on raw: the masked column in a nested SELECT, which returns it to its
+// parent under a name planPostMasks cannot trace, or the whole row or a
+// field of a table with such a column.
+func (s *state) guardColumnRef(cr *pg.ColumnRef, aliases aliasMap) error {
+	qualifier, column := splitColumnRef(cr)
 	if column == "" {
-		return nil, "", nil
+		return nil
 	}
-	mask, tableKey, ok, err := s.lookupMaskForColumn(aliases, qualifier, column)
+	_, _, ok, err := s.lookupMaskForColumn(aliases, qualifier, column)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
 	if !ok {
-		if err := s.checkWholeRowRef(cr.ColumnRef, aliases); err != nil {
-			return nil, "", err
+		if err := s.checkWholeRowRef(cr, aliases); err != nil {
+			return err
 		}
-		return nil, "", s.checkFieldAccess(cr.ColumnRef, aliases)
+		return s.checkFieldAccess(cr, aliases)
 	}
-	// Post-query masks are handled by planPostMasks; leave the column ref
-	// intact here so the value returns raw for Go-side masking. That only
-	// works for the top-level select list. A nested SELECT would hand the
-	// raw value to its parent under a name planPostMasks cannot trace.
-	if s.isPostQueryMask(mask) {
-		if s.selectDepth > 1 {
-			return nil, "", ErrMaskPostQueryContext
+	if s.selectDepth > 1 {
+		if qualifier == "" {
+			return pkgerr.Wrap(pkgerr.CodeMaskContext, ErrMaskPostQueryContext).WithMessage(fmt.Sprintf(
+				"column %q is post-query masked in a table in scope and cannot be used in a nested SELECT; to read the column of another table, qualify it with the table name", column))
 		}
-		return nil, "", nil
+		return ErrMaskPostQueryContext
 	}
-	expr, err := s.buildMaskExpr(mask, tableKey, column, n)
-	if err != nil {
-		return nil, "", fmt.Errorf("column %s.%s: %w", tableKey, column, err)
-	}
-	s.rewrites = append(s.rewrites, "column-mask:"+tableKey+"."+column)
-	return expr, column, nil
+	return nil
 }
 
 // loneColumnName returns the lower-case name of an unqualified column
@@ -405,12 +222,12 @@ func loneColumnName(n *pg.Node) string {
 	return foldName(cr.Fields[0].GetString_().GetSval())
 }
 
-// checkWholeRowRef refuses a name that is a table and not a column: the
-// alias alone (`c`) or the table behind its schema or catalog
-// (`main.customers`). DuckDB returns the whole row as a struct for it.
-// Masks are substituted where a column is referenced, so the struct would
-// carry the masked columns raw, also into to_json(c), (c).email or
-// c['email'].
+// checkWholeRowRef refuses a reference whose last name is the alias or
+// name of a table with a post-query mask: the alias alone (`c`) or behind
+// a schema or catalog (`main.customers`). DuckDB returns the whole row as
+// a struct for it, with the masked column raw, also in to_json(c),
+// (c).name or c['name']. A column of that name in scope is no exception:
+// which of the two DuckDB binds depends on the clause.
 func (s *state) checkWholeRowRef(cr *pg.ColumnRef, aliases aliasMap) error {
 	n := len(cr.Fields)
 	if n == 0 || n > 3 {
@@ -418,28 +235,14 @@ func (s *state) checkWholeRowRef(cr *pg.ColumnRef, aliases aliasMap) error {
 	}
 	name := foldName(cr.Fields[n-1].GetString_().GetSval())
 	ref, ok := aliases[name]
-	if !ok || !s.tableHasMask(ref.Catalog+"."+ref.Schema+"."+ref.Table) {
+	if !ok || !s.tableHasPostMask(ref.Catalog+"."+ref.Schema+"."+ref.Table) {
 		return nil
 	}
-	if n == 1 {
-		// A real column with that name wins over the table in DuckDB, but
-		// only a column of this SELECT's own FROM items. A column of an
-		// outer table does not: the inner alias is found first.
-		if s.columnInScope(name, s.localAliases) {
-			return nil
-		}
-	} else {
-		// `t.col` is a column when t is a table in scope that has it.
-		q := foldName(cr.Fields[n-2].GetString_().GetSval())
-		if qref, ok := aliases[q]; ok && s.columnInScope(name, aliasMap{q: qref}) {
-			return nil
-		}
-	}
 	return pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
-		"%q names a table with masked columns and cannot be used as a value, select its columns by name", name))
+		"%q names a table with post-query masked columns and cannot be used as a value or column name; select the table's columns by name, or give the table another alias", name))
 }
 
-// checkFieldAccess refuses dotted access into a masked column
+// checkFieldAccess refuses dotted access into a post-query masked column
 // (`info.ssn`, `p.info.ssn` for a STRUCT column info). pg_query reads the
 // last name as the column, so the normal lookup finds no mask.
 func (s *state) checkFieldAccess(cr *pg.ColumnRef, aliases aliasMap) error {
@@ -458,21 +261,17 @@ func (s *state) checkFieldAccess(cr *pg.ColumnRef, aliases aliasMap) error {
 			}
 			scope = aliasMap{qualifier: ref}
 		}
-		m, _, masked, err := s.lookupMaskForColumn(scope, qualifier, column)
+		_, _, masked, err := s.lookupMaskForColumn(scope, qualifier, column)
 		if err == nil && !masked {
 			continue
 		}
 		// A wildcard mask matches any name, also a table alias. Only a
-		// real column counts. Without a schema cache trust literal masks.
-		if s.schema != nil {
-			if !s.columnInScope(column, scope) {
-				continue
-			}
-		} else if m == nil || strings.Contains(m.Column, "*") {
+		// real column counts.
+		if !s.columnInScope(column, scope) {
 			continue
 		}
 		return pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
-			"field access on masked column %q is not supported", column))
+			"field access on post-query masked column %q is not supported", column))
 	}
 	return nil
 }
@@ -487,13 +286,10 @@ func (s *state) tableHasMask(tableKey string) bool {
 }
 
 // columnInScope reports whether a table in scope has a column called name.
-// Without a schema cache this cannot be shown, so the answer is no.
+// Without a schema cache entry this cannot be shown, so the answer is no.
 func (s *state) columnInScope(name string, aliases aliasMap) bool {
-	if s.schema == nil {
-		return false
-	}
 	for _, ref := range aliases {
-		entry, err := s.schemaEntry(schema.Key{Catalog: ref.Catalog, Schema: ref.Schema, Table: ref.Table})
+		entry, err := s.tableEntry(ref.Catalog + "." + ref.Schema + "." + ref.Table)
 		if err != nil {
 			continue
 		}
@@ -506,38 +302,48 @@ func (s *state) columnInScope(name string, aliases aliasMap) bool {
 	return false
 }
 
-// checkMaskedAliases refuses FROM aliases that give the columns of a masked
-// table another name: a column alias list (`t AS x(a, b)`) and an alias on
-// a join (`(a JOIN b ON ...) AS j`). The mask pass resolves a column by its
-// own name under the table's alias and cannot follow either form. It must
-// run before row filters wrap the tables.
-func (s *state) checkMaskedAliases(raw *pg.ParseResult) error {
-	if raw == nil || len(s.decision.ColumnMasks) == 0 {
+// checkPostMaskForms runs when the decision has a post-query mask. It
+// refuses forms that give a column another name or position: a column
+// alias list on a table (`t AS x(a, b)`), a join alias (`(a JOIN b ON
+// ...) AS j`), two FROM items under one name, a star inside an
+// expression, `#N`, the `alias.` prefix and a table called alias. The guard
+// walk and star expansion resolve a column by its own name under the
+// table's alias and cannot follow them. The two alias rules cover every
+// table, masked or not: star expansion lists a table by its cached column
+// names. A CTE reference counts as a table here. Then every qualifier must
+// be a FROM item (checkQualifiers). It must run before the tables are
+// wrapped.
+func (s *state) checkPostMaskForms(raw *pg.ParseResult) error {
+	if raw == nil || !s.hasPostQueryMasks() {
 		return nil
 	}
-	refuse := func(what string) error {
-		return pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
-			what + " on a table with masked columns is not supported, refer to the columns by their own names")
-	}
-	return walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+	err := walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
 		switch v := m.Interface().(type) {
 		case *pg.RangeVar:
-			if len(v.GetAlias().GetColnames()) > 0 && s.rangeVarHasMask(v) {
-				return false, refuse("a column alias list")
+			if len(v.GetAlias().GetColnames()) > 0 {
+				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
+					"a column alias list on a table or CTE reference is not supported with post-query masks; refer to the columns by their own names, or name the columns of a CTE in its definition (WITH q(a, b) AS ...)")
+			}
+			// Star expansion writes alias.<col> for such a table. See the
+			// alias. prefix rule below.
+			if aliasKey(v) == "alias" {
+				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
+					`a table called "alias" is not supported with post-query masks, give it another alias`)
 			}
 		case *pg.JoinExpr:
-			if (v.Alias != nil || v.JoinUsingAlias != nil) && s.joinHasMaskedTable(v) {
-				return false, refuse("a join alias")
+			if v.Alias != nil || v.JoinUsingAlias != nil {
+				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
+					"a join alias is not supported with post-query masks, refer to the columns by their own names")
 			}
 		case *pg.SelectStmt:
-			// Two FROM items under one name: the mask pass can only keep
+			// Two FROM items under one name: the guard walk can only keep
 			// one of them, and the other table's masks would be skipped.
 			if dup := duplicateFromName(v.FromClause, map[string]bool{}); dup != "" {
 				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
 					"the name %q is used for more than one FROM item, give each its own alias", dup))
 			}
 		case *pg.ResTarget:
-			// A star that is a select item itself is expanded before masking.
+			// A star that is a select item itself is left to star expansion.
 			if isStarRef(v.GetVal().GetColumnRef()) {
 				return false, nil
 			}
@@ -545,14 +351,64 @@ func (s *state) checkMaskedAliases(raw *pg.ParseResult) error {
 			// DuckDB reads `c.* LIKE 'email'` as the columns of c that match.
 			if isStarRef(v) {
 				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
-					"a star inside an expression is not supported with column masks, list the columns")
+					"a star inside an expression is not supported with post-query masks, list the columns")
+			}
+			// DuckDB reads `alias.n` as the select alias n, also when a FROM
+			// item is called alias and has no column n. That reads a bound
+			// post-query masked item raw.
+			if len(v.Fields) > 1 && foldName(v.Fields[0].GetString_().GetSval()) == "alias" {
+				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
+					"the alias. prefix is not supported with post-query masks")
 			}
 		case *pg.A_Expr:
 			// DuckDB reads `#3` as the third column of the FROM list.
 			if v.Lexpr == nil && len(v.Name) == 1 && v.Name[0].GetString_().GetSval() == "#" {
 				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
-					"positional column references (#N) are not supported with column masks")
+					"positional column references (#N) are not supported with post-query masks")
 			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return err
+	}
+	return eachSubquery(raw.ProtoReflect(), func(sel *pg.SelectStmt) error {
+		return checkQualifiers(sel, nil)
+	})
+}
+
+// checkQualifiers refuses a column reference with two or more parts whose
+// first part is not a FROM item of its SELECT or of a SELECT around it.
+// DuckDB resolves such a qualifier in ways the guard walk does not follow:
+// a schema or catalog in front of a table, a column in front of a STRUCT
+// field. outer holds the names of the SELECTs around sel. The walk is by
+// reflection, so no clause can hide a reference.
+func checkQualifiers(sel *pg.SelectStmt, outer map[string]bool) error {
+	names := map[string]bool{}
+	maps.Copy(names, outer)
+	for _, f := range sel.GetFromClause() {
+		for _, item := range appendFromEntries(nil, f, aliasMap{}, "") {
+			names[item.alias] = true
+		}
+	}
+	return walkTree(sel.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		switch v := m.Interface().(type) {
+		case *pg.SelectStmt:
+			if v != sel {
+				return false, checkQualifiers(v, names)
+			}
+		case *pg.CommonTableExpr:
+			// A CTE body cannot see the FROM items of the SELECT that defines it.
+			return false, checkQualifiers(v.GetCtequery().GetSelectStmt(), outer)
+		case *pg.ColumnRef:
+			if len(v.Fields) < 2 {
+				return false, nil
+			}
+			if q := foldName(v.Fields[0].GetString_().GetSval()); q == "" || !names[q] {
+				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
+					"%q is not a table or alias of the FROM clause; with post-query masks qualify columns with a table alias, and write (col).field for a STRUCT field", q))
+			}
+			return false, nil
 		}
 		return true, nil
 	})
@@ -590,31 +446,10 @@ func duplicateFromName(items []*pg.Node, seen map[string]bool) string {
 	return ""
 }
 
-func (s *state) rangeVarHasMask(rv *pg.RangeVar) bool {
-	return s.tableHasMask(tableKeyOf(rv, s.defaultCatalog))
-}
-
-// joinHasMaskedTable looks at the tables joined directly. A subquery in
-// the join is masked in its own SELECT and does not count.
-func (s *state) joinHasMaskedTable(j *pg.JoinExpr) bool {
-	for _, arg := range []*pg.Node{j.GetLarg(), j.GetRarg()} {
-		if rv := arg.GetRangeVar(); rv != nil && s.rangeVarHasMask(rv) {
-			return true
-		}
-		if inner := arg.GetJoinExpr(); inner != nil && s.joinHasMaskedTable(inner) {
-			return true
-		}
-	}
-	return false
-}
-
 // lacksColumn reports whether the schema cache shows that the table has no
 // column of that name. Unknown counts as "may have it".
 func (s *state) lacksColumn(ref parser.TableRef, column string) bool {
-	if s.schema == nil {
-		return false
-	}
-	entry, err := s.schemaEntry(schema.Key{Catalog: ref.Catalog, Schema: ref.Schema, Table: ref.Table})
+	entry, err := s.tableEntry(ref.Catalog + "." + ref.Schema + "." + ref.Table)
 	if err != nil {
 		return false
 	}
@@ -626,11 +461,33 @@ func (s *state) lacksColumn(ref parser.TableRef, column string) bool {
 	return true
 }
 
+// tableEntry returns the schema cache entry of a table key. The first
+// answer is kept for the whole Rewrite, so star expansion, the post-mask
+// checks and the wrapper all use one column list, even when another
+// request reloads the catalog in between.
+func (s *state) tableEntry(key string) (*schema.Entry, error) {
+	if r, ok := s.tables[key]; ok {
+		return r.entry, r.err
+	}
+	entry, err := s.schemaEntry(key)
+	if err != nil {
+		err = fmt.Errorf("%w: %s: %w", ErrSchemaMissing, key, err)
+	}
+	if s.tables == nil {
+		s.tables = map[string]tableLookup{}
+	}
+	s.tables[key] = tableLookup{entry: entry, err: err}
+	return entry, err
+}
+
 // schemaEntry looks a table up in the schema cache without regard to
 // case. Keys in this package are lower case, the cache keeps the names the
 // source reports.
-func (s *state) schemaEntry(key schema.Key) (*schema.Entry, error) {
-	folded := strings.ToLower(key.Catalog + "." + key.Schema + "." + key.Table)
+func (s *state) schemaEntry(key string) (*schema.Entry, error) {
+	if s.schema == nil {
+		return nil, errors.New("schema cache not configured")
+	}
+	folded := strings.ToLower(key)
 	if s.schemaIndex == nil {
 		s.indexSchema()
 	}
@@ -638,7 +495,8 @@ func (s *state) schemaEntry(key schema.Key) (*schema.Entry, error) {
 		return e, nil
 	}
 	// Not cached under any case: Get loads the catalog.
-	entry, err := s.schema.Get(s.ctx, key)
+	catalog, schemaName, table := splitTableKey(key)
+	entry, err := s.schema.Get(s.ctx, schema.Key{Catalog: catalog, Schema: schemaName, Table: table})
 	if err == nil {
 		return entry, nil
 	}
@@ -661,12 +519,15 @@ func (s *state) indexSchema() {
 	}
 }
 
-// lookupMaskForColumn returns the mask registered for the column under
-// the resolved TableRef. A qualifier matches alias-exact; if no
+// lookupMaskForColumn returns the post-query mask that wins for the column
+// under the resolved TableRef. A SQL mask is applied in the table wrapper,
+// so a column it wins is not a hit. A qualifier matches alias-exact; if no
 // qualifier was given we walk every aliased table looking for a unique
-// hit. Mask column selectors may be wildcard patterns ("*", "ssn_*"), so
-// resolution matches the actual column against each mask's pattern rather
-// than doing an exact key lookup.
+// hit. An inner table that has a column of the same name does not hide an
+// outer hit: where DuckDB binds the name depends on the clause. Mask
+// column selectors may be wildcard patterns ("*", "ssn_*"), so resolution
+// matches the actual column against each mask's pattern rather than doing
+// an exact key lookup.
 func (s *state) lookupMaskForColumn(aliases aliasMap, qualifier, column string) (*policy.CompiledMask, string, bool, error) {
 	if qualifier != "" {
 		ref, ok := aliases[foldName(qualifier)]
@@ -674,23 +535,20 @@ func (s *state) lookupMaskForColumn(aliases aliasMap, qualifier, column string) 
 			return nil, "", false, nil
 		}
 		tk := ref.Catalog + "." + ref.Schema + "." + ref.Table
-		if m, ok := s.maskForResolvedColumn(tk, column); ok {
+		if m, ok := s.maskForResolvedColumn(tk, column); ok && s.isPostQueryMask(m) {
 			return m, tk, true, nil
 		}
 		return nil, "", false, nil
 	}
-	// DuckDB binds an unqualified name to the innermost SELECT that has
-	// it, so the tables of the current SELECT are asked first.
+	// The tables of the current SELECT are asked first, so a hit there and
+	// one in an outer SELECT are not ambiguous. Any hit counts.
 	for _, scope := range []aliasMap{s.localAliases, aliases} {
 		var hit *policy.CompiledMask
 		var hitKey string
-		for alias, ref := range scope {
-			if _, visible := aliases[alias]; !visible {
-				continue
-			}
+		for _, ref := range scope {
 			tk := ref.Catalog + "." + ref.Schema + "." + ref.Table
 			m, ok := s.maskForResolvedColumn(tk, column)
-			if !ok {
+			if !ok || !s.isPostQueryMask(m) {
 				continue
 			}
 			// A wildcard mask matches any name. A table that is known not
@@ -702,7 +560,7 @@ func (s *state) lookupMaskForColumn(aliases aliasMap, qualifier, column string) 
 				// Two tables of one scope mask a column of this name.
 				// Serving the reference could leave it unmasked.
 				return nil, "", false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
-					"column %q is masked in more than one table in scope, qualify it with the table name", column))
+					"column %q is post-query masked in more than one table in scope, qualify it with the table name", column))
 			}
 			hit = m
 			hitKey = tk
@@ -795,10 +653,10 @@ func splitColumnRef(cr *pg.ColumnRef) (string, string) {
 	return qualifier, column
 }
 
-// buildMaskExpr returns the AST node that replaces the masked ColumnRef.
-// null and constant keep their literal fast paths (byte-identical output
-// to the MVP); every other type goes through the provider's MaskSQL
-// snippet, parsed and spliced around a clone of the original reference.
+// buildMaskExpr returns the expression the wrapper projects for a masked
+// column; orig is the column reference it reads. null and constant keep
+// their literal fast paths; every other type goes through the provider's
+// MaskSQL snippet, parsed and spliced around a clone of orig.
 func (s *state) buildMaskExpr(m *policy.CompiledMask, tableKey, column string, orig *pg.Node) (*pg.Node, error) {
 	switch m.Type {
 	case apitypes.MaskNull:
@@ -880,12 +738,12 @@ func intConst(n int64) *pg.Node {
 	}}}
 }
 
-// recordFromItemForMask registers the tables of one FROM item under the
-// names a query can use to qualify their columns. A row-filter wrapper
-// stands for its table. A subquery the caller wrote is not registered: its
-// columns are masked in its own SELECT, and a column it derives under the
-// name of a masked column is not that column.
-func (s *state) recordFromItemForMask(n *pg.Node, out aliasMap) {
+// recordFromItem registers the tables of one FROM item under the
+// names a query can use to qualify their columns. A subquery the caller
+// wrote is not registered: its columns are checked in its own SELECT, and
+// a column it derives under the name of a masked column is not that
+// column.
+func (s *state) recordFromItem(n *pg.Node, out aliasMap) {
 	if n == nil {
 		return
 	}
@@ -896,12 +754,8 @@ func (s *state) recordFromItemForMask(n *pg.Node, out aliasMap) {
 		}
 	case *pg.Node_JoinExpr:
 		if v.JoinExpr != nil {
-			s.recordFromItemForMask(v.JoinExpr.Larg, out)
-			s.recordFromItemForMask(v.JoinExpr.Rarg, out)
-		}
-	case *pg.Node_RangeSubselect:
-		if rv, ok := s.wrappers[v.RangeSubselect]; ok {
-			recordTable(rv, out, s.defaultCatalog)
+			s.recordFromItem(v.JoinExpr.Larg, out)
+			s.recordFromItem(v.JoinExpr.Rarg, out)
 		}
 	}
 }

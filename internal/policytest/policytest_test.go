@@ -278,3 +278,80 @@ func TestRunner_DefaultDatabaseQualifier(t *testing.T) {
 		}
 	}
 }
+
+// An allow case fails when its rewrite fails, also without a rewrite
+// assertion. A masked table without a schema entry cannot be rewritten.
+func TestRunner_AllowCaseFailsOnRewriteError(t *testing.T) {
+	requireRealParser(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(maskPoliciesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := newRunner(t, dir)
+	rep, err := runner.Run(context.Background(), &policytest.Suite{Cases: []policytest.Case{{
+		Name:     "masked table without schema",
+		Identity: policytest.Identity{Subject: "alice"},
+		SQL:      "SELECT id, email FROM pg.public.customers",
+		Expect:   policytest.Expect{Outcome: "allow", Masks: []string{"pg.public.customers.email=constant"}},
+	}}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Failed != 1 || len(rep.Cases[0].Failures) != 1 {
+		t.Fatalf("report = %+v, want the case to fail once", rep.Cases)
+	}
+	if msg := rep.Cases[0].Failures[0]; !strings.Contains(msg, "pg.public.customers") || !strings.Contains(msg, "schema:") {
+		t.Errorf("failure = %q, want the table and a hint to add schema:", msg)
+	}
+}
+
+const postMaskPolicyYAML = `
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: fake-name, priority: 50 }
+spec:
+  match:
+    any:
+      - resources: { tables: ["employees"], columns: ["name"] }
+  mask:
+    type: fake
+    args:
+      fakeType: name
+`
+
+// errorCode asserts the code the server returns for a refused rewrite,
+// also when the rewriter returns a plain sentinel error.
+func TestRunner_ErrorCodeOfRewriteSentinels(t *testing.T) {
+	requireRealParser(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(maskPoliciesYAML+postMaskPolicyYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := newRunner(t, dir)
+	for _, s := range []*policytest.Suite{
+		{Cases: []policytest.Case{{
+			Name:     "masked table without schema",
+			Identity: policytest.Identity{Subject: "alice"},
+			SQL:      "SELECT id FROM pg.public.customers",
+			Expect:   policytest.Expect{Outcome: "allow", ErrorCode: "ERR_REWRITE_FAILED"},
+		}}},
+		{
+			Schema: map[string][]string{"pg.hr.employees": {"id", "name"}},
+			Cases: []policytest.Case{{
+				Name:     "post-query masked column in WHERE",
+				Identity: policytest.Identity{Subject: "alice"},
+				SQL:      "SELECT id FROM pg.hr.employees WHERE name = 'x'",
+				Expect:   policytest.Expect{Outcome: "allow", ErrorCode: "ERR_MASK_UNSUPPORTED_CONTEXT"},
+			}},
+		},
+	} {
+		rep, err := runner.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if rep.Failed != 0 {
+			t.Errorf("%s: %v", rep.Cases[0].Name, rep.Cases[0].Failures)
+		}
+	}
+}

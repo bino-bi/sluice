@@ -96,7 +96,10 @@ ERR_UNSUPPORTED_SYNTAX SELECT memory.t.id FROM t ORDER BY 1
 ERR_UNSUPPORTED_SYNTAX SELECT "memory"."main"."t"."a" FROM "memory"."main"."t" ORDER BY 1
 ERR_UNSUPPORTED_SYNTAX SELECT main.t.st.x FROM t ORDER BY 1
 ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE main.t.a = 1 ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT (SELECT max(main.u.a) FROM u WHERE u.id = t.id) FROM t ORDER BY t.id
+ERR_UNSUPPORTED_SYNTAX SELECT (SELECT max(main.v.a) FROM v WHERE v.id = t.id) FROM t ORDER BY t.id
+# u has a post-query mask. There a qualifier that is no FROM item is refused
+# before the wrap.
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT (SELECT max(main.u.a) FROM u WHERE u.id = t.id) FROM t ORDER BY t.id
 same SELECT t.id FROM main.t ORDER BY 1
 same SELECT x.id FROM main.t x ORDER BY 1
 same SELECT t.st.x FROM t ORDER BY t.id

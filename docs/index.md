@@ -42,7 +42,7 @@ SELECT id, email FROM shop.main.customers
 Sluice executes:
 
 ```sql
-SELECT id, email FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers
+SELECT id, email FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers
 ```
 
 with `$1` bound to the caller's `tenantId` claim — a positional parameter, never string concatenation.

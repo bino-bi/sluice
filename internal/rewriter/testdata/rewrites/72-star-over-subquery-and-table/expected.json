@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT o.id, o.customer_id, o.total_cents, o.tenant_id, o.placed_at, q.* FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) o, (SELECT customers.id, customers.name, NULL AS email, customers.tenant_id, customers.created_at FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $2) customers) q",
+  "sql": "SELECT * FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $1) o, (SELECT * FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $2) customers) q",
   "changed": true,
   "params": [
     "acme",
@@ -11,7 +11,7 @@
     "RowFilterPolicy/filter-tenant",
     "SqlAccessPolicy/allow-analytics"
   ],
-  "fingerprint": "c2caafdab5731c57",
+  "fingerprint": "b8c5dd19169b8fd0",
   "masks": [
     "shop.main.customers.email=null"
   ],

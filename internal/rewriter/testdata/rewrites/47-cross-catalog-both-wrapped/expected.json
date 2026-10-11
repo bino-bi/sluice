@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT p.name, m.salary FROM (SELECT * FROM pg.hr.person WHERE tenant_id = $1) p JOIN (SELECT * FROM mysql_erp.hr.compensation WHERE tenant_id = $2) m ON p.id = m.person_id",
+  "sql": "SELECT p.name, m.salary FROM (SELECT * FROM pg.hr.person sluice_src WHERE sluice_src.tenant_id = $1) p JOIN (SELECT * FROM mysql_erp.hr.compensation sluice_src WHERE sluice_src.tenant_id = $2) m ON p.id = m.person_id",
   "changed": true,
   "params": [
     "t-42",
@@ -11,7 +11,7 @@
     "RowFilterPolicy/rls-person",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "b879ad879b7fc796",
+  "fingerprint": "8310a2f45c951899",
   "filters": [
     "mysql_erp.hr.compensation",
     "pg.hr.person"
