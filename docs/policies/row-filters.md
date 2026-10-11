@@ -21,6 +21,9 @@ attached source with all three parts (`shop.main.orders`): the two-part form `sh
 refused with `ACL_REJECTED`, because DuckDB reads it as catalog and table while policies read it
 as schema and table.
 The original alias is preserved so outer column references keep resolving.
+A filtered table without an alias gets a wrapper named after the table. When that lower-case
+name is one DuckDB reads as a keyword (`semi`, `anti`, `asof`, `positional`, `by`, `qualify`,
+...), the query is refused with `ERR_UNSUPPORTED_SYNTAX`. Give the table an alias.
 
 A filter carries exactly one of two bodies: a structured predicate tree (`filter.predicate`) or a
 CEL expression (`filter.expression`). Both compile to the same parameterized form.

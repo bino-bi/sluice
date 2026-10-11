@@ -77,17 +77,26 @@ type RewriteResult struct {
 	// (FPE, fake, jitter, hmac). ColumnIndex is the zero-based position in
 	// the result set; queryservice builds one mask per entry.
 	PostMasks []PostMask
+	// ResultColumnCount is the number of columns the statement returns. It
+	// is set with PostMasks; queryservice refuses a result of another shape.
+	ResultColumnCount int
+	// Sampled reports the sample wrap. Its SELECT * makes DuckDB rename a
+	// duplicate column name to name_1, name_2 and so on.
+	Sampled bool
 }
 
 // PostMask describes one post-query masking instruction bound to a result
 // column position.
 type PostMask struct {
 	ColumnIndex int
-	TableKey    string
-	Column      string
-	Type        apitypes.MaskType
-	Args        pkgmask.Args
-	Policy      string
+	// OutputName is the result column name DuckDB gives the item: its
+	// alias, else the column name.
+	OutputName string
+	TableKey   string
+	Column     string
+	Type       apitypes.MaskType
+	Args       pkgmask.Args
+	Policy     string
 }
 
 // Rewrite applies req.Decision to req.AST. The general flow is:
@@ -150,6 +159,12 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		// and joins; queryservice runs the same check before its cache.
 		if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
 			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
+		}
+		// The plan shows the policy SQL with its bound values (salts too)
+		// and statistics over the rows a filter hides.
+		if req.AST.Statement() == parser.StmtExplain && (len(req.Decision.RowFilters) > 0 || len(req.Decision.ColumnMasks) > 0) {
+			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
+				WithMessage("EXPLAIN is not supported on a table with a row filter or column mask")
 		}
 	}
 
@@ -224,23 +239,27 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	// DuckDB's USING SAMPLE, so the wrap happens after deparse and the
 	// fingerprint above is intentionally computed on the inner SQL (the
 	// wrapped form no longer parses under the PG grammar).
+	sampled := false
 	if eff := req.Decision.Rewrite; eff != nil && eff.Sample != nil {
 		if req.AST.Statement() == parser.StmtSelect {
 			var note string
 			sql, note = sampleWrap(sql, eff.Sample)
 			state.rewrites = append(state.rewrites, note)
+			sampled = true
 		} else {
 			state.rewrites = append(state.rewrites, "sample-skipped:"+string(req.AST.Statement()))
 		}
 	}
 
 	return &RewriteResult{
-		SQL:         sql,
-		Params:      state.params,
-		Fingerprint: fp,
-		Changed:     true,
-		Rewrites:    state.rewrites,
-		PostMasks:   state.postMasks,
+		SQL:               sql,
+		Params:            state.params,
+		Fingerprint:       fp,
+		Changed:           true,
+		Rewrites:          state.rewrites,
+		PostMasks:         state.postMasks,
+		ResultColumnCount: state.resultColumns,
+		Sampled:           sampled,
 	}, nil
 }
 
@@ -258,6 +277,8 @@ type state struct {
 	params    []any
 	rewrites  []string
 	postMasks []PostMask
+	// resultColumns is the select list length postMasks are bound to.
+	resultColumns int
 
 	// wrappers maps each row-filter wrapper to the table it wraps. The
 	// mask pass resolves the wrapper's alias to that table. A subquery the

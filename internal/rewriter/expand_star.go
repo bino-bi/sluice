@@ -58,8 +58,8 @@ func (s *state) expandStarInNode(n *pg.Node) error {
 			}
 		}
 	case *pg.Node_ExplainStmt:
-		// Policies match tables inside EXPLAIN bodies (the table walker
-		// descends into them), so the rewrite must too.
+		// Rewrite refuses EXPLAIN when a filter or mask applies. This arm
+		// is a backstop in case that gate changes.
 		if v.ExplainStmt != nil {
 			if err := s.expandStarInNode(v.ExplainStmt.Query); err != nil {
 				return err

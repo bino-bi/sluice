@@ -431,6 +431,13 @@ func TestParseAcceptsLongFlatStatements(t *testing.T) {
 	p := pgquery.New(parser.Options{MaxSQLBytes: 1 << 24})
 	for name, sql := range flat {
 		t.Run(name, func(t *testing.T) {
+			// Under -race each new protobuf message costs an atomic store, so
+			// these trees put millions of sync events into one goroutine. That
+			// makes the race detector report this goroutine racing with
+			// itself. The goroutine shares no mutable data, so its sync
+			// events carry no information. Memory accesses are still checked.
+			raceDisableSync()
+			defer raceEnableSync()
 			ast, err := p.Parse(context.Background(), sql)
 			if err != nil {
 				t.Fatalf("Parse: %.200v", err)
@@ -442,31 +449,86 @@ func TestParseAcceptsLongFlatStatements(t *testing.T) {
 	}
 }
 
-// A FROM alias that DuckDB reads as a join-type keyword is refused: pg_query
-// reads it as an alias, so the deparsed statement would restructure the
-// join in DuckDB and skip the row filter and mask.
+// A FROM alias that DuckDB reads as a keyword is refused: pg_query reads it
+// as an alias and deparses it bare. A join keyword restructures the join
+// in DuckDB and skips the row filter and mask, and qualify(x) becomes a
+// QUALIFY clause on the raw column x.
 func TestParseRefusesJoinKeywordAliases(t *testing.T) {
 	p := newTestParser(t)
 	for _, sql := range []string{
 		`SELECT 1 FROM customers "semi" JOIN orders ON true`,
 		`SELECT 1 FROM customers AS anti JOIN orders ON true`,
-		`SELECT 1 FROM customers "ASOF" JOIN orders ON true`,
+		`SELECT 1 FROM customers asof JOIN orders ON true`,
 		`SELECT 1 FROM (SELECT 1) "positional" JOIN orders ON true`,
 		`SELECT 1 FROM orders o JOIN customers "semi" ON true`,
+		`SELECT 1 FROM customers c, generate_series(1, 1) AS qualify(email)`,
+		`SELECT 1 FROM customers c CROSS JOIN (SELECT 1) AS qualify(x)`,
+		`SELECT 1 FROM customers AS pivot`,
 	} {
 		if _, err := p.Parse(context.Background(), sql); !errors.Is(err, parser.ErrAliasKeyword) {
 			t.Errorf("%q: err = %v, want ErrAliasKeyword", sql, err)
 		}
 	}
 	// A column named or aliased like a join keyword is fine; only FROM
-	// aliases restructure a join.
+	// aliases restructure a join. pg_query quotes an upper-case alias, and
+	// DuckDB reads a quoted name as an alias.
 	for _, sql := range []string{
 		`SELECT 1 AS semi FROM customers`,
 		`SELECT semi FROM customers`,
 		`SELECT 1 FROM customers c JOIN orders o ON true`,
+		`SELECT 1 FROM customers c, generate_series(1, 1) AS "QUALIFY"(x)`,
+		`SELECT 1 FROM customers "ASOF" JOIN orders ON true`,
+		`SELECT 1 FROM customers "Semi" JOIN orders ON true`,
 	} {
 		if _, err := p.Parse(context.Background(), sql); err != nil {
 			t.Errorf("%q: unexpected error %v", sql, err)
+		}
+	}
+}
+
+// pg_query cuts identifiers at 63 bytes and DuckDB does not. A policy on
+// the full name would not match the name policy sees, and a CTE named with
+// the first 63 bytes would hide the table. Such names are refused.
+func TestParseRefusesIdentifiersOver63Bytes(t *testing.T) {
+	p := newTestParser(t)
+	a := func(n int) string { return strings.Repeat("a", n) }
+	oe := string(rune(0x00f6)) // two bytes in UTF-8
+	long := "payroll_salaries_by_employee_and_month_from_hr_system_snapshot_2026"
+
+	refused := []string{
+		"SELECT 1 FROM " + a(64),
+		"SELECT 1 FROM shop.main." + long,
+		"SELECT " + a(64) + " FROM t",
+		"SELECT 1 AS " + a(64) + " FROM t",
+		`SELECT 1 FROM "` + a(64) + `"`,
+		`SELECT 1 FROM "` + a(62) + `""a"`, // decodes to 64 bytes
+		"SELECT 1 FROM " + strings.Repeat(oe, 32),
+		`SELECT 1 FROM U&"` + a(64) + `"`,
+		`SELECT 1 FROM U&"` + a(60) + `\0061"`, // the escape counts as written
+		"WITH " + long[:63] + "x AS (SELECT 1 AS id) SELECT p.* FROM t, " + long + " p",
+	}
+	for _, sql := range refused {
+		if _, err := p.Parse(context.Background(), sql); !errors.Is(err, parser.ErrIdentifierTooLong) {
+			t.Errorf("Parse(%.60q): err = %v, want ErrIdentifierTooLong", sql, err)
+		}
+		if _, err := p.Fingerprint(sql); !errors.Is(err, parser.ErrIdentifierTooLong) {
+			t.Errorf("Fingerprint(%.60q): err = %v, want ErrIdentifierTooLong", sql, err)
+		}
+	}
+
+	accepted := []string{
+		"SELECT 1 FROM " + a(63),
+		`SELECT 1 FROM "` + a(63) + `"`,
+		`SELECT 1 FROM "` + a(61) + `""a"`, // decodes to 63 bytes
+		"SELECT 1 FROM " + strings.Repeat(oe, 31) + "a",
+		`SELECT 1 FROM U&"` + a(63) + `"`,
+		`SELECT 1 FROM u&"` + a(63) + `"`,
+		"SELECT '" + a(100) + "' AS s FROM t",
+		"SELECT 1 FROM t -- " + a(100),
+	}
+	for _, sql := range accepted {
+		if _, err := p.Parse(context.Background(), sql); err != nil {
+			t.Errorf("Parse(%.60q): %v", sql, err)
 		}
 	}
 }

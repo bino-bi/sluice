@@ -12,6 +12,10 @@ refused. This page inventories those guarantees and the trust boundaries they de
 - **Read-only statement allowlist.** The rewriter and executor accept only `SELECT`, `EXPLAIN`,
   `SET`, `SHOW`, and `PRAGMA`. `INSERT`/`UPDATE`/`DELETE` return `ACL_REJECTED` ("write operations
   are not permitted"); DDL, `COPY`, and `ATTACH` return `ERR_UNSUPPORTED_SYNTAX`.
+- **No `EXPLAIN` on protected tables.** `EXPLAIN` in any form, `ANALYZE` included, returns
+  `ERR_UNSUPPORTED_SYNTAX` when a row filter or column mask applies. The plan would show the
+  policy SQL with its bound values (a mask salt, the tenant id) and row estimates or counts over
+  the filtered table.
 - **Function allowlist.** Function calls are default-deny. In `FROM` only `generate_series`,
   `range`, and `unnest` are accepted, and their arguments must not contain column references or
   subqueries. Outside `FROM` only functions that compute over their arguments are accepted; the

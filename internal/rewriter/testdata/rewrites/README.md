@@ -27,7 +27,7 @@ the deliberate deviations:
 | 11 | `38-rowfilter-where-false` | |
 | 12 | — | `PIVOT` — same as 10. |
 | 13 | `39-table-function-passthrough` | Concept says "no policy matches ⇒ pass-through". The query references no table, so no table-scoped allow matches and the result is a default-deny. Table functions next to an allowed table are covered by 49 to 63. |
-| 14 | `40-explain-rowfilter` | |
+| 14 | `40-explain-rowfilter` | Refused with `ERR_UNSUPPORTED_SYNTAX`: the plan would print the filter with its bound value. `EXPLAIN` is refused whenever a filter or mask applies. |
 | 15 | — | `ATTACH` — same as 10. |
 | 16 | `41-mask-scalar-subquery` | |
 | 17 | `42-mask-outer-subquery-untouched` | |
@@ -72,3 +72,11 @@ passes must reach.
 | `80-postquery-mask-nested-rejected` | A post-query masked column inside a nested `SELECT` would reach the result under a name the Go-side mask cannot trace. |
 | `81-mask-ambiguous-column-rejected` | An unqualified column that two tables of one FROM clause mask is refused instead of served raw. |
 | `82-mask-struct-field-rejected` | Dotted field access into a masked STRUCT column (`p.info.ssn`). |
+
+Directories 83 to 85 cover names and positions that DuckDB reads in another way than the rewriter planned. 83 and 84 use the policy of 21.
+
+| Fixture | Note |
+|---|---|
+| `83-postquery-mask-alias-ref-rejected` | DuckDB resolves the select alias of a post-query masked item in `WHERE` and `ORDER BY`, on the raw value. |
+| `84-postquery-mask-position-rejected` | `ORDER BY 2` sorts by the raw value of the post-query masked item at position 2. |
+| `85-wrapper-alias-keyword-refused` | The wrapper of an unaliased filtered table is named after it. DuckDB reads a bare `semi` as a join keyword, so the table needs an alias. |

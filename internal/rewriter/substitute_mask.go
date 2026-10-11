@@ -62,8 +62,8 @@ func (s *state) maskInNode(n *pg.Node, aliases aliasMap) error {
 			return s.maskInNode(v.RangeSubselect.Subquery, aliases)
 		}
 	case *pg.Node_ExplainStmt:
-		// Policies match tables inside EXPLAIN bodies (the table walker
-		// descends into them), so the rewrite must too.
+		// Rewrite refuses EXPLAIN when a filter or mask applies. This arm
+		// is a backstop in case that gate changes.
 		if v.ExplainStmt != nil {
 			return s.maskInNode(v.ExplainStmt.Query, aliases)
 		}

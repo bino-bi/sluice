@@ -12,6 +12,7 @@ import (
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
 
@@ -30,10 +31,12 @@ func TestExecute_PostQueryMaskAppliesToResultColumn(t *testing.T) {
 		Parser: &fakeParser{},
 		Policy: &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
 		Rewriter: &fakeRewriter{result: &rewriter.RewriteResult{
-			SQL:     "SELECT id, email FROM t",
-			Changed: true,
+			SQL:               "SELECT id, email FROM t",
+			Changed:           true,
+			ResultColumnCount: 2,
 			PostMasks: []rewriter.PostMask{{
 				ColumnIndex: 1,
+				OutputName:  "email",
 				TableKey:    "pg.hr.employees",
 				Column:      "email",
 				Type:        apitypes.MaskFake,
@@ -88,6 +91,68 @@ func TestExecute_PostQueryMaskAppliesToResultColumn(t *testing.T) {
 	}
 }
 
+// A post mask is bound to a result column index. When DuckDB returns
+// another shape than the rewriter planned (unnest of a struct adds
+// columns), the index points at the wrong column and the masked column
+// would be served raw. The query must be refused with no row served.
+func TestExecute_PostQueryMaskResultShapeMismatchRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		columns []executor.ColumnInfo
+		sampled bool
+	}{
+		"extra column":            {columns: []executor.ColumnInfo{{Name: "a"}, {Name: "b"}, {Name: "email"}}},
+		"other name at the index": {columns: []executor.ColumnInfo{{Name: "id"}, {Name: "other"}}},
+		"renamed, not sampled":    {columns: []executor.ColumnInfo{{Name: "id"}, {Name: "email_1"}}},
+		"sampled, other suffix":   {columns: []executor.ColumnInfo{{Name: "id"}, {Name: "email_x"}}, sampled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &fakeAudit{}
+			row := make([]any, len(tc.columns))
+			for i := range row {
+				row[i] = "alice@example.com"
+			}
+			ex := &fakeExecutor{columns: tc.columns, rows: [][]any{row}}
+			svc := queryservice.New(queryservice.Options{
+				Parser: &fakeParser{},
+				Policy: &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{result: &rewriter.RewriteResult{
+					SQL:               "SELECT id, email FROM t",
+					Changed:           true,
+					ResultColumnCount: 2,
+					Sampled:           tc.sampled,
+					PostMasks: []rewriter.PostMask{{
+						ColumnIndex: 1,
+						OutputName:  "email",
+						TableKey:    "pg.hr.employees",
+						Column:      "email",
+						Type:        apitypes.MaskFake,
+						Args:        pkgmask.Args{FakeType: "email", Seed: "s"},
+						Policy:      "fake-email",
+					}},
+				}},
+				Executor: ex,
+				Audit:    a,
+				Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+				Salts:    keyStore{},
+				Keys:     keyStore{},
+			})
+
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id, email FROM t"})
+			if err == nil {
+				t.Fatalf("served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", drainRows(t, res))
+			}
+			if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+				t.Fatalf("code = %s, want ERR_MASK_UNSUPPORTED_CONTEXT", ae.Code)
+			}
+			for _, r := range a.all() {
+				if r.Decision == "allow" {
+					t.Error("query audited as allow")
+				}
+			}
+		})
+	}
+}
+
 func TestExecute_PostQueryMaskBuildFailureRefusesQuery(t *testing.T) {
 	a := &fakeAudit{}
 	ex := &fakeExecutor{
@@ -100,10 +165,12 @@ func TestExecute_PostQueryMaskBuildFailureRefusesQuery(t *testing.T) {
 		Parser: &fakeParser{},
 		Policy: &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
 		Rewriter: &fakeRewriter{result: &rewriter.RewriteResult{
-			SQL:     "SELECT ssn FROM t",
-			Changed: true,
+			SQL:               "SELECT ssn FROM t",
+			Changed:           true,
+			ResultColumnCount: 1,
 			PostMasks: []rewriter.PostMask{{
 				ColumnIndex: 0,
+				OutputName:  "ssn",
 				TableKey:    "pg.hr.employees",
 				Column:      "ssn",
 				Type:        apitypes.MaskFPE,
@@ -116,8 +183,12 @@ func TestExecute_PostQueryMaskBuildFailureRefusesQuery(t *testing.T) {
 		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
 	})
 
-	if _, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"}); err == nil {
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
+	if err == nil {
 		t.Fatal("expected error when mask build fails, got nil")
+	}
+	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeInternal {
+		t.Fatalf("code = %s (%s), want ERR_INTERNAL from the mask build", ae.Code, ae.Message)
 	}
 	for _, r := range a.all() {
 		if r.Decision == "allow" {

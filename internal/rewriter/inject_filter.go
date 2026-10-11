@@ -7,7 +7,9 @@ import (
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 
+	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 // applyInjectFilter walks every SelectStmt's FROM tree and replaces each
@@ -49,8 +51,8 @@ func (s *state) injectInNode(n *pg.Node) error {
 			}
 		}
 	case *pg.Node_ExplainStmt:
-		// Policies match tables inside EXPLAIN bodies (the table walker
-		// descends into them), so the rewrite must too.
+		// Rewrite refuses EXPLAIN when a filter or mask applies. This arm
+		// is a backstop in case that gate changes.
 		if v.ExplainStmt != nil {
 			if err := s.injectInNode(v.ExplainStmt.Query); err != nil {
 				return err
@@ -158,6 +160,13 @@ func (s *state) maybeWrapRangeVar(rv *pg.RangeVar) (*pg.Node, error) {
 	// relation name so outer references still resolve.
 	alias := rv.Alias
 	if alias == nil || alias.Aliasname == "" {
+		// The deparse writes a lower-case name bare, and DuckDB reads some
+		// names as a keyword: semi changes the join type and drops the name,
+		// so the mask pass can no longer follow the wrapper.
+		if parser.IsUnsafeBareAlias(rv.Relname) {
+			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
+				WithMessage(fmt.Sprintf("give table %q an alias", rv.Relname))
+		}
 		alias = &pg.Alias{Aliasname: rv.Relname}
 	}
 

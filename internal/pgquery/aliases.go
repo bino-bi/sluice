@@ -9,20 +9,14 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 )
 
-// joinKeywordAliases are DuckDB keywords that act as a join-type prefix
-// between a relation and JOIN. pg_query does not know them, so it reads
-// such a word as a table alias and deparses it bare; DuckDB then reads it
-// as the keyword, changes the join, and the row filter and mask the
-// rewriter built on the aliased table no longer apply. Verified against
-// duckdb_keywords() in internal/executor.
-var joinKeywordAliases = map[string]struct{}{
-	"semi": {}, "anti": {}, "asof": {}, "positional": {},
-}
-
-// checkAliasKeywords refuses a FROM alias whose folded name is a join
-// keyword. It walks every pg.Alias (tables, subqueries, joins and
-// functions carry one; select-list column aliases are plain strings, not
-// Alias nodes, so they are not affected).
+// checkAliasKeywords refuses a FROM alias that DuckDB reads as a keyword
+// (parser.IsUnsafeBareAlias). pg_query reads such a word as an alias and
+// deparses it bare. DuckDB then reads the keyword: a join keyword changes
+// the join so the row filter and mask no longer apply, and qualify(x)
+// becomes QUALIFY (x), a row predicate on the raw column x. It walks every
+// pg.Alias (tables, subqueries, joins and functions carry one; select-list
+// column aliases are plain strings, not Alias nodes, so they are not
+// affected).
 func checkAliasKeywords(raw *pg.ParseResult) error {
 	if raw == nil {
 		return nil
@@ -30,7 +24,7 @@ func checkAliasKeywords(raw *pg.ParseResult) error {
 	var found bool
 	_ = walkMessages(raw.ProtoReflect(), func(m protoreflect.Message) bool {
 		if a, ok := m.Interface().(*pg.Alias); ok {
-			if _, bad := joinKeywordAliases[foldASCII(a.GetAliasname())]; bad {
+			if parser.IsUnsafeBareAlias(a.GetAliasname()) {
 				found = true
 				return false
 			}
@@ -41,18 +35,6 @@ func checkAliasKeywords(raw *pg.ParseResult) error {
 		return parser.ErrAliasKeyword
 	}
 	return nil
-}
-
-// foldASCII lower-cases an ASCII identifier, matching how DuckDB folds an
-// unquoted or quoted name for keyword recognition.
-func foldASCII(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + ('a' - 'A')
-		}
-	}
-	return string(b)
 }
 
 // walkMessages visits m and every message below it; visit returns false to

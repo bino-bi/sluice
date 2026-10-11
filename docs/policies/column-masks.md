@@ -31,6 +31,22 @@ Matching rules to know:
   it is refused: inside an expression, in `ORDER BY` or `DISTINCT ON`, and inside a subquery or
   CTE. That includes `SELECT *` in a subquery or CTE over such a table (list the columns you need
   there), except inside `EXISTS (...)`.
+- A post-query mask is applied by result column position, and DuckDB still computes on the raw
+  value. So when a select item carries a post-query mask, these forms are refused with the same
+  code:
+    - the item's alias used anywhere else in the statement (`SELECT ssn AS x, x AS y`,
+      `WHERE x = '1'`, `ORDER BY x`, `GROUP BY x`, `(SELECT x)`). DuckDB resolves a select alias
+      in every clause. A body of the statement's own `WITH` clause cannot see the alias, so the
+      same name may appear there;
+    - the item's position in `ORDER BY`, `GROUP BY` (also inside `ROLLUP`, `CUBE` and
+      `GROUPING SETS`) or `DISTINCT ON` (`ORDER BY 2`). The position of another item is fine;
+    - `SELECT DISTINCT`;
+    - `unnest(...)` in the select list, which can add result columns.
+
+    On any query, a `USING` or `NATURAL` join is refused when a side is a table with a
+    post-query mask, and the masked column is refused in the condition of any join. If the result
+    still does not have the planned shape (column count, or the column name at a masked
+    position), the query is refused before any row is served.
 - A star is only supported as a select item. `c.*` inside an expression is refused on a query
   with masks. An alias in a subquery must not reuse the alias of an outer masked table for
   another table.

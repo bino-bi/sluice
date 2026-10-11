@@ -1,0 +1,12 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_MASK_UNSUPPORTED_CONTEXT",
+  "applied_policies": [
+    "ColumnMaskPolicy/fpe-ssn",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "masks": [
+    "pg.hr.employees.ssn=fpe"
+  ]
+}

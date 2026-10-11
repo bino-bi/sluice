@@ -62,6 +62,17 @@ fallback still extracts table names so policy can evaluate — and deny — the 
 would otherwise have allowed the query: a deny or reject always takes precedence, so a caller
 cannot use syntax probing to map what they are denied.
 
+An identifier longer than 63 bytes (a quoted name counts after decoding, the content of a
+`U&"..."` name as written) is a parse error with `ERR_UNSUPPORTED_SYNTAX`. pg_query cuts such a
+name to 63 bytes and DuckDB does not, so policy would match another name than the one DuckDB
+reads.
+
+A `FROM` alias that DuckDB reads as a keyword (`semi`, `anti`, `asof`, `positional`, `qualify`,
+`by`, `pivot`, `show` and more) is a parse error with `ERR_SYNTAX`. pg_query writes the alias
+bare, and DuckDB would read the keyword: a join keyword changes the join type, and
+`generate_series(1, 1) AS qualify(x)` becomes `QUALIFY (x)`, a row filter on the raw value of
+`x`. Use another alias.
+
 ## Function gate
 
 A cleanly parsed statement is checked for function calls before the rewrite cache and before
@@ -112,6 +123,11 @@ instruction wraps the statement in `SELECT * FROM (<sql>) AS sluice_sample USING
 `ERR_UNSUPPORTED_SYNTAX`. A `QueryRewritePolicy` timeout or row cap tightens the request-level
 clamps from admission — it never loosens them.
 
+An `EXPLAIN` is refused with `ERR_UNSUPPORTED_SYNTAX` when a row filter or column mask applies,
+because the plan would show the policy SQL with its bound values. A filtered table without an
+alias whose name DuckDB reads as a keyword (`semi`, `by`, `qualify`, ...) is refused with
+`ERR_UNSUPPORTED_SYNTAX`. Give such a table an alias.
+
 ## Execute
 
 The rewritten SQL runs on embedded DuckDB against read-only attached catalogs, streaming rows
@@ -124,7 +140,9 @@ Masks of type `hash` with `algorithm: hmac_sha256`, `fpe`, `jitter`, and `fake` 
 to the result rows rather than rewritten into SQL: they need keyed cryptography or deterministic
 fake-data generation that cannot be expressed as a portable SQL expression. The mask decorators are
 built *before* the audit gate, so a construction failure (for example an unresolvable key
-reference) refuses the query with nothing served.
+reference) refuses the query with nothing served. The masks are bound by column position, so the
+service first checks that the result has the column count and, at each masked position, the
+column name the rewriter planned. A mismatch refuses the query with `ERR_MASK_UNSUPPORTED_CONTEXT`.
 
 ## Audit gate and streaming
 
@@ -149,6 +167,7 @@ CPU time and rows served; client streaming time is deliberately excluded).
 | Approval | `ERR_APPROVAL_PENDING`, `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED`, `ERR_RATE_LIMITED` (broker full) |
 | Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_REWRITE_FAILED`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
 | Execute | `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_INTERNAL` |
+| Post-query masks | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |
 | Audit gate | `ERR_AUDIT_UNAVAILABLE` |
 
 The full catalog, with HTTP status mappings, is in [Error codes](../reference/error-codes.md).

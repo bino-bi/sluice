@@ -5,9 +5,11 @@ package queryservice_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -224,15 +226,29 @@ func TestExecute_ExplainBodyMustBeSelect(t *testing.T) {
 	if ex.calls != 0 {
 		t.Fatalf("executor ran %d times, want 0", ex.calls)
 	}
+}
 
-	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
-		SQL: "EXPLAIN SELECT id FROM shop.main.customers", User: helloUser(), Origin: queryservice.OriginREST,
-	})
-	if err != nil {
-		t.Fatalf("EXPLAIN SELECT: %v", err)
+// The plan of a filtered or masked table shows the policy SQL with its
+// bound values (salts, tenant ids) and statistics over the hidden rows.
+func TestExecute_ExplainOnProtectedTableRefused(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	for _, sql := range []string{
+		"EXPLAIN SELECT id FROM shop.main.customers",
+		"EXPLAIN ANALYZE SELECT count(*) FROM shop.main.orders",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, drainRows(t, res))
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+			t.Errorf("%s: code = %s, want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code)
+		}
 	}
-	if plan := fmt.Sprint(drainRows(t, res)); !strings.Contains(plan, "tenant_id") {
-		t.Fatalf("EXPLAIN SELECT must show the filtered plan, got %s", plan)
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
 	}
 }
 
@@ -481,6 +497,153 @@ func TestExecute_PostQueryMaskOnlyInBareSelectItems(t *testing.T) {
 	}
 }
 
+// A post-query mask is applied in Go by result column index. DuckDB also
+// reads a select alias, a column position, a USING column and a nested
+// join condition on the raw value, and unnest can shift the columns. Each
+// of these must be refused before the query reaches DuckDB.
+func TestExecute_PostQueryMaskLeakForms(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, fakeNamePolicy, adminUsersPolicies)
+
+	for _, sql := range []string{
+		// Select alias of the masked item reused elsewhere.
+		"SELECT c.name AS n, n AS leak FROM shop.main.customers c",
+		"SELECT c.name AS n, upper(n) AS leak FROM shop.main.customers c",
+		"SELECT c.name AS n, (SELECT n) AS leak FROM shop.main.customers c",
+		"SELECT c.id, c.name AS n FROM shop.main.customers c WHERE n = 'Alice'",
+		"SELECT c.id, c.name AS n FROM shop.main.customers c WHERE c.id IN (SELECT o.customer_id FROM shop.main.orders o WHERE n = 'Alice')",
+		"SELECT c.id, c.name AS n FROM shop.main.customers c ORDER BY n LIMIT 1",
+		"SELECT c.name AS n, count(*) AS k FROM shop.main.customers c GROUP BY n",
+		// Column positions of the masked item.
+		"SELECT c.id, c.name FROM shop.main.customers c ORDER BY 2 LIMIT 1",
+		"SELECT c.name, count(*) AS k FROM shop.main.customers c GROUP BY 1",
+		"SELECT c.name, count(*) AS k FROM shop.main.customers c GROUP BY ROLLUP (1)",
+		"SELECT DISTINCT ON (2) c.id, c.name FROM shop.main.customers c",
+		// DuckDB reads a position under COLLATE as a position.
+		`SELECT c.id, c.name FROM shop.main.customers c ORDER BY 2 COLLATE "nocase" LIMIT 1`,
+		`SELECT c.id, c.name FROM shop.main.customers c ORDER BY c.id, 2 COLLATE "C" DESC`,
+		`SELECT DISTINCT ON (2 COLLATE "nocase") c.id, c.name FROM shop.main.customers c ORDER BY c.id`,
+		// DISTINCT compares the raw values.
+		"SELECT DISTINCT c.name FROM shop.main.customers c",
+		// USING and NATURAL compare the raw values.
+		"SELECT c.id FROM shop.main.customers c JOIN (SELECT 'Alice' AS name) x USING (name)",
+		"SELECT c.id FROM shop.main.customers c NATURAL JOIN (SELECT 'Alice' AS name) x",
+		// The condition of an inner join.
+		"SELECT c.id FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id AND c.name = 'Alice' JOIN shop.main.orders p ON p.id = o.id",
+		// unnest of a struct adds columns before the masked one.
+		"SELECT unnest(struct_pack(a := 1, b := 2)), c.name FROM shop.main.customers c",
+	} {
+		before := ex.calls
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", sql, drainRows(t, res))
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeMaskContext {
+			t.Errorf("%s: code = %s (%s), want ERR_MASK_UNSUPPORTED_CONTEXT", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+
+	for sql, want := range map[string]int{
+		"SELECT c.id, c.name AS n FROM shop.main.customers c ORDER BY 1":                             2,
+		"SELECT c.name, c.id FROM shop.main.customers c ORDER BY 2":                                  2,
+		"SELECT * FROM shop.main.customers c JOIN shop.main.admin_users a ON a.id = c.id ORDER BY 1": 2,
+		// A CTE body cannot see the select aliases.
+		"WITH t AS (SELECT customer_id FROM shop.main.orders) SELECT c.name AS customer_id FROM shop.main.customers c JOIN t ON t.customer_id = c.id": 3,
+		// The row-filter wrapper of orders reads tenant_id. That is policy
+		// SQL, not a use of the select alias.
+		"SELECT c.name AS tenant_id FROM shop.main.customers c WHERE c.id IN (SELECT o.customer_id FROM shop.main.orders o)":               2,
+		"SELECT c.name AS tenant_id FROM shop.main.customers c WHERE EXISTS (SELECT 1 FROM shop.main.orders o WHERE o.customer_id = c.id)": 2,
+		"SELECT c.name AS tenant_id, (SELECT count(*) FROM shop.main.orders o WHERE o.customer_id = c.id) AS k FROM shop.main.customers c": 2,
+		// A subquery returns one column, so its unnest cannot shift the
+		// bound index.
+		"SELECT c.name, (SELECT max(u) FROM unnest(ARRAY[1, 2]) AS t(u)) AS m FROM shop.main.customers c": 2,
+		"SELECT c.name, ARRAY(SELECT u FROM unnest(ARRAY[1, 2]) AS t(u)) AS m FROM shop.main.customers c": 2,
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		rows := drainRows(t, res)
+		if got := fmt.Sprint(rows); len(rows) != want || strings.Contains(got, "Alice") || strings.Contains(got, "Bob") {
+			t.Errorf("%s: rows = %s, want %d rows with fake names", sql, got, want)
+		}
+	}
+}
+
+const sampleWithFakeTenantPolicies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRewritePolicy
+metadata:
+  name: sample-all
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+  rewrite:
+    sample:
+      rate: 1.0
+      method: bernoulli
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: fake-customer-tenant
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
+          columns: ["tenant_id"]
+  mask:
+    type: fake
+    args:
+      fakeType: name
+`
+
+// The sample wrap selects * from the statement, and DuckDB renames a
+// duplicate column of a subquery to name_1. The masked column keeps its
+// index, so the query is served with the mask on it.
+func TestExecute_PostQueryMaskUnderSampleWithDuplicateName(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t, sampleWithFakeTenantPolicies)
+	for _, sql := range []string{
+		"SELECT o.tenant_id, c.tenant_id FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id",
+		"SELECT * FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err != nil {
+			t.Errorf("%s: %v", sql, err)
+			continue
+		}
+		raw, masked := slices.IndexFunc(res.Columns, func(c executor.ColumnInfo) bool { return c.Name == "tenant_id" }),
+			slices.IndexFunc(res.Columns, func(c executor.ColumnInfo) bool { return c.Name == "tenant_id_1" })
+		rows := drainRows(t, res)
+		if raw < 0 || masked < 0 || len(rows) != 3 {
+			t.Errorf("%s: columns = %v, %d rows, want tenant_id and tenant_id_1 in 3 rows", sql, res.Columns, len(rows))
+			continue
+		}
+		for _, r := range rows {
+			if r[raw] != "acme" || r[masked] == "acme" {
+				t.Errorf("%s: row %v, want order tenant raw and customer tenant masked", sql, r)
+			}
+		}
+	}
+}
+
 const maskTenantPolicy = `
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
@@ -655,6 +818,81 @@ func TestExecute_JoinKeywordAliasRefused(t *testing.T) {
 		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
 			t.Errorf("%s: code = %s, want ERR_SYNTAX", sql, ae.Code)
 		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
+// pg_query deparses AS qualify(x) bare, and DuckDB reads it as QUALIFY (x):
+// a row predicate on the raw masked column or on the select alias of a
+// post-masked item.
+func TestExecute_QualifyAliasRefused(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, fakeNamePolicy)
+	for _, sql := range []string{
+		"SELECT c.id, count(*) OVER () AS n FROM shop.main.customers c, generate_series(1, 1) AS qualify(email)",
+		"SELECT c.id, count(*) OVER () AS n FROM shop.main.customers c CROSS JOIN generate_series(1, 1) AS qualify(email)",
+		"SELECT c.name AS x, count(*) OVER () AS n FROM shop.main.customers c, (SELECT 1) AS qualify(x)",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql, User: helloUser()})
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_SYNTAX", sql, drainRows(t, res))
+			continue
+		}
+		// After a parse error policy runs on the regex fallback, which
+		// reads generate_series after JOIN as a table and denies it.
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax && ae.Code != pkgerr.CodeACLDenied {
+			t.Errorf("%s: code = %s (%s), want ERR_SYNTAX or ACL_DENIED", sql, ae.Code, ae.Message)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
+const longNamePolicies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-payroll
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["payroll*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-payroll-snapshot
+  priority: 200
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["payroll_salaries_by_employee_and_month_from_hr_system_snapshot_2026"]
+`
+
+// pg_query cuts a 67-byte table name to 63 bytes and DuckDB does not, so a
+// deny on the full name did not match and the statement passed through.
+func TestExecute_LongIdentifierRefused(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, longNamePolicies)
+	sql := "SELECT * FROM shop.main.payroll_salaries_by_employee_and_month_from_hr_system_snapshot_2026"
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+		SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+	})
+	if err == nil {
+		t.Fatalf("served %v, want a refusal", drainRows(t, res))
+	}
+	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+		t.Errorf("code = %s (%s), want ACL_DENIED", ae.Code, ae.Message)
 	}
 	if ex.calls != 0 {
 		t.Fatalf("executor ran %d times, want 0", ex.calls)

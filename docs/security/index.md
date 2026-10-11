@@ -10,7 +10,9 @@ Its posture rests on five properties:
   allows it.
 - **Read-only execution.** Only `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and
   `PRAGMA` reach the engine. Writes are rejected before execution, and every
-  data source is attached `READ_ONLY`.
+  data source is attached `READ_ONLY`. `EXPLAIN` is refused on a table with a
+  row filter or column mask, because the plan would show the policy SQL with
+  its bound values.
 - **Fail-closed audit.** By default a query is not served unless its access
   record has been durably enqueued to the hash-chained audit log first.
 - **Separate admin plane.** Operational endpoints (`/admin/*`, `/metrics`)

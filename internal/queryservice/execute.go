@@ -337,7 +337,11 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	// with nothing served and nothing falsely audited as allowed.
 	if len(rewriteResp.PostMasks) > 0 {
 		maskCtx, maskSpan := s.tracer.Start(ctx, "query.mask")
-		masked, mErr := s.buildMaskedRows(maskCtx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		var masked executor.RowIterator
+		mErr := checkResultShape(resp.Columns, rewriteResp)
+		if mErr == nil {
+			masked, mErr = s.buildMaskedRows(maskCtx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		}
 		maskSpan.End()
 		if mErr != nil {
 			_ = resp.Rows.Close()
@@ -523,6 +527,8 @@ func parseErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
 	case stderrors.Is(err, parser.ErrTooDeep):
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrTooDeep.Error())
+	case stderrors.Is(err, parser.ErrIdentifierTooLong):
+		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierTooLong.Error())
 	case stderrors.Is(err, parser.ErrIdentifierChars):
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierChars.Error())
 	case stderrors.Is(err, parser.ErrAliasKeyword):

@@ -7,30 +7,30 @@
 Every API response, CLI message, and audit record carries one of these
 codes. Codes never change silently; additions require a CHANGELOG entry.
 
-| Code                            | HTTP  | Summary                                                                    |
-| ----                            | ----  | -------                                                                    |
-| `ERR_SYNTAX`                    | 400   | SQL parse error                                                            |
-| `ERR_MULTIPLE_STATEMENTS`       | 400   | only a single statement is allowed per request                             |
-| `ERR_UNSUPPORTED_SYNTAX`        | 400   | SQL feature not supported                                                  |
-| `ERR_REWRITE_FAILED`            | 400   | policy rewrite failed                                                      |
-| `ERR_MASK_UNSUPPORTED_CONTEXT`  | 400   | a post-query masked column cannot appear in a filter, join, or expression  |
-| `ERR_UNAUTHORIZED`              | 401   | authentication required                                                    |
-| `ACL_DENIED`                    | 403   | access denied by policy                                                    |
-| `ACL_REJECTED`                  | 403   | query shape rejected by policy                                             |
-| `ERR_DATASOURCE_UNAVAILABLE`    | 503   | data source unavailable                                                    |
-| `ERR_CONFIG_INVALID`            | 400   | server configuration invalid                                               |
-| `ERR_POLICY_INVALID`            | 400   | policy document invalid                                                    |
-| `ERR_TIMEOUT`                   | 504   | request timed out                                                          |
-| `ERR_CANCELED`                  | 499   | request canceled                                                           |
-| `ERR_RATE_LIMITED`              | 429   | too many requests                                                          |
-| `ERR_BUDGET_EXCEEDED`           | 429   | query budget exceeded                                                      |
-| `ERR_PAYLOAD_TOO_LARGE`         | 413   | payload too large                                                          |
-| `ERR_RESULT_TRUNCATED`          | 200   | result truncated                                                           |
-| `ERR_AUDIT_UNAVAILABLE`         | 503   | audit log unavailable; request refused (fail-closed)                       |
-| `ERR_APPROVAL_PENDING`          | 202   | query requires human approval; awaiting decision                           |
-| `ERR_APPROVAL_REJECTED`         | 403   | query rejected by an approver                                              |
-| `ERR_APPROVAL_EXPIRED`          | 410   | approval request expired before a decision was made                        |
-| `ERR_INTERNAL`                  | 500   | internal error                                                             |
+| Code                            | HTTP  | Summary                                                        |
+| ----                            | ----  | -------                                                        |
+| `ERR_SYNTAX`                    | 400   | SQL parse error                                                |
+| `ERR_MULTIPLE_STATEMENTS`       | 400   | only a single statement is allowed per request                 |
+| `ERR_UNSUPPORTED_SYNTAX`        | 400   | SQL feature not supported                                      |
+| `ERR_REWRITE_FAILED`            | 400   | policy rewrite failed                                          |
+| `ERR_MASK_UNSUPPORTED_CONTEXT`  | 400   | a post-query masked column is used outside a bare select item  |
+| `ERR_UNAUTHORIZED`              | 401   | authentication required                                        |
+| `ACL_DENIED`                    | 403   | access denied by policy                                        |
+| `ACL_REJECTED`                  | 403   | query shape rejected by policy                                 |
+| `ERR_DATASOURCE_UNAVAILABLE`    | 503   | data source unavailable                                        |
+| `ERR_CONFIG_INVALID`            | 400   | server configuration invalid                                   |
+| `ERR_POLICY_INVALID`            | 400   | policy document invalid                                        |
+| `ERR_TIMEOUT`                   | 504   | request timed out                                              |
+| `ERR_CANCELED`                  | 499   | request canceled                                               |
+| `ERR_RATE_LIMITED`              | 429   | too many requests                                              |
+| `ERR_BUDGET_EXCEEDED`           | 429   | query budget exceeded                                          |
+| `ERR_PAYLOAD_TOO_LARGE`         | 413   | payload too large                                              |
+| `ERR_RESULT_TRUNCATED`          | 200   | result truncated                                               |
+| `ERR_AUDIT_UNAVAILABLE`         | 503   | audit log unavailable; request refused (fail-closed)           |
+| `ERR_APPROVAL_PENDING`          | 202   | query requires human approval; awaiting decision               |
+| `ERR_APPROVAL_REJECTED`         | 403   | query rejected by an approver                                  |
+| `ERR_APPROVAL_EXPIRED`          | 410   | approval request expired before a decision was made            |
+| `ERR_INTERNAL`                  | 500   | internal error                                                 |
 
 
 ## Regenerating
