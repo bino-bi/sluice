@@ -133,6 +133,24 @@ func (e *Executor) Ping(ctx context.Context) error {
 	return nil
 }
 
+// CurrentDatabase returns the name of DuckDB's default database, which
+// holds a table written without a catalog.
+func (e *Executor) CurrentDatabase(ctx context.Context) (string, error) {
+	conn, err := e.db.Conn(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrOpen, err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := e.ensureInit(ctx, conn); err != nil {
+		return "", err
+	}
+	var name string
+	if err := conn.QueryRowContext(ctx, "SELECT current_database()").Scan(&name); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrExecute, err)
+	}
+	return name, nil
+}
+
 // Close drains the pool and releases the DuckDB instance. Safe to call
 // multiple times.
 func (e *Executor) Close() error {

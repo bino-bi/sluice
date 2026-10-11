@@ -53,13 +53,25 @@ func writePolicies(t *testing.T) string {
 	return dir
 }
 
-func TestRunner_PassAndFail(t *testing.T) {
-	requireRealParser(t)
-	dir := writePolicies(t)
+// newRunner builds a runner and closes its DuckDB instance after the test.
+func newRunner(t *testing.T, dir string) *policytest.Runner {
+	t.Helper()
 	runner, err := policytest.NewRunner(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	return runner
+}
+
+func TestRunner_PassAndFail(t *testing.T) {
+	requireRealParser(t)
+	dir := writePolicies(t)
+	runner := newRunner(t, dir)
 
 	suite := &policytest.Suite{Cases: []policytest.Case{
 		{
@@ -127,10 +139,7 @@ func TestRunner_SchemaFixtureExpandsStar(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(maskPoliciesYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner, err := policytest.NewRunner(context.Background(), dir, false)
-	if err != nil {
-		t.Fatalf("NewRunner: %v", err)
-	}
+	runner := newRunner(t, dir)
 
 	starCase := policytest.Case{
 		Name:     "star expands against fixture schema",
@@ -189,15 +198,83 @@ cases:
 	if err := os.WriteFile(suitePath, []byte(suite), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner, err := policytest.NewRunner(context.Background(), dir, false)
-	if err != nil {
-		t.Fatalf("NewRunner: %v", err)
-	}
+	runner := newRunner(t, dir)
 	rep, err := runner.RunFile(context.Background(), suitePath)
 	if err != nil {
 		t.Fatalf("RunFile: %v", err)
 	}
 	if rep.Failed != 0 || rep.Passed != 1 {
 		t.Fatalf("report = %+v, want 1 passed", rep)
+	}
+}
+
+// Both rewriters run the DuckDB parse check, as the server does. The
+// deparse of (a OR b) IS NULL drops the parentheses.
+func TestRunner_ParseCheck(t *testing.T) {
+	requireRealParser(t)
+	runner := newRunner(t, writePolicies(t))
+
+	refused := policytest.Case{
+		Name:     "dropped parentheses",
+		Identity: policytest.Identity{Subject: "alice", Groups: []string{"analysts"}, Claims: map[string]any{"tenant_id": "acme"}},
+		SQL:      "SELECT id FROM pg.public.orders WHERE (id = 1 OR total > 2) IS NULL",
+		Expect:   policytest.Expect{Outcome: "allow", ErrorCode: "ERR_UNSUPPORTED_SYNTAX"},
+	}
+	for _, s := range []*policytest.Suite{
+		{Cases: []policytest.Case{refused}},
+		{Cases: []policytest.Case{refused}, Schema: map[string][]string{"pg.public.orders": {"id", "total", "tenant_id"}}},
+	} {
+		rep, err := runner.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if rep.Failed != 0 {
+			t.Errorf("schema %v: %+v", s.Schema, rep.Cases)
+		}
+	}
+}
+
+// A case that sets only errorCode runs the rewrite and fails when the
+// rewrite succeeds.
+func TestRunner_ErrorCodeChecked(t *testing.T) {
+	requireRealParser(t)
+	runner := newRunner(t, writePolicies(t))
+	rep, err := runner.Run(context.Background(), &policytest.Suite{Cases: []policytest.Case{{
+		Name:     "rewrites fine",
+		Identity: policytest.Identity{Subject: "alice", Groups: []string{"analysts"}, Claims: map[string]any{"tenant_id": "acme"}},
+		SQL:      "SELECT id FROM pg.public.orders",
+		Expect:   policytest.Expect{Outcome: "allow", ErrorCode: "ERR_UNSUPPORTED_SYNTAX"},
+	}}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Failed != 1 {
+		t.Errorf("report = %+v, want the case to fail", rep.Cases)
+	}
+}
+
+// The rewriters know DuckDB's default database, as on the server, so they
+// refuse memory.orders.id on a filtered orders. The filter wrapper is named
+// orders alone.
+func TestRunner_DefaultDatabaseQualifier(t *testing.T) {
+	requireRealParser(t)
+	runner := newRunner(t, writePolicies(t))
+	refused := policytest.Case{
+		Name:     "default database qualifier",
+		Identity: policytest.Identity{Subject: "alice", Groups: []string{"analysts"}, Claims: map[string]any{"tenant_id": "acme"}},
+		SQL:      "SELECT memory.orders.id FROM orders",
+		Expect:   policytest.Expect{Outcome: "allow", ErrorCode: "ERR_UNSUPPORTED_SYNTAX"},
+	}
+	for _, s := range []*policytest.Suite{
+		{Cases: []policytest.Case{refused}},
+		{Cases: []policytest.Case{refused}, Schema: map[string][]string{"memory.main.orders": {"id", "tenant_id"}}},
+	} {
+		rep, err := runner.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if rep.Failed != 0 {
+			t.Errorf("schema %v: %+v", s.Schema, rep.Cases)
+		}
 	}
 }

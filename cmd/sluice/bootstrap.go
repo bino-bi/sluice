@@ -53,6 +53,7 @@ type runtimeDeps struct {
 	parser       parser.Parser
 	sourceReg    *datasource.Registry
 	exec         *executor.Executor
+	parseExec    *executor.Executor
 	schemaCache  schema.Cache
 	policyEng    *policy.Engine      // YAML engine; also the admin snapshot source
 	policyEngine policy.PolicyEngine // engine passed to queryservice (yaml or composite)
@@ -180,6 +181,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		return nil, fmt.Errorf("executor: %w", err)
 	}
 
+	// 8a. Parse-only DuckDB for the rewriter's parse check. Query
+	// connections stay checked out while results stream, so a check on
+	// that pool would wait behind long reads. Nothing is attached here.
+	deps.parseExec, err = executor.NewParseCheck(ctx, scfg.Limits.MaxSQLBytes, deps.log)
+	if err != nil {
+		return nil, fmt.Errorf("parse check executor: %w", err)
+	}
+
 	// 8b. Health sweep pool — same *sql.DB the schema cache borrows from.
 	// Kicks one immediate sweep so /v1/ready reflects real state shortly
 	// after boot instead of after the first full HealthInterval.
@@ -203,11 +212,17 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 
 	// 11. Rewriter.
+	defaultDB, err := deps.exec.CurrentDatabase(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("executor: %w", err)
+	}
 	deps.rewrite = rewriter.New(rewriter.Options{
-		Parser: deps.parser,
-		Schema: deps.schemaCache,
-		Logger: deps.log,
-		Salts:  secrets.NewSaltStore(deps.resolver),
+		Parser:          deps.parser,
+		Schema:          deps.schemaCache,
+		Logger:          deps.log,
+		Salts:           secrets.NewSaltStore(deps.resolver),
+		ParseCheck:      deps.parseExec,
+		DefaultDatabase: defaultDB,
 	})
 
 	// 12. Audit dispatcher — file sink (chain primary) plus optional
@@ -537,6 +552,9 @@ func (d *runtimeDeps) Close(ctx context.Context) {
 	}
 	if d.exec != nil {
 		_ = d.exec.Close()
+	}
+	if d.parseExec != nil {
+		_ = d.parseExec.Close()
 	}
 	if d.telShutdown != nil {
 		_ = d.telShutdown(ctx)

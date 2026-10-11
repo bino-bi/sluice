@@ -81,7 +81,9 @@ or subquery argument, a qualified function name (`schema.f(x)` or the method for
 table name that contains path characters (`/ \ : * ? [`), or a `FROM` item other than a table,
 subquery, join, or function (`TABLESAMPLE`, `XMLTABLE`, `JSON_TABLE`) terminates with
 `ACL_REJECTED`. The request is audited with decision `reject` and no applied policies. See
-[Security model](security-model.md).
+[Security model](security-model.md). A statement with a `$n` parameter terminates with
+`ERR_UNSUPPORTED_SYNTAX` ("query parameters ($n) are not supported") and is audited with decision
+`error`: caller params are not bound, and `$n` would read the values the rewriter binds.
 
 ## Policy evaluation
 
@@ -128,6 +130,22 @@ because the plan would show the policy SQL with its bound values. A filtered tab
 alias whose name DuckDB reads as a keyword (`semi`, `by`, `qualify`, ...) is refused with
 `ERR_UNSUPPORTED_SYNTAX`. Give such a table an alias.
 
+pg_query deparses for PostgreSQL, and DuckDB runs the deparsed text. So on a `SELECT` that a row
+filter, column mask, limit or sample applies to, the rewriter first writes a few forms the way
+DuckDB reads them (`LIKE ... ESCAPE`, `INTERVAL 'n' <unit>`, casts to `json` and `bit`, a bare
+`FLOAT`, the letter case of aliases and of `EXTRACT` units). Then, before it adds any policy SQL,
+it asks a separate DuckDB instance (one thread, two connections, nothing attached, memory sized
+from `limits.maxSqlBytes`) to parse the caller's text and the deparsed text, and compares the two
+trees. When they differ, the query is refused with `ERR_UNSUPPORTED_SYNTAX`;
+when DuckDB cannot parse the caller's text, with `ERR_SYNTAX`. The forms and what to write instead
+are listed in
+[Row filters](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables). A failed
+check is `ERR_INTERNAL`, a statement too large for the check is `ERR_PAYLOAD_TOO_LARGE`, and a
+request canceled or timed out during the check gets `ERR_CANCELED` or `ERR_TIMEOUT`. A mask snippet from a `pkg/mask` provider gets the same check once per distinct
+text. A pass-through query is not deparsed, so it is not checked. A column qualified with the
+schema or catalog of a filtered table without an alias (`main.orders.id`) is refused with
+`ERR_UNSUPPORTED_SYNTAX`, because the wrapper is named after the table alone.
+
 ## Execute
 
 The rewritten SQL runs on embedded DuckDB against read-only attached catalogs, streaming rows
@@ -162,10 +180,10 @@ CPU time and rows served; client streaming time is deliberately excluded).
 | Budget | `ERR_BUDGET_EXCEEDED` |
 | Input caps | `ERR_PAYLOAD_TOO_LARGE` |
 | Parse | `ERR_SYNTAX`, `ERR_MULTIPLE_STATEMENTS`, `ERR_UNSUPPORTED_SYNTAX` (surfaced only on allow) |
-| Function gate | `ACL_REJECTED` |
+| Function gate | `ACL_REJECTED`, `ERR_UNSUPPORTED_SYNTAX` (`$n` parameters) |
 | Policy | `ACL_DENIED`, `ACL_REJECTED` (or a policy's custom code) |
 | Approval | `ERR_APPROVAL_PENDING`, `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED`, `ERR_RATE_LIMITED` (broker full) |
-| Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_REWRITE_FAILED`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
+| Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX` (DuckDB cannot parse the statement), `ERR_REWRITE_FAILED`, `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_PAYLOAD_TOO_LARGE` and `ERR_INTERNAL` (DuckDB parse check) |
 | Execute | `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_INTERNAL` |
 | Post-query masks | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |
 | Audit gate | `ERR_AUDIT_UNAVAILABLE` |

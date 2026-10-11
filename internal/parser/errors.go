@@ -31,6 +31,10 @@ var (
 	// bare, so DuckDB would restructure the join or read the alias as a
 	// clause, and skip the row filter and mask.
 	ErrAliasKeyword = errors.New("table alias is a DuckDB keyword (such as semi, asof, qualify or pivot), use another alias")
+	// ErrParamRef reports a $n in the caller's statement. Caller params are
+	// not bound, and $n would read the values the rewriter binds: row filter
+	// values and mask params such as a hash salt.
+	ErrParamRef = errors.New("query parameters ($n) are not supported")
 )
 
 // ParseError carries position information for logs and audit records. The

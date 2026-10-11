@@ -11,7 +11,7 @@ Request body:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `sql` | string | The statement. Exactly one; write statements are rejected. |
-| `params` | array | Positional parameters for `$1`, `$2`, … in your SQL. |
+| `params` | array | Not supported. A statement with `$1`, `$2`, … is refused with `ERR_UNSUPPORTED_SYNTAX`. |
 | `max_rows` | int | Row cap for this request; clamped to the server limit. |
 | `timeout_ms` | int | Per-request timeout; clamped to the server maximum. |
 | `format` | string | `json` (default) or `csv`. |

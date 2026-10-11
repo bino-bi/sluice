@@ -80,3 +80,20 @@ Directories 83 to 85 cover names and positions that DuckDB reads in another way 
 | `83-postquery-mask-alias-ref-rejected` | DuckDB resolves the select alias of a post-query masked item in `WHERE` and `ORDER BY`, on the raw value. |
 | `84-postquery-mask-position-rejected` | `ORDER BY 2` sorts by the raw value of the post-query masked item at position 2. |
 | `85-wrapper-alias-keyword-refused` | The wrapper of an unaliased filtered table is named after it. DuckDB reads a bare `semi` as a join keyword, so the table needs an alias. |
+
+Directories 86 to 88 cover the DuckDB parse check. pg_query deparses for PostgreSQL, and DuckDB runs the deparsed text, so a statement whose deparse DuckDB reads in another way is refused. They use the policy of 85 on `orders` alone.
+
+| Fixture | Note |
+|---|---|
+| `86-interval-week-refused` | pg_query has no `WEEK` interval unit and reads `INTERVAL '1' WEEK` as `'1'::interval AS week`. DuckDB reads one week. |
+| `87-isnull-parens-refused` | The deparse drops the parentheses of `(a OR b) IS NULL`, and DuckDB reads `a OR (b IS NULL)`. |
+| `88-duckdb-unparseable-refused` | pg_query reads `0x1f` as 31. DuckDB cannot parse `0x1f + 1`, so the statement gets `ERR_SYNTAX`. |
+
+Directories 89 to 92 cover forms the rewriter normalizes for DuckDB before the parse check, so they are served. They use the policy of 86. Without the normalizer, 89 to 91 are refused and 92 is served with lower-case names.
+
+| Fixture | Note |
+|---|---|
+| `89-like-escape-normalized` | `LIKE ... ESCAPE` and `NOT ILIKE ... ESCAPE` become the 3-argument `like_escape` functions DuckDB reads them as. |
+| `90-interval-literal-normalized` | `INTERVAL '30' DAY` becomes the `to_days` call DuckDB expands it to, also in a `RANGE` window frame. The deparsed `'30'::interval day` is 30 seconds in DuckDB. |
+| `91-float-json-cast-normalized` | A bare `FLOAT` is `REAL` in DuckDB and `float8` in pg_query. `json` and `bit` lose the `pg_catalog` schema DuckDB does not have. |
+| `92-alias-case-restored` | Alias names keep the caller's spelling, because DuckDB keeps it in result column names and struct keys. References stay folded. |

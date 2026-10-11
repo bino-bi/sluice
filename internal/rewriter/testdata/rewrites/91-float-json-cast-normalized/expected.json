@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT o.total::real AS total, o.meta::\"json\" AS meta, '{\"a\":1}'::\"json\" AS doc, 1::\"bit\"(1) AS flag FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) o",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "4411e8257033486d",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

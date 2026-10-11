@@ -12,11 +12,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"sigs.k8s.io/yaml"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/pgquery"
@@ -32,6 +34,11 @@ import (
 // via `go test ./internal/rewriter -run TestGoldenRewrites -update`.
 // Every diff must be reviewed in the PR.
 var updateGolden = flag.Bool("update", false, "overwrite golden files with observed output")
+
+// goldenParseCheck is the DuckDB parse check, wired as in production.
+var goldenParseCheck = sync.OnceValues(func() (*executor.Executor, error) {
+	return executor.NewParseCheck(context.Background(), 0, nil)
+})
 
 // goldenIdentity mirrors the subset of identity.UserCtx carried in
 // identity.yaml fixtures. Only the fields used by the selector/template
@@ -169,11 +176,16 @@ func runGoldenFixture(t *testing.T, dir string) {
 		schemaCache = schema.NewStatic(entries)
 	}
 
+	parseCheck, err := goldenParseCheck()
+	if err != nil {
+		t.Fatalf("parse check executor: %v", err)
+	}
 	rw := rewriter.New(rewriter.Options{
 		Parser:         p,
 		DefaultCatalog: "pg",
 		Salts:          goldenSaltStore{},
 		Schema:         schemaCache,
+		ParseCheck:     parseCheck,
 	})
 
 	req := rewriter.RewriteRequest{

@@ -24,6 +24,7 @@ import (
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
+	"github.com/bino-bi/sluice/internal/secrets"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -85,6 +86,11 @@ func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice
 		t.Fatalf("executor.New: %v", err)
 	}
 	t.Cleanup(func() { _ = exec.Close() })
+	parseCheck, err := executor.NewParseCheck(ctx, 0, nil)
+	if err != nil {
+		t.Fatalf("executor.NewParseCheck: %v", err)
+	}
+	t.Cleanup(func() { _ = parseCheck.Close() })
 
 	snap := &config.Snapshot{ByKind: map[pkgapi.Kind][]pkgapi.Object{}}
 	for _, name := range []string{"allow-analytics.yaml", "filter-tenant.yaml", "mask-email.yaml"} {
@@ -124,8 +130,10 @@ func newHelloSluiceService(t *testing.T, extraPolicies ...string) (*queryservice
 		Parser: p,
 		Policy: eng,
 		Rewriter: rewriter.New(rewriter.Options{
-			Parser: p,
-			Schema: schema.New(schema.Options{Loader: schema.NewLoader(reg, exec.DB())}),
+			Parser:     p,
+			Schema:     schema.New(schema.Options{Loader: schema.NewLoader(reg, exec.DB())}),
+			Salts:      secrets.NewSaltStore(secrets.NewResolver(secrets.ResolverOptions{})),
+			ParseCheck: parseCheck,
 		}),
 		Executor: ex,
 		Audit:    a,

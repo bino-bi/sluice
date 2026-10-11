@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
@@ -896,5 +897,117 @@ func TestExecute_LongIdentifierRefused(t *testing.T) {
 	}
 	if ex.calls != 0 {
 		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
+// The deparse drops the parentheses of (a OR b) IS NULL, and DuckDB reads
+// a OR (b IS NULL). The parse check refuses the statement before it runs.
+func TestExecute_RewriteKeepsDuckDBMeaning(t *testing.T) {
+	svc, ex, a := newHelloSluiceService(t)
+	sql := "SELECT id FROM shop.main.customers WHERE (tenant_id = 'x' OR id = 1) IS NULL"
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql, User: helloUser()})
+	if err == nil {
+		t.Fatalf("served %v, want ERR_UNSUPPORTED_SYNTAX", drainRows(t, res))
+	}
+	if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+		t.Errorf("code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", ae.Code, ae.Message)
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+	recs := a.all()
+	if len(recs) != 1 || recs[0].Decision != audit.DecisionError || recs[0].ErrorCode != string(pkgerr.CodeUnsupportedSyntax) {
+		t.Errorf("audit records = %+v, want one error with ERR_UNSUPPORTED_SYNTAX", recs)
+	}
+}
+
+// Forms the rewriter normalizes for DuckDB are served with the rows and
+// names DuckDB gives the caller's text. Each one runs under the tenant
+// filter, so it takes the rewrite path.
+func TestExecute_RewriteNormalizedForDuckDB(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t)
+	cases := []struct {
+		name, sql, column string
+		want              string
+	}{
+		// 2 days back keeps Alice and Bob; 2 seconds back keeps Bob alone.
+		{"interval literal", "SELECT count(*) AS n FROM shop.main.customers WHERE created_at::timestamp > TIMESTAMP '2026-01-04 00:00:00' - INTERVAL '2' DAY", "n", "[[int64:2]]"},
+		{"like escape", "SELECT name FROM shop.main.customers WHERE name LIKE 'A%' ESCAPE '!' OR name NOT ILIKE '%b%' ESCAPE '!'", "name", "[[string:Alice]]"},
+		{"bare float", "SELECT CAST(id AS float) AS f FROM shop.main.customers ORDER BY id", "f", "[[float32:1] [float32:2]]"},
+		{"alias spelling", "SELECT id AS CustomerId FROM shop.main.customers ORDER BY CustomerId", "CustomerId", "[[int32:1] [int32:2]]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: tc.sql, User: helloUser()})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if len(res.Columns) != 1 || res.Columns[0].Name != tc.column {
+				t.Errorf("columns = %+v, want %q", res.Columns, tc.column)
+			}
+			var got []string
+			for _, row := range drainRows(t, res) {
+				var cells []string
+				for _, v := range row {
+					cells = append(cells, fmt.Sprintf("%T:%v", v, v))
+				}
+				got = append(got, "["+strings.Join(cells, " ")+"]")
+			}
+			if s := "[" + strings.Join(got, " ") + "]"; s != tc.want {
+				t.Errorf("rows = %s, want %s", s, tc.want)
+			}
+		})
+	}
+}
+
+const saltedNamePolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: hash-name
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
+          columns: ["name"]
+  mask:
+    type: hash
+    args:
+      algorithm: sha256
+      saltRef: secret://env/SLUICE_TEST_NAME_SALT
+`
+
+// The rewriter binds its own values from $1: the filter value first, then
+// the mask params. A $n in the caller's text would read them, the salt of
+// a hash mask too. Caller params are never bound, so $n is refused.
+func TestExecute_CallerParamsRefused(t *testing.T) {
+	const salt = "TopSecretSalt123"
+	t.Setenv("SLUICE_TEST_NAME_SALT", salt)
+	svc, ex, a := newHelloSluiceService(t, saltedNamePolicy)
+	for _, sql := range []string{
+		"SELECT $2 AS s, name FROM shop.main.customers",
+		"SELECT $1 AS p, id FROM shop.main.customers",
+		"SELECT id FROM shop.main.orders WHERE (SELECT $1) IS NOT NULL",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql, User: helloUser()})
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, drainRows(t, res))
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax || !strings.Contains(ae.Message, "query parameters") {
+			t.Errorf("%s: code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code, ae.Message)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+	for _, rec := range a.all() {
+		if rec.Decision != audit.DecisionError || rec.ErrorCode != string(pkgerr.CodeUnsupportedSyntax) {
+			t.Errorf("audit decision %s, error_code %q, want error and ERR_UNSUPPORTED_SYNTAX", rec.Decision, rec.ErrorCode)
+		}
 	}
 }

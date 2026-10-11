@@ -141,6 +141,54 @@ becomes:
 
 Use `permissive` only for deliberate carve-outs — an OR widens what each filter alone allows.
 
+## SQL forms refused on filtered or masked tables
+
+When a row filter, column mask, `limit` or `sample` applies to a `SELECT`, Sluice changes the
+parsed statement and writes it back as SQL. The parser and the writer follow PostgreSQL, but
+DuckDB runs the text, and a few forms mean something else in DuckDB. So before Sluice adds any
+policy SQL, DuckDB parses your text and the rewritten text. The query is refused:
+
+- with `ERR_UNSUPPORTED_SYNTAX` ("the statement would change meaning when rewritten for row
+  filters, masks or limits") when DuckDB reads the two texts in another way;
+- with `ERR_SYNTAX` ("DuckDB cannot parse the statement") when DuckDB cannot parse your text.
+
+A `QueryRewritePolicy` limit or sample that matches every query makes this apply to every
+`SELECT`. A query that no filter, mask, limit or sample applies to runs your text as written and
+is not checked.
+
+| Refused form | Example | Write instead |
+| ------------ | ------- | ------------- |
+| Parentheses the rewrite drops: around `AND`, `OR`, `NOT` or `IS DISTINCT FROM` before `IS [NOT] NULL`, around `IS DISTINCT FROM` before `IS TRUE`, and around a comparison, `AND` or `OR` before `IN`, `BETWEEN` or `= ANY`, or as a `BETWEEN` bound | `(a OR b) IS NULL`, `(NOT flag) IS NULL`, `(a = 1) IN (false)` | Wrap the operand in `coalesce`: `coalesce(a OR b) IS NULL` |
+| `**` and `//` | `2 * 3 ** 2`, `b // 2 + 1` | `2 * pow(3, 2)`, `divide(b, 2) + 1` |
+| A lambda whose body has a comparison, `AND` or `OR` | `list_filter(l, x -> x > 1)` | Put the body in parentheses: `x -> (x > 1)` |
+| `->>` under `AND`, `OR` or `NOT` | `flag AND j ->> 'a' = '1'` | `flag AND (j ->> 'a') = '1'` |
+| Hex, octal and binary literals (`ERR_SYNTAX` unless the literal ends a select item) | `0x1f`, `0o17`, `0x1f + 1` | The decimal value: `31` |
+| `INTERVAL 'n' <unit>` with a unit pg_query does not know: `WEEK`, `QUARTER`, `DECADE`, `CENTURY`, `MILLENNIUM`, `MILLISECOND`, `MICROSECOND`, and every plural (`DAYS`, `WEEKS`, ...). In `WHERE` pg_query cannot parse it (`ERR_SYNTAX`) | `INTERVAL '3' WEEK` | The unit inside the string, `INTERVAL '3 weeks'`, or `to_weeks(3)` |
+| Interval ranges and precisions (`ERR_SYNTAX`) | `INTERVAL '1 02' DAY TO HOUR`, `INTERVAL '3' SECOND(3)` | `INTERVAL '1 day 2 hours'` |
+| `EXTRACT` with a plural unit | `EXTRACT(days FROM d)` | The singular unit: `EXTRACT(day FROM d)` |
+| `ARRAY[[...]]` | `ARRAY[[1, 2], [3, 4]]` | `ARRAY[ARRAY[1, 2], ARRAY[3, 4]]` |
+| A quoted name that only DuckDB reads as a keyword, as a CTE name, column list entry, column reference or window name, and a PostgreSQL keyword as a named argument | `WITH "at" AS (...)`, `struct_pack("default" := id)` | Another name |
+| A bare alias that DuckDB reads as a keyword (`ERR_SYNTAX`) | `SELECT 1 at` | `SELECT 1 AS "at"` |
+| `U&'...'` strings and `\u` escapes in `E'...'` strings (`ERR_SYNTAX`) | `E'\u0041'` | The character itself, or `E'\x41'` |
+| A column qualified with the schema or catalog of a filtered table that has no alias | `SELECT main.orders.id FROM main.orders` | `orders.id`, or give the table an alias |
+| A filtered table without an alias whose name DuckDB reads as a keyword (see above) | `SELECT count(*) FROM main."by"` | Give the table an alias |
+
+Some of these forms give the same rows in both readings (`EXTRACT(days FROM d)`, `ARRAY[[1, 2]]`),
+but DuckDB builds another tree for them, so they are refused too.
+
+These forms are rewritten into the form DuckDB builds, so they work: `LIKE ... ESCAPE` and
+`ILIKE ... ESCAPE` (also with `NOT`), `INTERVAL 'n' <unit>` with `YEAR`, `MONTH`, `DAY`, `HOUR`,
+`MINUTE` or `SECOND`, casts to `json` and `bit`, a bare `FLOAT`, which is `REAL` as in DuckDB, and
+`EXTRACT` with a unit that is not a DuckDB keyword, such as `EXTRACT(EPOCH FROM ts)`.
+An alias keeps your spelling in result column names, struct keys and `to_json` keys. Write each
+name in one spelling: when the same name appears in two spellings, as in
+`struct_pack(MyKey := id)` next to `id AS mykey`, both come back in lower case. A keyword, a type
+name or an `EXTRACT` unit counts too: `EXTRACT(MONTH FROM d) AS Month`, `ts::date AS Date` and
+`EXTRACT(EPOCH FROM ts) AS Epoch` come back as `month`, `date` and `epoch`. Quote such an alias to
+keep its spelling: `AS "Month"`. A struct field without an alias comes back in lower case as well:
+`SELECT st.Y FROM t` gives a column `y`, where your text run as written gives `Y`. Give it an alias:
+`st.Y AS "Y"`.
+
 ## Rolling out with DryRun
 
 Set `enforcementMode: DryRun` to deploy a filter that matches and is recorded as a shadow outcome

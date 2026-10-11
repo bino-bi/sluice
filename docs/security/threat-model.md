@@ -67,6 +67,8 @@ flowchart LR
 | Reading PII columns | `ColumnMaskPolicy` (partial, hash, fpe, fake, ...) | Values masked |
 | Reading the policy SQL, salts or row counts through `EXPLAIN` | `EXPLAIN` refused when a row filter or mask applies | `ERR_UNSUPPORTED_SYNTAX` |
 | A name longer than 63 bytes that pg_query cuts and DuckDB does not | Parser refuses identifiers over 63 bytes | `ERR_UNSUPPORTED_SYNTAX` |
+| Reading the values the policy binds (a hash salt, a filter value) through `$n` | Statements with `$n` parameters are refused | `ERR_UNSUPPORTED_SYNTAX` |
+| Rewritten SQL that DuckDB reads in another way than the caller's text | Normalization plus a DuckDB parse check of both texts before any policy SQL is added | `ERR_UNSUPPORTED_SYNTAX` (`ERR_SYNTAX` when DuckDB cannot parse the caller's text) |
 | Bulk exfiltration in one query | `QueryRewritePolicy` LIMIT clamp + sampling | Result bounded |
 | Bulk exfiltration over many queries | Per-subject daily budgets (`rowsPerDay`, `cpuSecondsPerDay`) | `ERR_BUDGET_EXCEEDED` |
 | Runaway agent loop | Per-subject rate limits (token bucket) | `ERR_RATE_LIMITED` |

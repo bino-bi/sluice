@@ -61,6 +61,7 @@ Exit codes:
 				}
 				return &exitError{Code: 1, Err: err}
 			}
+			defer func() { _ = runner.Close() }()
 
 			tests := testsPath
 			if tests == "" {

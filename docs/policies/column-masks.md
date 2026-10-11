@@ -50,6 +50,10 @@ Matching rules to know:
 - A star is only supported as a select item. `c.*` inside an expression is refused on a query
   with masks. An alias in a subquery must not reuse the alias of an outer masked table for
   another table.
+- On a query with a mask, a few SQL forms that DuckDB reads in another way than PostgreSQL are
+  refused with `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX`. They are listed, with what to write
+  instead, in
+  [SQL forms refused on filtered or masked tables](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
 - One winner per column. When several masks claim the same column, ordering is priority
   descending → selector specificity descending → name ascending; the first candidate takes the
   column and the rest are ignored (masks never stack).

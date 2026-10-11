@@ -26,17 +26,27 @@ type Options struct {
 	Logger         *slog.Logger
 	Clock          func() time.Time
 	DefaultCatalog string
+	// DefaultDatabase is DuckDB's current_database(), the catalog of a
+	// table written without one. Unlike DefaultCatalog it does not change
+	// policy keys. It lets the rewriter refuse catalog.t.col on a table
+	// the filter wraps. Empty means unknown.
+	DefaultDatabase string
 	// Masks resolves mask types beyond the null/constant fast paths.
 	// Nil falls back to mask.Default().
 	Masks *pkgmask.Registry
 	// Salts resolves secret:// salt references for salted hash masks.
 	Salts pkgmask.SaltStore
+	// ParseCheck refuses a mutated SELECT whose deparse DuckDB reads in
+	// another way than the caller's text. Nil skips the check; only unit
+	// tests leave it nil.
+	ParseCheck ParseChecker
 }
 
 // Rewriter is the sole public surface of the package. It is safe for
 // concurrent use; callers share a single instance.
 type Rewriter struct {
-	opts Options
+	opts     Options
+	snippets *snippetMemo
 }
 
 // New returns a new Rewriter. Parser is required — everything else takes
@@ -51,7 +61,7 @@ func New(opts Options) *Rewriter {
 	if opts.Clock == nil {
 		opts.Clock = time.Now
 	}
-	return &Rewriter{opts: opts}
+	return &Rewriter{opts: opts, snippets: &snippetMemo{pc: opts.ParseCheck}}
 }
 
 // RewriteRequest carries everything Rewrite needs. AST may be nil if the
@@ -104,7 +114,9 @@ type PostMask struct {
 //  1. Reject unsupported statement kinds.
 //  2. Deny / reject: return a typed APIError.
 //  3. Fast-path: pass-through when no mutation is required.
-//  4. Clone the AST, apply expand-star → inject-filter → substitute-mask.
+//  4. Clone the AST, normalize it for DuckDB and refuse it when DuckDB
+//     reads its deparse in another way than req.Raw. Then apply
+//     expand-star → inject-filter → substitute-mask.
 //  5. Deparse, compute fingerprint, return the result.
 //
 // Steps 4+ are only reached when req.AST != nil. The nil-AST branch
@@ -160,6 +172,9 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
 			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
 		}
+		if req.AST.Shape().HasParams {
+			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(parser.ErrParamRef.Error())
+		}
 		// The plan shows the policy SQL with its bound values (salts too)
 		// and statistics over the rows a filter hides.
 		if req.AST.Statement() == parser.StmtExplain && (len(req.Decision.RowFilters) > 0 || len(req.Decision.ColumnMasks) > 0) {
@@ -195,15 +210,24 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		return nil, ErrForeignAST
 	}
 
+	// DuckDB runs the deparsed text, and pg_query deparses for PostgreSQL.
+	// Check before any mutation, so a difference is the dialect's alone.
+	normalizeForDuckDB(clone, req.Raw)
+	if err := r.checkDuckDBParse(ctx, req, clone); err != nil {
+		return nil, err
+	}
+
 	state := &state{
-		ctx:            ctx,
-		decision:       req.Decision,
-		user:           req.User,
-		facts:          req.Facts,
-		schema:         r.opts.Schema,
-		defaultCatalog: r.opts.DefaultCatalog,
-		masks:          r.opts.Masks,
-		salts:          r.opts.Salts,
+		ctx:             ctx,
+		decision:        req.Decision,
+		user:            req.User,
+		facts:           req.Facts,
+		schema:          r.opts.Schema,
+		defaultCatalog:  r.opts.DefaultCatalog,
+		defaultDatabase: r.opts.DefaultDatabase,
+		masks:           r.opts.Masks,
+		salts:           r.opts.Salts,
+		snippets:        r.snippets,
 	}
 
 	if err := state.checkMaskedAliases(clone); err != nil {
@@ -265,14 +289,16 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 
 // state carries the per-Rewrite mutable bookkeeping.
 type state struct {
-	ctx            context.Context
-	decision       *policy.Decision
-	user           *identity.UserCtx
-	facts          *policy.RequestFacts
-	schema         schema.Cache
-	defaultCatalog string
-	masks          *pkgmask.Registry
-	salts          pkgmask.SaltStore
+	ctx             context.Context
+	decision        *policy.Decision
+	user            *identity.UserCtx
+	facts           *policy.RequestFacts
+	schema          schema.Cache
+	defaultCatalog  string
+	defaultDatabase string
+	masks           *pkgmask.Registry
+	salts           pkgmask.SaltStore
+	snippets        *snippetMemo
 
 	params    []any
 	rewrites  []string

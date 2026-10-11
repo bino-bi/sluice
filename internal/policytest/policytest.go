@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/parserbackend"
@@ -79,15 +80,18 @@ type Expect struct {
 
 // Runner evaluates cases against a fixed policy snapshot.
 type Runner struct {
-	engine *policy.Engine
-	rw     *rewriter.Rewriter
-	parser parser.Parser
-	salts  pkgmask.SaltStore
+	engine    *policy.Engine
+	rw        *rewriter.Rewriter
+	parser    parser.Parser
+	salts     pkgmask.SaltStore
+	parseExec *executor.Executor
+	defaultDB string
 }
 
 // NewRunner loads the policy directory, compiles it, and wires the
 // parser + rewriter. It has no live schema cache; a suite that needs
 // SELECT-* expansion declares its tables in the `schema:` block instead.
+// The caller must Close the runner.
 func NewRunner(ctx context.Context, policyDir string, strict bool) (*Runner, error) {
 	if !parserbackend.Implemented {
 		return nil, fmt.Errorf("parser backend %q is a non-functional stub in this build (compiled with -tags=pure_parser); rebuild without the tag", parserbackend.Name())
@@ -103,10 +107,28 @@ func NewRunner(ctx context.Context, policyDir string, strict bool) (*Runner, err
 	if err := eng.ApplySnapshot(ctx, snap); err != nil {
 		return nil, fmt.Errorf("compile snapshot: %w", err)
 	}
+	// The DuckDB parse check runs as on the server, on its own instance
+	// with nothing attached.
+	parseExec, err := executor.NewParseCheck(ctx, 0, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parse check executor: %w", err)
+	}
+	// The server's DuckDB is in memory too, so it has the same default
+	// database.
+	defaultDB, err := parseExec.CurrentDatabase(ctx)
+	if err != nil {
+		_ = parseExec.Close()
+		return nil, fmt.Errorf("parse check executor: %w", err)
+	}
 	p := parserbackend.New(parser.Options{})
 	salts := secrets.NewSaltStore(secrets.NewResolver(secrets.ResolverOptions{}))
-	rw := rewriter.New(rewriter.Options{Parser: p, Salts: salts})
-	return &Runner{engine: eng, rw: rw, parser: p, salts: salts}, nil
+	rw := rewriter.New(rewriter.Options{Parser: p, Salts: salts, ParseCheck: parseExec, DefaultDatabase: defaultDB})
+	return &Runner{engine: eng, rw: rw, parser: p, salts: salts, parseExec: parseExec, defaultDB: defaultDB}, nil
+}
+
+// Close releases the DuckDB instance of the parse check.
+func (r *Runner) Close() error {
+	return r.parseExec.Close()
 }
 
 // suiteRewriter returns the rewriter for s: the shared one when the suite
@@ -130,9 +152,11 @@ func (r *Runner) suiteRewriter(s *Suite) (*rewriter.Rewriter, error) {
 		entries = append(entries, e)
 	}
 	return rewriter.New(rewriter.Options{
-		Parser: r.parser,
-		Salts:  r.salts,
-		Schema: schema.NewStatic(entries),
+		Parser:          r.parser,
+		Salts:           r.salts,
+		Schema:          schema.NewStatic(entries),
+		ParseCheck:      r.parseExec,
+		DefaultDatabase: r.defaultDB,
 	}), nil
 }
 
@@ -263,9 +287,11 @@ func (r *Runner) runCase(ctx context.Context, rw *rewriter.Rewriter, c Case) Cas
 	checkSet(fail, "masks", c.Expect.Masks, maskKeys(dec))
 	checkSet(fail, "applied", c.Expect.Applied, appliedKeys(dec))
 
-	// Rewrite assertions run only for allow outcomes with a clean parse.
-	needRewrite := len(c.Expect.PostMasks) > 0 || len(c.Expect.RewrittenSQLContains) > 0 || c.Expect.RewrittenSQL != ""
-	if needRewrite || (dec.Outcome == policy.OutcomeAllow && c.Expect.ErrorCode == "") {
+	// Rewrite assertions run for allow outcomes and for every case that
+	// asserts on the rewrite, errorCode included.
+	needRewrite := len(c.Expect.PostMasks) > 0 || len(c.Expect.RewrittenSQLContains) > 0 || c.Expect.RewrittenSQL != "" ||
+		c.Expect.ErrorCode != ""
+	if needRewrite || dec.Outcome == policy.OutcomeAllow {
 		if parseErr != nil {
 			fail("rewrite requested but SQL did not parse: %v", parseErr)
 			return cr

@@ -32,4 +32,8 @@ var (
 	// execution. It wraps context.Canceled so callers can use
 	// errors.Is(err, context.Canceled) if they prefer.
 	ErrCanceled = errors.New("executor: canceled")
+
+	// ErrOutOfMemory is returned by ParseTrees when DuckDB runs out of
+	// memory building the trees, so the statement is too large to check.
+	ErrOutOfMemory = errors.New("executor: out of memory")
 )

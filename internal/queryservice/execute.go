@@ -151,6 +151,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
+	// Also before the cache: a $n reads the values the rewriter binds (row
+	// filter values, a hash salt). Caller params are never bound.
+	if shape.HasParams {
+		apiErr := pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithQueryID(qid).WithMessage(parser.ErrParamRef.Error())
+		setErrorCode(rec, apiErr)
+		rec.Decision = audit.DecisionError
+		s.emit(ctx, rec, start)
+		releaseSlot()
+		return nil, apiErr
+	}
 
 	// 1d. Catalog used as schema. DuckDB resolves `shop.customers` as
 	// catalog shop with its default schema. The table walker and every
@@ -278,12 +288,14 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		})
 		rwSpan.End()
 		if reErr != nil {
-			// Never cache error paths.
-			setErrorCode(rec, reErr)
+			// Never cache error paths. Map first so the audit record
+			// carries the client code.
+			apiErr := toAPIError(reErr, qid)
+			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
 			releaseSlot()
-			return nil, toAPIError(reErr, qid)
+			return nil, apiErr
 		}
 		if cacheable {
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec, Rewrite: rewriteResp})
@@ -510,6 +522,14 @@ func toAPIError(err error, qid string) error {
 		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
 	case stderrors.Is(err, schema.ErrUnknownCatalog):
 		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
+	case stderrors.Is(err, executor.ErrOutOfMemory):
+		// Only the DuckDB parse check runs during the rewrite.
+		return pkgerr.Wrap(pkgerr.CodePayloadTooLarge, err).WithQueryID(qid).
+			WithMessage("statement too large for the DuckDB parse check; send a shorter statement (for example a shorter IN list) or retry later")
+	case stderrors.Is(err, context.Canceled):
+		return pkgerr.Wrap(pkgerr.CodeCanceled, err).WithQueryID(qid)
+	case stderrors.Is(err, context.DeadlineExceeded):
+		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }

@@ -60,7 +60,8 @@ How assertions compare:
   **sorted sets** — order never matters, but the sets must be equal, not merely overlapping.
 - `rewrittenSql` and `rewrittenSqlContains` are **whitespace-normalised** on both sides.
 - `errorCode` asserts the error a failing rewrite raises — see the
-  [error code reference](../reference/error-codes.md).
+  [error code reference](../reference/error-codes.md). A case that sets it always runs the
+  rewrite, and fails when the rewrite succeeds.
 
 ### Schema fixtures for `SELECT *`
 

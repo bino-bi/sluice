@@ -20,7 +20,7 @@ func extractShape(raw *pg.RawStmt, tables []parser.TableRef, catalogs []string) 
 		return shape
 	}
 	shape.AccessedColumns, shape.Comparisons = collectAccess(raw)
-	shape.Functions, shape.UnsupportedFrom = collectFunctions(raw)
+	shape.Functions, shape.UnsupportedFrom, shape.HasParams = collectFunctions(raw)
 	switch v := raw.Stmt.Node.(type) {
 	case *pg.Node_SelectStmt:
 		if v.SelectStmt != nil {

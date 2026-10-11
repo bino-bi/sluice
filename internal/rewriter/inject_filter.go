@@ -3,9 +3,11 @@
 package rewriter
 
 import (
+	"cmp"
 	"fmt"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
@@ -30,7 +32,60 @@ func (s *state) applyInjectFilter(raw *pg.ParseResult) error {
 			return err
 		}
 	}
-	return nil
+	return s.checkWrapperQualifiers(raw)
+}
+
+// checkWrapperQualifiers refuses a column qualified with the schema or
+// catalog of a table the filter wrapped under its own name, such as
+// main.t.id. The wrapper is named t alone, so DuckDB cannot resolve the
+// column. Writing t.id instead could bind to another t in a nested SELECT.
+func (s *state) checkWrapperQualifiers(raw *pg.ParseResult) error {
+	var named []*pg.RangeVar
+	for _, rv := range s.wrappers {
+		if rv.Alias == nil || rv.Alias.Aliasname == "" {
+			named = append(named, rv)
+		}
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	return walkTree(raw.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		cr, ok := m.Interface().(*pg.ColumnRef)
+		if !ok {
+			return true, nil
+		}
+		if len(cr.Fields) < 3 {
+			return false, nil
+		}
+		f := make([]string, len(cr.Fields))
+		for i, n := range cr.Fields {
+			f[i] = foldName(n.GetString_().GetSval())
+		}
+		for _, rv := range named {
+			if s.reachesTable(f, rv) {
+				return false, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(fmt.Sprintf(
+					"qualify the columns of table %q with the table name or an alias, not with its schema or catalog", foldName(rv.Relname)))
+			}
+		}
+		return false, nil
+	})
+}
+
+// reachesTable reports whether the folded fields f of a column reference
+// name rv by its schema or catalog. DuckDB reads schema.t.col,
+// catalog.t.col and catalog.schema.t.col. Other dotted forms, such as
+// alias.struct_col.field, do not name rv. A table without a catalog is in
+// DuckDB's default database. When its name is unknown, any catalog matches
+// the four-part form, but the three-part form matches the schema only,
+// since alias.struct_col.field has the same shape.
+func (s *state) reachesTable(f []string, rv *pg.RangeVar) bool {
+	name := foldName(rv.Relname)
+	schema := cmp.Or(foldName(rv.Schemaname), "main")
+	catalog := foldName(cmp.Or(rv.Catalogname, s.defaultCatalog, s.defaultDatabase))
+	if len(f) >= 3 && f[1] == name && (f[0] == schema || catalog != "" && f[0] == catalog) {
+		return true
+	}
+	return len(f) >= 4 && f[2] == name && f[1] == schema && (catalog == "" || f[0] == catalog)
 }
 
 func (s *state) injectInNode(n *pg.Node) error {
