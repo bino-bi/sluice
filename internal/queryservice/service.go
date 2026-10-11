@@ -74,6 +74,11 @@ type Options struct {
 	// Budget, when set, enforces per-subject daily budgets: Check runs
 	// pre-admission and Record accumulates usage after execution.
 	Budget budgetGate
+
+	// Catalogs lists the attached catalog names. With it the service
+	// refuses a two-part table name that DuckDB would read as
+	// catalog.table. Nil skips the check.
+	Catalogs func() []string
 }
 
 // Limits controls request-level bounds the service enforces before it

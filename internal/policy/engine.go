@@ -106,7 +106,7 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 		return dec, nil
 	}
 
-	act := actionFromInput(in)
+	act := ActionOf(in)
 	acts := activation(in)
 	matched, condErr := e.selectMatching(snap, in, act, acts)
 	if condErr != nil {
@@ -140,8 +140,10 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 	}
 	dec := resolve(matched, in.Tables, in.User, act, fired)
 	// Approval gates an otherwise-allowed request; it runs after resolve so
-	// deny and reject take precedence.
-	if dec.Outcome == OutcomeAllow {
+	// deny and reject take precedence. An abstained deny (no allow, or a
+	// table no allow covers) also carries the requirement: in a composite
+	// another engine may allow the statement, and the gate must survive.
+	if dec.Outcome == OutcomeAllow || (dec.Outcome == OutcomeDeny && dec.Abstained) {
 		evaluateApproval(matched, in, dec)
 	}
 	dec.Evaluated = len(snap.Policies)
@@ -174,7 +176,15 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 		// protection on the *other* tables. Whole-query kinds (access gate,
 		// reject) keep the whole-policy Exclude here.
 		if p.Exclude != nil && wholePolicyExclude(p.Kind) && p.Exclude.Match(ctx) {
-			continue
+			// An access policy's Exclude carves out tables one by one. It
+			// switches the policy off only when it covers every referenced
+			// table (a subject carve-out does); denyOrAllow applies it per
+			// table. An Exclude with an `all` block combines clauses across
+			// tables (e.g. "never join A with B") and does not decompose per
+			// table, so it keeps the whole-statement drop.
+			if p.Kind != apitypes.KindSQLAccessPolicy || !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, ctx) {
+				continue
+			}
 		}
 		// Conditions gate whether the policy applies. All must be true;
 		// an evaluation error denies the whole request (caller handles it).
@@ -188,6 +198,27 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// perTableExclude reports whether ex can be applied one table at a time.
+// An `all` block ANDs its clauses, which may name different tables, so it
+// only has meaning at query scope.
+func perTableExclude(ex *CompiledSelector) bool {
+	return ex == nil || len(ex.All) == 0
+}
+
+// excludesEveryTable reports whether ex matches each referenced table on
+// its own, or the statement when it references none.
+func excludesEveryTable(ex *CompiledSelector, ctx MatchContext) bool {
+	if len(ctx.Tables) == 0 {
+		return ex.Match(ctx)
+	}
+	for _, t := range ctx.Tables {
+		if !ex.Match(MatchContext{User: ctx.User, Tables: []parser.TableRef{t}, Action: ctx.Action}) {
+			return false
+		}
+	}
+	return true
 }
 
 // conditionsPass reports whether every condition evaluates true.
@@ -237,15 +268,18 @@ func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (map[*Comp
 	return out, nil
 }
 
-// actionFromInput maps the parsed statement kind to the policy Action verb
-// used for resource action scoping. Unknown / unparsed statements yield the
+// ActionOf maps the parsed statement kind to the policy Action verb used
+// for resource action scoping. Unknown / unparsed statements yield the
 // empty action, which never satisfies an action-constrained selector.
-func actionFromInput(in Input) apitypes.Action {
+// Every engine that matches selectors must use it.
+func ActionOf(in Input) apitypes.Action {
 	if in.AST == nil {
 		return ""
 	}
 	switch in.AST.Statement() {
-	case parser.StmtSelect:
+	case parser.StmtSelect, parser.StmtExplain:
+		// The parser keeps StmtExplain only for a SELECT body; EXPLAIN over
+		// any other statement is classified as that statement.
 		return apitypes.ActionSelect
 	case parser.StmtInsert:
 		return apitypes.ActionInsert

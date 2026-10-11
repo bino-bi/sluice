@@ -64,6 +64,28 @@ type QueryShape struct {
 	// quals, same deep walk. Used by ApprovalPolicy "field compared to a
 	// value" triggers.
 	Comparisons []Comparison
+
+	// Functions lists every function call in the statement, at any depth.
+	// Consumed by CheckFunctions; policy and the rewriter key on table
+	// references and cannot see what a function reads.
+	Functions []FuncRef
+	// UnsupportedFrom names FROM items that are not a table, subquery,
+	// join or function (TABLESAMPLE, XMLTABLE, ...). No rewriter pass
+	// applies row filters or masks to them.
+	UnsupportedFrom []string
+}
+
+// FuncRef is one function call found in a statement.
+type FuncRef struct {
+	// Name is the last segment of the function name, lowercased.
+	Name string
+	// Qualifier is the lowercased, dot-joined prefix ("" when unqualified).
+	Qualifier string
+	// InFrom is true when the call is a FROM item (a table function).
+	InFrom bool
+	// DynamicArgs is set for FROM calls whose arguments contain a column
+	// reference or a subquery.
+	DynamicArgs bool
 }
 
 // Comparison is a (column, operator, literal-value) fact extracted from a

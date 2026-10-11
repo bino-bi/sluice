@@ -1,0 +1,64 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-analytics
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-tenant
+  priority: 80
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers", "orders"]
+  combine: restrictive
+  filter:
+    predicate:
+      column: tenant_id
+      op: Equals
+      value: "{{ subject.tenantId }}"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]
+          columns: ["email"]
+  mask:
+    type: "null"
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-admin-users
+  priority: 900
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["admin_users"]

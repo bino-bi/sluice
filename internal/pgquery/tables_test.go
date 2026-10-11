@@ -4,6 +4,7 @@ package pgquery_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/parser"
@@ -44,6 +45,21 @@ func TestExtractTablesNestedExpressions(t *testing.T) {
 			sql:  "SELECT (SELECT ssn FROM pg.hr.emp LIMIT 1) AS first_ssn",
 			want: []string{"emp"},
 		},
+		{
+			name: "quoted names in another letter case",
+			sql:  `SELECT 1 FROM "PG"."HR"."Emp", pg.public."Other"`,
+			want: []string{"emp", "other"},
+		},
+		{
+			name: "subquery in values list",
+			sql:  "SELECT v.x FROM (VALUES ((SELECT ssn FROM pg.hr.emp LIMIT 1))) v(x), pg.public.other",
+			want: []string{"emp", "other"},
+		},
+		{
+			name: "subquery on the left of IN",
+			sql:  "SELECT dept FROM pg.public.other WHERE (SELECT max(ssn) FROM pg.hr.emp) IN (SELECT ssn FROM pg.hr.mgr)",
+			want: []string{"emp", "mgr", "other"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +77,21 @@ func TestExtractTablesNestedExpressions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A quoted CTE name is folded like a table name, so a reference to it is
+// still recognised as the CTE.
+func TestExtractTablesQuotedCTENameIsNotATable(t *testing.T) {
+	sql := `WITH "Totals" AS (SELECT id FROM pg.public.orders) SELECT id FROM "Totals"`
+	ast, err := newTestParser(t).Parse(context.Background(), sql)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, ref := range ast.Tables() {
+		if ref.Table != "orders" {
+			t.Fatalf("unexpected table %+v, the CTE must not be listed", ref)
+		}
 	}
 }
 
@@ -84,5 +115,43 @@ func TestExtractTablesCTENotEmittedFromSubquery(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("orders not extracted: %v", ast.Tables())
+	}
+}
+
+// A CTE name binds only where DuckDB binds it: in the siblings after it, in
+// the statement body, and for WITH RECURSIVE over a UNION also in that
+// UNION's right arm. A self or forward reference anywhere else reads the
+// base relation, so it must reach policy as a table.
+func TestExtractTablesCTEScopeFollowsDuckDB(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{"self reference", "WITH secret AS (SELECT * FROM secret) SELECT * FROM secret", []string{"secret"}},
+		{"system view wrapped in a CTE of its name", "WITH duckdb_databases AS (SELECT * FROM duckdb_databases) SELECT path FROM duckdb_databases", []string{"duckdb_databases"}},
+		{"forward reference", "WITH a AS (SELECT * FROM secret), secret AS (SELECT 1 AS v) SELECT * FROM a", []string{"secret"}},
+		{"forward reference under RECURSIVE", "WITH RECURSIVE a AS (SELECT * FROM secret), secret AS (SELECT 1 AS v) SELECT * FROM a", []string{"secret"}},
+		{"later sibling sees earlier", "WITH a AS (SELECT 1 AS v), b AS (SELECT * FROM a) SELECT * FROM b", nil},
+		{"recursive union right arm", "WITH RECURSIVE r(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM r WHERE v < 3) SELECT * FROM r", nil},
+		{"recursive union seed arm", "WITH RECURSIVE r(v) AS (SELECT v FROM r UNION ALL SELECT 1) SELECT * FROM r", []string{"r"}},
+		{"recursive inner arm of a three-arm union", "WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v FROM n UNION ALL SELECT v FROM n) SELECT * FROM n", []string{"n"}},
+		{"recursive without union", "WITH RECURSIVE r AS (SELECT * FROM r) SELECT * FROM r", []string{"r"}},
+		{"recursive intersect", "WITH RECURSIVE r(v) AS (SELECT 1 INTERSECT SELECT v FROM r) SELECT * FROM r", []string{"r"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := newTestParser(t).Parse(context.Background(), tc.sql)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			var got []string
+			for _, ref := range ast.Tables() {
+				got = append(got, ref.Table)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("tables = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

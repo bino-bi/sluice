@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/identity"
@@ -118,5 +119,54 @@ func TestSelector_Specificity(t *testing.T) {
 	})
 	if precise.Specificity() <= broad.Specificity() {
 		t.Errorf("precise (%d) must beat broad (%d)", precise.Specificity(), broad.Specificity())
+	}
+}
+
+// DuckDB resolves catalog, schema and table names without regard to case,
+// so a selector must match them the same way in both directions.
+func TestSelector_NamesMatchWithoutRegardToCase(t *testing.T) {
+	cs := compileSelectorT(t, apitypes.Selector{Any: []apitypes.Clause{{
+		Resources: &apitypes.ResourceSelector{
+			Catalogs: []string{"Shop"}, Schemas: []string{"main"}, Tables: []string{"Customers", "ord*"},
+		},
+	}}})
+	for _, ref := range []parser.TableRef{
+		{Catalog: "shop", Schema: "main", Table: "customers"},
+		{Catalog: "SHOP", Schema: "Main", Table: "CUSTOMERS"},
+		{Catalog: "shop", Schema: "main", Table: "ORDERS"},
+	} {
+		if !cs.Match(MatchContext{Tables: []parser.TableRef{ref}}) {
+			t.Errorf("selector must match %+v", ref)
+		}
+	}
+	if cs.Match(MatchContext{Tables: []parser.TableRef{{Catalog: "shop", Schema: "main", Table: "admin_users"}}}) {
+		t.Error("selector must not match another table")
+	}
+}
+
+// A dotted pattern in catalogs, schemas or tables can never match, since
+// each field is compared with one name segment. Loading one is an error
+// rather than a policy that silently applies to nothing.
+func TestCompile_RejectsDottedNamePatterns(t *testing.T) {
+	for _, rs := range []apitypes.ResourceSelector{
+		{Tables: []string{"shop.main.customers"}},
+		{Tables: []string{"**.customers"}},
+		{Schemas: []string{"shop.main"}},
+		{Catalogs: []string{"a.b"}},
+	} {
+		if _, err := compileResourceSelector(rs, nil); err == nil || !strings.Contains(err.Error(), "matches one name") {
+			t.Errorf("%+v: err = %v, want a dotted-pattern error", rs, err)
+		}
+	}
+	if _, err := compileResourceSelector(apitypes.ResourceSelector{Catalogs: []string{"shop"}, Schemas: []string{"main"}, Tables: []string{"cust*", "**"}}, nil); err != nil {
+		t.Errorf("segment patterns must compile: %v", err)
+	}
+	// A dot that is part of the name is escaped.
+	r, err := compileResourceSelector(apitypes.ResourceSelector{Tables: []string{`sales\.2024`}}, nil)
+	if err != nil {
+		t.Fatalf("escaped dot: %v", err)
+	}
+	if !r.matches(parser.TableRef{Catalog: "shop", Schema: "main", Table: "sales.2024"}) || r.matches(parser.TableRef{Table: "sales_2024"}) {
+		t.Errorf(`tables: ["sales\.2024"] must match exactly the table named sales.2024`)
 	}
 }

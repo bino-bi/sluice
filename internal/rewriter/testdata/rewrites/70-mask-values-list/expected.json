@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT c.id, (VALUES (NULL)) AS e FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) c",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "7d13d56494df6f6a",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

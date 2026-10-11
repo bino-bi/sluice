@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -78,6 +79,13 @@ Exit codes:
 					return &exitError{Code: 3}
 				}
 				return &exitError{Code: 1, Err: err}
+			}
+			// Same compile step as `policy validate`: a schema-valid manifest
+			// can still fail to compile, and the server would refuse it.
+			if _, cerr := policy.Compile(context.Background(), snap); cerr != nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), cerr.Error())
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "1 policy compile error(s)")
+				return &exitError{Code: 3}
 			}
 
 			// Cross-check: ApprovalPolicies need approval.publicBaseUrl or

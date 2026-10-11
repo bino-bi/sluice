@@ -1,0 +1,17 @@
+{
+  "outcome": "deny",
+  "changed": false,
+  "deny_code": "ACL_DENIED",
+  "error_code": "ACL_DENIED",
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

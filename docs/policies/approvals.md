@@ -148,7 +148,7 @@ metadata: { name: approve-pii-reads, priority: 100 }
 spec:
   match:
     any:
-      - resources: { tables: ["shop.main.people"] }
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["people"] }
   when:
     columnsAccessed: ["ssn", "salary*"]
     predicates:

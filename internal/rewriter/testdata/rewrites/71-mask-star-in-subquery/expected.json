@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT q.email FROM (SELECT customers.id, customers.name, NULL AS email, customers.tenant_id, customers.created_at FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers) q",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "270607f7f840b96c",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

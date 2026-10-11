@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT c.id, NULL AS \"EMAIL\", NULL AS \"Email\" FROM (SELECT * FROM \"SHOP\".main.\"Customers\" WHERE tenant_id = $1) c",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "7aeb0150caa9798a",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

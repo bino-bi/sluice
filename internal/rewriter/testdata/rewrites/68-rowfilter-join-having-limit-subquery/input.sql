@@ -1,0 +1,1 @@
+SELECT o.tenant_id, count(*) FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id AND (SELECT count(*) FROM shop.main.customers) > 2 GROUP BY o.tenant_id HAVING count(*) < (SELECT count(*) FROM shop.main.orders) LIMIT (SELECT count(*) FROM shop.main.customers)

@@ -10,12 +10,30 @@ at one of two stages:
 | SQL | `null`, `constant`, `partial`, `hash` (sha256), `regex`, `truncate` | the masked expression replaces the column reference in the rewritten query — plaintext never leaves DuckDB |
 | Post-query | `hash` (hmac_sha256), `fpe`, `jitter`, `fake` | applied in Go to each result row as it streams, because the transform needs key material or logic SQL cannot express |
 
-Three matching rules to know:
+Matching rules to know:
 
 - A mask **matches nothing unless the selector sets `resources.columns`**. A clause with only
   tables silently masks no columns.
 - `SELECT *` cannot dodge a mask: star expansion (via the schema cache) runs before mask
-  substitution, so every expanded column is checked.
+  substitution, so every expanded column is checked. This includes a star inside a FROM subquery,
+  a CTE, or a subquery in an expression.
+- A mask follows the column by name, without regard to letter case. Forms that reach the column
+  under another name are refused with `ERR_MASK_UNSUPPORTED_CONTEXT` when the table has a mask:
+  the table alias used as a value (`SELECT c FROM customers c`, `to_json(c)`, `(c).email`), a
+  column alias list (`customers AS c(a, b)`), and an alias on a join
+  (`(a JOIN b ON ...) AS j`). Select the columns by their own names instead.
+- The same code is returned for other forms that would get around the substitution: the
+  schema-qualified table used as a value (`main.customers`), two FROM items under one alias, a
+  positional reference (`#3`), dotted field access into a masked STRUCT column (`info.ssn`), and
+  an unqualified column that two tables of one FROM clause both mask. Qualify the column with the
+  table name in the last case.
+- A post-query masked column can only be a bare item of the outermost select list. Anywhere else
+  it is refused: inside an expression, in `ORDER BY` or `DISTINCT ON`, and inside a subquery or
+  CTE. That includes `SELECT *` in a subquery or CTE over such a table (list the columns you need
+  there), except inside `EXISTS (...)`.
+- A star is only supported as a select item. `c.*` inside an expression is refused on a query
+  with masks. An alias in a subquery must not reuse the alias of an outer masked table for
+  another table.
 - One winner per column. When several masks claim the same column, ordering is priority
   descending → selector specificity descending → name ascending; the first candidate takes the
   column and the rest are ignored (masks never stack).
@@ -37,7 +55,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: null-ssn }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["ssn"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["ssn"] } }] }
   mask: { type: "null" }
 ```
 
@@ -54,7 +72,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: constant-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: constant, args: { value: "REDACTED" } }
 ```
 
@@ -78,7 +96,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: partial-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: partial, args: { showFirst: 1, showLast: 0 } }
 ```
 
@@ -99,7 +117,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: hmac-email }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: hash, args: { algorithm: hmac_sha256, saltRef: secret://env/MASK_HMAC_KEY } }
 ```
 
@@ -121,7 +139,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: regex-phone }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["phone"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["phone"] } }] }
   mask: { type: regex, args: { pattern: "[0-9]", replacement: "#" } }
 ```
 
@@ -141,7 +159,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: truncate-notes }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["notes"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["notes"] } }] }
   mask: { type: truncate, args: { length: 8, suffix: "…" } }
 ```
 
@@ -165,7 +183,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: fpe-card }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.payments"], columns: ["card_number"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["payments"], columns: ["card_number"] } }] }
   mask: { type: fpe, args: { keyRef: secret://env/FPE_KEY, alphabet: numeric } }
 ```
 
@@ -189,7 +207,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: jitter-salary }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["salary"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["salary"] } }] }
   mask: { type: jitter, args: { range: 0.05, seed: secret://env/JITTER_SEED } }
 ```
 
@@ -210,7 +228,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: fake-name }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["full_name"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["full_name"] } }] }
   mask: { type: fake, args: { fakeType: name } }
 ```
 
@@ -226,28 +244,28 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-email, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"], columns: ["email"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"], columns: ["email"] } }] }
   mask: { type: partial, args: { showFirst: 1, showLast: 0 } }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-ssn, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["ssn"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["ssn"] } }] }
   mask: { type: "null" }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-card, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.payments"], columns: ["card_number"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["payments"], columns: ["card_number"] } }] }
   mask: { type: fpe, args: { keyRef: secret://env/FPE_KEY } }
 ---
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata: { name: pii-salary, priority: 50 }
 spec:
-  match: { any: [{ resources: { tables: ["hr.main.employees"], columns: ["salary"] } }] }
+  match: { any: [{ resources: { catalogs: ["hr"], schemas: ["main"], tables: ["employees"], columns: ["salary"] } }] }
   mask: { type: jitter, args: { range: 0.05 } }
 ```
 

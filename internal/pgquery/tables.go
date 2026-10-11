@@ -3,6 +3,8 @@
 package pgquery
 
 import (
+	"strings"
+
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -60,7 +62,7 @@ func (w *tableWalker) pushCTEScope(names []string) {
 	scope := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		if n != "" {
-			scope[n] = struct{}{}
+			scope[strings.ToLower(n)] = struct{}{}
 		}
 	}
 	w.ctes = append(w.ctes, scope)
@@ -166,6 +168,7 @@ func (w *tableWalker) walkNode(n *pg.Node) {
 		}
 	case *pg.Node_SubLink:
 		if v.SubLink != nil {
+			w.walkNode(v.SubLink.Testexpr)
 			w.walkNode(v.SubLink.Subselect)
 		}
 	case *pg.Node_CommonTableExpr:
@@ -236,10 +239,13 @@ func (w *tableWalker) walkRelation(rv *pg.RangeVar, aliasOverride string) {
 	if alias == "" && rv.Alias != nil {
 		alias = rv.Alias.Aliasname
 	}
+	// DuckDB resolves names without regard to case, also when quoted.
+	// pg_query keeps a quoted name as written, so fold here: policies and
+	// the rewriter compare these names exactly.
 	w.addRef(parser.TableRef{
-		Catalog: rv.Catalogname,
-		Schema:  rv.Schemaname,
-		Table:   rv.Relname,
+		Catalog: strings.ToLower(rv.Catalogname),
+		Schema:  strings.ToLower(rv.Schemaname),
+		Table:   strings.ToLower(rv.Relname),
 		Alias:   alias,
 	})
 }
@@ -251,21 +257,52 @@ func (w *tableWalker) walkWith(with *pg.WithClause) {
 	if with == nil {
 		return
 	}
-	names := make([]string, 0, len(with.Ctes))
-	for _, cte := range with.Ctes {
+	// DuckDB binds a CTE name in the siblings after it and in the statement
+	// body, and for WITH RECURSIVE over a UNION also in that UNION's right
+	// arm. A self or forward reference anywhere else reads the base
+	// relation, so a name enters the scope only after its own body.
+	w.pushCTEScope(nil)
+	scope := w.ctes[len(w.ctes)-1]
+	for _, n := range with.Ctes {
+		cte := n.GetCommonTableExpr()
 		if cte == nil {
+			w.walkNode(n)
 			continue
 		}
-		if c, ok := cte.Node.(*pg.Node_CommonTableExpr); ok && c.CommonTableExpr != nil {
-			names = append(names, c.CommonTableExpr.Ctename)
+		name := strings.ToLower(cte.GetCtename())
+		if body := cte.GetCtequery().GetSelectStmt(); with.GetRecursive() && body.GetOp() == pg.SetOperation_SETOP_UNION {
+			w.walkRecursiveUnion(body, scope, name)
+		} else {
+			w.walkNode(cte.GetCtequery())
 		}
-	}
-	w.pushCTEScope(names)
-	for _, cte := range with.Ctes {
-		w.walkNode(cte)
+		if name != "" {
+			scope[name] = struct{}{}
+		}
 	}
 	// Scope stays pushed for the remainder of the current statement body;
 	// it is popped in walkSelect / walk* after the body is processed.
+}
+
+// walkRecursiveUnion walks the body of a recursive CTE. Only the right arm
+// of the top UNION sees the CTE's own name; DuckDB binds the name in the
+// seed side, including inner arms of a longer UNION chain, to the base
+// relation.
+func (w *tableWalker) walkRecursiveUnion(body *pg.SelectStmt, scope map[string]struct{}, name string) {
+	hadWith := body.WithClause != nil
+	if hadWith {
+		w.walkWith(body.WithClause)
+	}
+	w.walkNode(wrapSelect(body.Larg))
+	w.walkNodes(body.SortClause)
+	w.walkNode(body.LimitCount)
+	w.walkNode(body.LimitOffset)
+	if name != "" {
+		scope[name] = struct{}{}
+	}
+	w.walkNode(wrapSelect(body.Rarg))
+	if hadWith {
+		w.popCTEScope()
+	}
 }
 
 // walkSelect handles SelectStmt including set-operation trees and the
@@ -285,6 +322,7 @@ func (w *tableWalker) walkSelect(s *pg.SelectStmt) {
 		w.walkNode(wrapSelect(s.Rarg))
 	}
 	w.walkNodes(s.FromClause)
+	w.walkNodes(s.ValuesLists)
 	w.walkNode(s.WhereClause)
 	w.walkNodes(s.GroupClause)
 	w.walkNode(s.HavingClause)

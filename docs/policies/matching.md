@@ -78,13 +78,16 @@ field:
 | `actions` | The statement verb: `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
 
 !!! warning "One segment per field"
-    A dotted pattern such as `tables: ["shop.main.orders"]` never matches — it is compared
-    against the bare table name. Write `catalogs: ["shop"], schemas: ["main"], tables:
-    ["orders"]`. An unqualified query (`FROM orders`) has empty catalog and schema segments,
-    which only `*`/`**` patterns match.
+    A dotted pattern such as `tables: ["shop.main.orders"]` could never match, since it is
+    compared with the bare table name, so loading one is an error. Write `catalogs: ["shop"],
+    schemas: ["main"], tables: ["orders"]`. A name that really contains a dot is written with an
+    escaped dot: `tables: ['sales\.2024']`. An unqualified query (`FROM orders`) has empty
+    catalog and schema segments, which only `*`/`**` patterns match.
 
-A clause matches a query when **at least one** referenced table satisfies its `resources` block —
-see [access control](access-control.md) for the consequences on multi-table queries.
+A clause matches a query when **at least one** referenced table satisfies its `resources` block.
+Where a policy acts per table — an allow covering a table, a row filter, a mask — each table is
+checked on its own: under `all`, a table is covered only if it alone satisfies every clause. An
+allow admits only the tables it covers; see [access control](access-control.md).
 
 ## Wildcards
 
@@ -130,8 +133,13 @@ outright — priority always beats specificity.
 
 `spec.exclude` is a second selector that carves matches back out. Its scope depends on the kind:
 
-- **Whole-query kinds** (`SqlAccessPolicy`, `QueryRejectPolicy`, `QueryRewritePolicy`,
-  `ApprovalPolicy`): if `exclude` matches, the policy is dropped for the entire query.
+- **Whole-query kinds** (`QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy`): if
+  `exclude` matches, the policy is dropped for the entire query.
+- **`SqlAccessPolicy`**: `exclude` carves tables out one by one. The policy is dropped only when
+  `exclude` matches every referenced table (a subject carve-out does). Otherwise an allow still
+  covers the tables it names that are not excluded, and a deny still fires if its selector
+  matches the tables that are left, so joining a carved-out table never lifts a deny from the
+  others.
 - **Per-table kinds** (`RowFilterPolicy`, `ColumnMaskPolicy`): `exclude` is applied per table, so
   carving out one table never lifts protection from the other tables in a join.
 

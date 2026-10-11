@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 
@@ -53,6 +56,9 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	if len(sql) > p.maxBytes {
 		return nil, parser.ErrInputTooLarge
 	}
+	if err := checkDepth(sql); err != nil {
+		return nil, err
+	}
 
 	tree, err := pg.Parse(sql)
 	if err != nil {
@@ -63,6 +69,12 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	}
 	if len(tree.Stmts) > 1 {
 		return nil, parser.ErrMultipleStatements
+	}
+	if err := checkIdentifierRunes(sql); err != nil {
+		return nil, &parser.ParseError{Cause: err}
+	}
+	if err := checkAliasKeywords(tree); err != nil {
+		return nil, &parser.ParseError{Cause: err}
 	}
 
 	fp, ferr := pg.Fingerprint(sql)
@@ -82,6 +94,50 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	a.tables, a.catalogs = extractTables(stmt)
 	a.shape = extractShape(stmt, a.tables, a.catalogs)
 	return a, nil
+}
+
+// checkIdentifierRunes refuses a statement whose unquoted identifiers
+// contain a non-ASCII character that is not a letter, digit or mark.
+// pg_query reads every byte >= 0x80 as part of an identifier, while DuckDB
+// treats Unicode spaces as token separators. A statement that is served
+// unchanged would then mean something else to the engine than to the
+// checks that ran on the pg_query tree.
+func checkIdentifierRunes(sql string) error {
+	ascii := true
+	for i := 0; i < len(sql); i++ {
+		if sql[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return nil
+	}
+	scan, err := pg.Scan(sql)
+	if err != nil {
+		return err
+	}
+	for _, tok := range scan.Tokens {
+		if tok.Token != pg.Token_IDENT || int(tok.End) > len(sql) || tok.Start >= tok.End {
+			continue
+		}
+		text := sql[tok.Start:tok.End]
+		if strings.HasPrefix(text, `"`) {
+			continue
+		}
+		for _, r := range text {
+			if r < utf8.RuneSelf {
+				continue
+			}
+			if r == utf8.RuneError {
+				return parser.ErrIdentifierChars
+			}
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+				return parser.ErrIdentifierChars
+			}
+		}
+	}
+	return nil
 }
 
 // Deparse re-emits an AST. Only ASTs produced by this parser (or a clone
@@ -108,6 +164,9 @@ func (p *Parser) Deparse(ctx context.Context, a parser.AST) (string, error) {
 func (p *Parser) Fingerprint(sql string) (string, error) {
 	if len(sql) > p.maxBytes {
 		return "", parser.ErrInputTooLarge
+	}
+	if err := checkDepth(sql); err != nil {
+		return "", err
 	}
 	fp, err := pg.Fingerprint(sql)
 	if err != nil {

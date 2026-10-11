@@ -71,7 +71,7 @@ rendering the templates and calling `POST <endpoint>/stores/<storeId>/check` wit
 
 | Outcome | Result |
 | ------- | ------ |
-| All checks answer `allowed: true` | Allow (merged with the other engines) |
+| All checks answer `allowed: true` | No objection — abstain; the query still needs an allow from another member (an `SqlAccessPolicy` or OPA) |
 | Any check answers `allowed: false` | Deny — `ACL_DENIED`, "relationship check failed on \<table\>" |
 | Backend error / non-2xx / timeout | Query fails, fail-closed — never a silent allow |
 | No RelationshipPolicy matched | Abstain — other composite members decide |

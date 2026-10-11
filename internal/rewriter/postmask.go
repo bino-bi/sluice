@@ -4,6 +4,7 @@ package rewriter
 
 import (
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/policy"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
@@ -54,7 +55,7 @@ func (s *state) planPostMasks(raw *pg.ParseResult) error {
 
 	aliases := aliasMap{}
 	for _, f := range sel.FromClause {
-		recordFromItemForMask(f, aliases, s.defaultCatalog)
+		s.recordFromItemForMask(f, aliases)
 	}
 
 	// Top-level target list: a bare masked column is recorded; a masked
@@ -67,7 +68,11 @@ func (s *state) planPostMasks(raw *pg.ParseResult) error {
 		if cr, ok := rt.ResTarget.Val.Node.(*pg.Node_ColumnRef); ok {
 			qualifier, column := splitColumnRef(cr.ColumnRef)
 			if column != "" {
-				if m, tableKey, ok := s.lookupMaskForColumn(aliases, qualifier, column); ok && s.isPostQueryMask(m) {
+				m, tableKey, ok, err := s.lookupMaskForColumn(aliases, qualifier, column)
+				if err != nil {
+					return err
+				}
+				if ok && s.isPostQueryMask(m) {
 					s.postMasks = append(s.postMasks, PostMask{
 						ColumnIndex: i,
 						TableKey:    tableKey,
@@ -94,9 +99,14 @@ func (s *state) planPostMasks(raw *pg.ParseResult) error {
 			return ErrMaskPostQueryContext
 		}
 	}
-	for _, o := range sel.SortClause {
-		if s.exprUsesPostQueryMask(o, aliases) {
-			return ErrMaskPostQueryContext
+	for _, list := range [][]*pg.Node{
+		sel.SortClause, sel.DistinctClause, sel.WindowClause, sel.ValuesLists,
+		{sel.LimitCount, sel.LimitOffset},
+	} {
+		for _, n := range list {
+			if s.exprUsesPostQueryMask(n, aliases) {
+				return ErrMaskPostQueryContext
+			}
 		}
 	}
 	for _, f := range sel.FromClause {
@@ -109,74 +119,31 @@ func (s *state) planPostMasks(raw *pg.ParseResult) error {
 	return nil
 }
 
-// exprUsesPostQueryMask reports whether any ColumnRef in the expression
-// tree resolves (via aliases) to a post-query-masked column.
+// exprUsesPostQueryMask reports whether any ColumnRef below n resolves
+// (via aliases) to a post-query-masked column. The walk is by reflection
+// so no node type (ARRAY[...], COLLATE, subscripts, ...) can hide one. It
+// stops at a nested SELECT: the mask pass refuses those uses itself.
 func (s *state) exprUsesPostQueryMask(n *pg.Node, aliases aliasMap) bool {
+	if n == nil {
+		return false
+	}
 	found := false
-	walkColumnRefs(n, func(cr *pg.ColumnRef) {
-		if found {
-			return
+	_ = walkTree(n.ProtoReflect(), func(m protoreflect.Message) (bool, error) {
+		switch v := m.Interface().(type) {
+		case *pg.SelectStmt:
+			return false, nil
+		case *pg.ColumnRef:
+			qualifier, column := splitColumnRef(v)
+			if column == "" {
+				return false, nil
+			}
+			// An ambiguous reference counts as a use: refusing is the safe side.
+			if m, _, ok, err := s.lookupMaskForColumn(aliases, qualifier, column); err != nil || (ok && s.isPostQueryMask(m)) {
+				found = true
+			}
+			return false, nil
 		}
-		qualifier, column := splitColumnRef(cr)
-		if column == "" {
-			return
-		}
-		if m, _, ok := s.lookupMaskForColumn(aliases, qualifier, column); ok && s.isPostQueryMask(m) {
-			found = true
-		}
+		return !found, nil
 	})
 	return found
-}
-
-// walkColumnRefs invokes fn for every ColumnRef in the expression tree.
-func walkColumnRefs(n *pg.Node, fn func(*pg.ColumnRef)) {
-	if n == nil || n.Node == nil {
-		return
-	}
-	switch v := n.Node.(type) {
-	case *pg.Node_ColumnRef:
-		fn(v.ColumnRef)
-	case *pg.Node_AExpr:
-		walkColumnRefs(v.AExpr.Lexpr, fn)
-		walkColumnRefs(v.AExpr.Rexpr, fn)
-	case *pg.Node_BoolExpr:
-		for _, a := range v.BoolExpr.Args {
-			walkColumnRefs(a, fn)
-		}
-	case *pg.Node_FuncCall:
-		for _, a := range v.FuncCall.Args {
-			walkColumnRefs(a, fn)
-		}
-	case *pg.Node_TypeCast:
-		walkColumnRefs(v.TypeCast.Arg, fn)
-	case *pg.Node_CaseExpr:
-		walkColumnRefs(v.CaseExpr.Arg, fn)
-		for _, w := range v.CaseExpr.Args {
-			walkColumnRefs(w, fn)
-		}
-		walkColumnRefs(v.CaseExpr.Defresult, fn)
-	case *pg.Node_CaseWhen:
-		walkColumnRefs(v.CaseWhen.Expr, fn)
-		walkColumnRefs(v.CaseWhen.Result, fn)
-	case *pg.Node_CoalesceExpr:
-		for _, a := range v.CoalesceExpr.Args {
-			walkColumnRefs(a, fn)
-		}
-	case *pg.Node_MinMaxExpr:
-		for _, a := range v.MinMaxExpr.Args {
-			walkColumnRefs(a, fn)
-		}
-	case *pg.Node_NullTest:
-		walkColumnRefs(v.NullTest.Arg, fn)
-	case *pg.Node_BooleanTest:
-		walkColumnRefs(v.BooleanTest.Arg, fn)
-	case *pg.Node_SubLink:
-		// Correlated column references inside a subquery read raw values;
-		// surface them so the caller refuses.
-		walkColumnRefs(v.SubLink.Testexpr, fn)
-	case *pg.Node_List:
-		for _, item := range v.List.Items {
-			walkColumnRefs(item, fn)
-		}
-	}
 }

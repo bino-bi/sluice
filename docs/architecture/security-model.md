@@ -12,6 +12,15 @@ refused. This page inventories those guarantees and the trust boundaries they de
 - **Read-only statement allowlist.** The rewriter and executor accept only `SELECT`, `EXPLAIN`,
   `SET`, `SHOW`, and `PRAGMA`. `INSERT`/`UPDATE`/`DELETE` return `ACL_REJECTED` ("write operations
   are not permitted"); DDL, `COPY`, and `ATTACH` return `ERR_UNSUPPORTED_SYNTAX`.
+- **Function allowlist.** Function calls are default-deny. In `FROM` only `generate_series`,
+  `range`, and `unnest` are accepted, and their arguments must not contain column references or
+  subqueries. Outside `FROM` only functions that compute over their arguments are accepted; the
+  list is `internal/parser/functions_allow.go`. Everything else returns `ACL_REJECTED` and the
+  message names the function: table functions such as `query_table` or `read_csv`, state readers
+  such as `current_setting`, `COLUMNS(...)`, qualified function names (`schema.f(x)` and the
+  method form `x.f()`), `TABLESAMPLE`, and a table name that contains path characters
+  (`/ \ : * ? [`), which DuckDB would open as a file or URL. Policies see table references only,
+  so a function would read around access checks, row filters, and masks.
 - **Fail-closed audit.** By default (`audit.failClosed: true`) no row is served until the access
   audit record is durably enqueued; otherwise the query is refused with `ERR_AUDIT_UNAVAILABLE`.
   Setting `audit.failClosed: false` switches to best effort: an enqueue failure is logged and the

@@ -7,7 +7,9 @@ spec:
   match:
     any:
       - resources:
-          tables: ["warehouse.public.customers"]
+          catalogs: ["warehouse"]
+          schemas: ["public"]
+          tables: ["customers"]
           columns: ["email"]
   mask:
     type: "null"

@@ -14,8 +14,13 @@ SELECT id FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) orders
 ```
 
 The wrap happens on the parsed AST, after `SELECT *` expansion, and covers every occurrence of
-the table in the FROM tree — joins, subqueries, and CTE bodies included. The original alias is
-preserved so outer column references keep resolving.
+the table in the statement: joins, FROM subqueries, CTE bodies, set-operation arms, and
+subqueries inside expressions (select list, `WHERE`, `HAVING`, `JOIN ... ON`, `ORDER BY`,
+`LIMIT`, `VALUES`). Table names are matched without regard to letter case, also when quoted. Write tables of an
+attached source with all three parts (`shop.main.orders`): the two-part form `shop.orders` is
+refused with `ACL_REJECTED`, because DuckDB reads it as catalog and table while policies read it
+as schema and table.
+The original alias is preserved so outer column references keep resolving.
 
 A filter carries exactly one of two bodies: a structured predicate tree (`filter.predicate`) or a
 CEL expression (`filter.expression`). Both compile to the same parameterized form.
@@ -49,7 +54,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-active-eu, priority: 60 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers"] } }] }
   filter:
     predicate:
       all:                              # AND
@@ -149,7 +154,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-tenant, priority: 80 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.customers", "shop.main.orders"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["customers", "orders"] } }] }
   combine: restrictive
   filter:
     predicate:
@@ -165,7 +170,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: hide-soft-deleted, priority: 70 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.**"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"] } }] }
   exclude:
     any:
       - subjects: { groups: ["auditors"] }
@@ -183,7 +188,7 @@ apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata: { name: filter-region, priority: 60 }
 spec:
-  match: { any: [{ resources: { tables: ["shop.main.orders"] } }] }
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["orders"] } }] }
   filter:
     expression: "row.region == subject.claims.region"
 ```

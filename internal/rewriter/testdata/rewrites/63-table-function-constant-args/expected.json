@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT c.id, g.i FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) c, generate_series(1, 2) g(i)",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "4ad82a186f4567c1",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_MASK_UNSUPPORTED_CONTEXT",
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "ColumnMaskPolicy/mask-order-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "masks": [
+    "shop.main.customers.email=null",
+    "shop.main.orders.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}

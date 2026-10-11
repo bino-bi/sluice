@@ -52,6 +52,10 @@ deterministically:
   message and error code.
 - **No allow means deny**: if no `SqlAccessPolicy` with `effect: allow` matched, the request is
   denied by default (recorded as an *abstain* so a composite member can still allow).
+- **Every table must be allowed**: when an allow matches but a referenced table is named by no
+  allow, the request is denied with `no SqlAccessPolicy allows <table>`. Like the no-allow case
+  this is recorded as an abstain, so in a composite an OPA member, which decides on the whole
+  table list, can still allow the statement. A ReBAC member never allows on its own.
 - **Row filters fold** per table by the policy's `combine` mode — `restrictive` ANDs predicates,
   `permissive` ORs them.
 - **Masks resolve per column** by priority descending, then selector specificity descending, then
@@ -76,8 +80,9 @@ input/output reference and examples: [OPA policies](../policies/opa.md).
 The `rebac` member evaluates `RelationshipPolicy` documents against an OpenFGA backend. For each
 table the policy's selector matches, every check runs: the `objectTemplate` and `subjectTemplate`
 are rendered (for example `document:{{catalog}}.{{schema}}.{{table}}` and `user:{{subject.id}}`)
-and posted to the store's check endpoint. All checks true means allow for that request; any false
-means deny; a backend error fails closed as an error; no matching policy abstains. Results are
+and posted to the store's check endpoint. All checks true means no objection: the member abstains
+and the request still needs an allow from another member; any false means deny; a backend error
+fails closed as an error; no matching policy abstains. Results are
 cached in an LRU (`policies.rebac.cacheTtl`, default 10 s; errors are never cached). Details:
 [ReBAC policies](../policies/rebac.md).
 

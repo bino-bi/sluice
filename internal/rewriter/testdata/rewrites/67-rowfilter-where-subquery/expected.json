@@ -1,0 +1,23 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) orders WHERE customer_id IN (SELECT id FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $2) customers) AND EXISTS (SELECT 1 FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $3) c WHERE c.id = 3)",
+  "changed": true,
+  "params": [
+    "acme",
+    "acme",
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "fd40cf6df4f42ddc",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}
