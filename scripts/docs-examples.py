@@ -208,6 +208,33 @@ def check_suite(suite: Path) -> list[str]:
     return [f"{suite.relative_to(ROOT)}: unknown {where or 'suite'} key {key!r}" for where, key in found]
 
 
+def config_keys(node, prefix=""):
+    """Key paths of a server config, lists written as key[]."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from config_keys(v, f"{prefix}.{k}" if prefix else str(k))
+    elif isinstance(node, list) and any(isinstance(v, dict) for v in node):
+        for v in node:
+            yield from config_keys(v, prefix + "[]")
+    else:
+        yield prefix
+
+
+def check_config_keys(example: Path) -> list[str]:
+    """Sluice ignores an unknown config key. Each key must be in the generated reference."""
+    import yaml  # from docs/requirements.txt
+    known = set(re.findall(r"`([A-Za-z][\w.\[\]]*)`", (ROOT / "docs/reference/configuration.md").read_text()))
+    errors = []
+    for cfg in sorted(example.glob("server*.yaml")):
+        doc = yaml.safe_load(cfg.read_text()) or {}
+        for key in sorted(set(config_keys(doc))):
+            parts = key.split(".")
+            # A key is known by itself or as part of a documented map, such as tracing.headers.<name>.
+            if not any(".".join(parts[:i]) in known for i in range(len(parts), 0, -1)):
+                errors.append(f"{cfg.relative_to(ROOT)}: config key {key!r} is not in reference/configuration.md")
+    return errors
+
+
 def check_manual(example: Path) -> list[str]:
     """Files the harness cannot run get a syntax check."""
     errors = []
@@ -239,13 +266,23 @@ def run_example(example: Path, env: dict, update: bool) -> list[str]:
         return ["has no tests/ and no steps/, so nothing checks it"]
     shutil.rmtree(example / "data", ignore_errors=True)
 
-    for suite in suites:
+    # Also suites in a folder that a step passes to --tests, such as policy-testing/failing.
+    named = {m for step in steps for m in re.findall(r"--tests[ =]([\w./-]+)", step.read_text())}
+    extra = [f for d in sorted(named - {"tests"}) for f in sorted((example / d).glob("*.y*ml"))]
+    for suite in [*suites, *extra]:
         errors += check_suite(suite)
+    # --strict: a field that Sluice would ignore is an error in a file the docs show.
+    if (example / "policies.d").is_dir():
+        r = subprocess.run(["sluice", "policy", "validate", "--strict", "policies.d"],
+                           cwd=example, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            errors.append("policy validate --strict failed:\n" + r.stdout + r.stderr)
     if suites:
-        r = subprocess.run(["sluice", "policy", "test", "policies.d", "--tests", "tests"],
+        r = subprocess.run(["sluice", "policy", "test", "policies.d", "--tests", "tests", "--strict"],
                            cwd=example, env=env, capture_output=True, text=True)
         if r.returncode != 0:
             errors.append("policy test failed:\n" + r.stdout + r.stderr)
+    errors += check_config_keys(example)
 
     keep_file = example / "expected" / "keep"
     keep = set(keep_file.read_text().split()) if keep_file.exists() else set()

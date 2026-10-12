@@ -40,10 +40,11 @@ An example needs `tests/` or `steps/`, or both. A file that nothing runs must no
 For each example, `scripts/docs-examples.py`:
 
 1. Deletes `data/`.
-2. Runs `sluice policy test policies.d --tests tests` if `tests/` exists. All cases must pass. A suite key that the test runner would ignore is an error.
-3. Starts `serve.sh` if it exists and waits for `GET /v1/health`.
-4. Runs each step with `bash`. It captures stdout, stderr and the exit status.
-5. Compares the output with `expected/NN-name.txt`.
+2. Loads `policies.d/` with `--strict`, so a field that Sluice would ignore is an error. The same holds for a key in `server.yaml` that is not in `docs/reference/configuration.md`.
+3. Runs `sluice policy test policies.d --tests tests` if `tests/` exists. All cases must pass. A suite key that the test runner would ignore is an error, also in a folder that a step passes to `--tests`.
+4. Starts `serve.sh` if it exists and waits for `GET /v1/health`.
+5. Runs each step with `bash`. It captures stdout, stderr and the exit status.
+6. Compares the output with `expected/NN-name.txt`.
 
 The output is changed in three ways before it is stored:
 

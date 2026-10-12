@@ -26,14 +26,14 @@ Counted with `scripts/docs-wordcount.py`. Code blocks are not counted. Tables ar
 |---|---:|---:|---:|---:|---:|
 | home | 1 | 1 | 328 | 180 | -45% |
 | getting-started | 4 | 2 | 1728 | 652 | -62% |
-| architecture | 4 | 3 | 4063 | 1354 | -67% |
-| policies | 13 | 13 | 9887 | 5960 | -40% |
+| architecture | 4 | 3 | 4063 | 1372 | -66% |
+| policies | 13 | 13 | 9887 | 5984 | -39% |
 | operations | 6 | 6 | 3380 | 2020 | -40% |
-| security | 5 | 5 | 3390 | 2560 | -24% |
+| security | 5 | 5 | 3390 | 2570 | -24% |
 | compliance | 4 | 0 | 1443 | 0 | -100% |
 | reference | 9 | 10 | 4945 | 4980 | 1% |
 | cookbook | 7 | 7 | 2670 | 1298 | -51% |
-| **total** | 53 | 47 | 31834 | 19004 | **-40%** |
+| **total** | 53 | 47 | 31834 | 19056 | **-40%** |
 
 The target was at least 40% less. Reference stays the same size: its tables now list every working field, flag and key, and it holds the new glossary.
 
@@ -292,7 +292,7 @@ Line numbers refer to the pages at commit 6f7b99f.
 
 36 example folders under `examples/`, 28 of them start a local server. 164 steps have golden output. 29 suites with 218 cases run with `sluice policy test`. `make docs-check` runs all of them in about 80 seconds.
 
-Every code block in `docs/` is a snippet include of one of these files. The only exceptions are the four Mermaid diagrams and the ASCII pipeline on the home page. `scripts/docs-style-check.py` checks this: a block must include a step, `serve.sh`, a suite, a policy file that the loader reads, a golden file of a step, a manual file from its `MANUAL_FILES` list, or a file that a step, `serve.sh` or `server.yaml` names by its path. A policy or Rego directory that a command names covers the files of that kind directly in it. The runner fails on a suite key that `sluice policy test` would ignore.
+Every code block in `docs/` is a snippet include of one of these files. The only exceptions are the four Mermaid diagrams and the ASCII pipeline on the home page. `scripts/docs-style-check.py` checks this: a block must include a step, `serve.sh`, a suite, a policy file that the loader reads, a golden file of a step, a manual file from its `MANUAL_FILES` list, or a file that a step, `serve.sh` or `server.yaml` names by its path. A policy, suite or Rego directory that a step, `serve.sh` or `server.yaml` names as a whole argument covers the YAML files directly in it, or the `.rego` files for `moduleDir`. The check does not know the kind of such a directory. The runner loads every `policies.d/` with `--strict`, fails on a suite key that `sluice policy test` would ignore (in `tests/` and in a folder that a step passes to `--tests`), and fails on a `server.yaml` key that is not in the generated configuration reference.
 
 | Policy kind | Example with real output |
 |---|---|
@@ -414,7 +414,8 @@ Fresh agents that wrote no page checked the work against the task rules and the 
 | 2 | The fixes of round 1 | 7 | 30 | 96 of 104 findings of round 1 were fully fixed, 8 partly. All 7 serious findings are fixed: 4 page facts, 1 example whose shown file was not the loaded file, 2 holes in the style check. The minor findings are fixed except the checker limits listed below |
 | 3 | The fixes of round 2 | 4 | 11 | All 4 serious findings are fixed: the `SET` sentence was too broad for policies that name only the table, one threat row lacked its condition, one named `limits.maxRows` instead of `limits.maxRowsCeiling`, and the style check still accepted some files that nothing runs. The minor findings are fixed except the checker limits below |
 | 4 | The fixes of round 3 | 3 | 5 | All 3 serious findings are fixed: the `SET` limit also holds for other subjects after one accepted `SET`, one table row was wrong for `query.group_by_columns`, and the style check accepted a suite below `policies.d/tests/` and a file of the wrong kind in a named directory. The 5 minor findings are fixed |
-| 5 | The fixes of round 4 | ROUND5 | ROUND5 | ROUND5 |
+| 5 | The fixes of round 4 | 1 | 6 | The serious finding is fixed: a policy that names the catalog with a wildcard still matches a table name without catalog, so the `SET` limit and its advice now say "without a wildcard". The 6 minor findings are fixed |
+| 6 | The fixes of round 5 | ROUND6 | ROUND6 | ROUND6 |
 
 Most serious findings of round 1 were limits or security claims that were stated too broadly, and refused SQL forms that the first rewrite had cut. Each such fix is pinned by a test case or a step.
 

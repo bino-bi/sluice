@@ -101,7 +101,7 @@ What happened: each request stopped at a different stage. Several stages share t
 | DDL, `COPY` | `ERR_UNSUPPORTED_SYNTAX` |
 | `ATTACH` | `ERR_SYNTAX` |
 
-Policies see no table in `SHOW` and `SET`. An allow policy without `resources` is broad. A deny policy on a table does not hide that table from `SHOW`. A setting that DuckDB accepts stays active for later requests of every subject. It can change how DuckDB finds a table that a query names without catalog. A policy that names a catalog or schema does not match a name that leaves that part out. Do not give such an allow policy to clients. Name catalog, schema and table in every allow policy.
+Policies see no table in `SHOW` and `SET`. An allow policy without `resources` is broad. A deny policy on a table does not hide that table from `SHOW`. A setting that DuckDB accepts stays active on one database connection. Later requests of any subject can use this connection. The setting can change how DuckDB finds a table that a query names without catalog. A policy that names a catalog or schema without a wildcard does not match a name that leaves that part out. Do not give an allow policy without `resources` to clients. Name catalog, schema and table in every other allow policy, the catalog without a wildcard.
 
 ## Where a request stops
 
