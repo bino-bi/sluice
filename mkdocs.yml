@@ -3,7 +3,7 @@ site_name: Sluice
 site_description: Policy-enforcing SQL/MCP gateway for DuckDB-attached data sources.
 site_url: https://bino-bi.github.io/sluice/
 site_author: Sluice maintainers
-copyright: Copyright &copy; Sluice maintainers — docs CC-BY-4.0
+copyright: Copyright &copy; Sluice maintainers. Docs CC-BY-4.0
 repo_name: bino-bi/sluice
 repo_url: https://github.com/bino-bi/sluice
 edit_uri: edit/main/docs/
