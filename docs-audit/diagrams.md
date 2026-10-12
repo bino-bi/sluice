@@ -14,4 +14,14 @@ The original blocks are kept byte for byte in `docs-audit/diagrams/`. The final 
 
 ## Label changes
 
-None yet.
+None applied yet.
+
+Found by the audit, waiting for a decision:
+
+| Diagram | Finding | Evidence |
+|---|---|---|
+| 2, component map | Node label `S3 Parquet`: the type is `s3` and reads parquet, csv, json and xlsx | `pkg/apitypes/datasource.go:58-73` |
+| 2, component map | Edge `Admin --> identity`: the admin listener checks a static bearer token and does not use the identity layer. This is an edge, not a label | `internal/transport/admin/auth.go:16-31` |
+| 2, component map | The `http` datasource type has no node. This is a missing node, not a label | `pkg/apitypes/datasource.go:62` |
+
+Diagrams 1, 3, 4 and 5: no label is proven wrong.
