@@ -115,3 +115,16 @@ Directories 93 to 100 cover the mask projection in the wrapper. 93 uses the poli
 | `98-postquery-mask-whole-row-rejected` | The wrapper passes a post-query masked column through raw, so the whole row (`to_json(e)`) stays refused. |
 | `99-reserved-name-refused` | The query may not use the wrapper's inner alias `sluice_src`. |
 | `100-column-only-mask-projects-every-table` | A mask rule without tables applies to every table. Each one gets the column list wrapper, also a table without the masked column, so a column added at the source later is not read. |
+
+Directories 101 to 108 cover DuckDB forms that reach a masked column without naming it. 101 uses the policy of 60, 102 to 104 the policy of 73, and 105 to 108 the policy of 98.
+
+| Fixture | Note |
+|---|---|
+| `101-reject-columns-regex` | `COLUMNS('em.*')` picks columns by a regular expression. The function gate rejects every `COLUMNS` call. |
+| `102-mask-whole-row-alias` | The table alias as a value (`SELECT c`) is the row of the wrapper, so the struct holds the mask output. |
+| `103-mask-unnest-whole-row` | `unnest(c)` expands the row of the wrapper into its columns. |
+| `104-mask-star-in-function` | A star inside a function call (`to_json(c.*)`) reads the wrapper. DuckDB refuses `to_json(c.*)` today. |
+| `105-postquery-mask-unnest-whole-row-rejected` | The wrapper passes a post-query masked column through raw, so `unnest(e)` stays refused. |
+| `106-postquery-mask-star-in-function-rejected` | So does a star inside a function call (`to_json(e.*)`). |
+| `107-postquery-mask-outer-star-rejected` | `LATERAL (SELECT e.*)` names a table of the outer SELECT. DuckDB does not expand such a star today, and the rewriter refuses it on its own. |
+| `108-postquery-mask-local-star-served` | A star over a subquery of its own SELECT is served, also when the subquery has the name of the outer masked table. |

@@ -57,6 +57,15 @@ same SELECT id, (VALUES (secret)) FROM t ORDER BY id
 same SELECT id, md5(secret), hash(secret) FROM t ORDER BY id
 same SELECT id, secret FROM t ORDER BY id LIMIT 2
 same SELECT id, secret FROM t ORDER BY id LIMIT 2 OFFSET 3
+# The whole row is the row of the wrapper.
+same SELECT t FROM t ORDER BY t.id
+same SELECT unnest(t) FROM t
+same SELECT to_json(t) FROM t ORDER BY t.id
+same SELECT struct_extract(t, 'secret'), (t).secret, t['secret'] FROM t ORDER BY t.id
+same SELECT list_transform(ARRAY[t], x -> x.secret) FROM t ORDER BY t.id
+same SELECT max(t) FROM t
+same SELECT secret FROM t secret
+same SELECT secret.id, secret.secret FROM t secret ORDER BY 1
 
 # u.secret, post-query mask: a bare top-level item is masked after the run.
 same SELECT id, secret FROM u ORDER BY id
@@ -105,6 +114,15 @@ ERR_MASK_UNSUPPORTED_CONTEXT SELECT unnest(struct_pack(p := 1, q := 2)), secret 
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT id, secret::VARCHAR FROM u
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT u FROM u
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT to_json(u) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT unnest(u) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT struct_extract(u, 'secret') FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT max(u) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT list_transform(ARRAY[u], x -> x.secret) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT to_json(u.*) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT row(u.*) FROM u
+# A table alias named like the masked column: the bare name is the column.
+same SELECT secret FROM u secret
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT secret.id FROM u secret
 # In a nested SELECT the unqualified name is refused, also when an inner
 # table has the column. DuckDB binds it to u where t is not visible yet.
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT id, (SELECT max(secret) FROM t) FROM u ORDER BY id
@@ -124,6 +142,10 @@ ERR_MASK_UNSUPPORTED_CONTEXT SELECT id, secret AS x FROM u ORDER BY alias.x
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT secret AS x, count(*) FROM u GROUP BY alias.x
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT id, secret AS x, alias.x AS leak FROM u, (SELECT 1 AS one) alias
 ERR_MASK_UNSUPPORTED_CONTEXT SELECT id AS x, alias.x + 1 FROM u
+# A dotted name reads the FROM item its qualifier names, also when the
+# select alias of a masked item has the same name.
+rawfails SELECT id, secret AS x, x.y AS leak FROM u, (SELECT 1 AS one) x
+same SELECT u.id, secret AS x, x.a FROM u, v x WHERE x.id = u.id ORDER BY x.a, u.id
 # pg_query reads a bare CURRENT_DATE as a function. DuckDB binds the word
 # to a column, a select alias or a table of that name first.
 same SELECT id, "current_date" FROM kw ORDER BY id
@@ -186,11 +208,40 @@ same SELECT id FROM u WHERE EXISTS (SELECT * FROM t WHERE t.id = u.id ORDER BY 2
 same SELECT id FROM u WHERE EXISTS (SELECT *, t.a AS tc FROM t WHERE t.id = u.id AND tc > 1) ORDER BY id
 same SELECT id FROM u WHERE EXISTS (SELECT DISTINCT ON (2) * FROM t WHERE t.id = u.id) ORDER BY id
 same SELECT id FROM u WHERE EXISTS (SELECT * FROM v WHERE v.id = u.id GROUP BY 1, 2, 3, 4, 5, 6, 7) ORDER BY id
-# DuckDB does not expand a star over a table of an outer SELECT. If it
-# ever does, these lines serve u.secret raw and fail here.
-rawfails SELECT x.secret FROM v, u, LATERAL (SELECT u.*) x
-rawfails SELECT id, (SELECT u.* FROM v LIMIT 1) FROM u
-rawfails SELECT id FROM u WHERE EXISTS (SELECT 1 FROM (SELECT u.* FROM v) x WHERE x.secret = 'u1')
+# A star that names a table of an outer SELECT, or that has no FROM, is
+# refused when that table has a post-query mask. DuckDB does not expand
+# such a star today, and the gateway does not rely on that.
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT x.secret FROM v, u, LATERAL (SELECT u.*) x
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT id, (SELECT u.* FROM v LIMIT 1) FROM u
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT id FROM u WHERE EXISTS (SELECT 1 FROM (SELECT u.* FROM v) x WHERE x.secret = 'u1')
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT x.secret FROM u, LATERAL (SELECT *) x
+# The star is refused by its name: a STRUCT column of the nested SELECT
+# called like the outer table is refused with it.
+ERR_MASK_UNSUPPORTED_CONTEXT SELECT id FROM u WHERE id IN (SELECT u.* FROM (SELECT struct_pack(a := 1) AS u) x) ORDER BY id
+same SELECT id FROM u WHERE id IN (SELECT (s).a FROM (SELECT struct_pack(a := 1) AS s) x) ORDER BY id
+# When the nested SELECT reads a table with a post-query mask itself, star
+# expansion refuses the unknown qualifier first.
+ERR_UNSUPPORTED_SYNTAX SELECT id, (SELECT u.* FROM u d LIMIT 1) FROM u
+# A bare star with a FROM stays and is served. DuckDB expands it over v
+# alone. If it ever covered the outer table too, the rawfails line would
+# serve u.secret raw and fail here.
+same SELECT u.id, x.id, x.a FROM u, LATERAL (SELECT * FROM v WHERE v.id = u.id) x ORDER BY u.id
+rawfails SELECT x.secret FROM u, LATERAL (SELECT * FROM v WHERE v.id = u.id) x
+# As the whole select list of EXISTS both stars become the constant 1.
+rawfails SELECT id FROM u WHERE EXISTS (SELECT u.*) ORDER BY id
+rawfails SELECT id FROM u WHERE EXISTS (SELECT *) ORDER BY id
+# Over a table with a SQL mask these stars would read the wrapper. DuckDB
+# refuses them today.
+rawfails SELECT x.secret FROM v, t, LATERAL (SELECT t.*) x
+rawfails SELECT x.secret FROM t, LATERAL (SELECT *) x
+rawfails SELECT to_json(t.*) FROM t
+rawfails SELECT row(t.*) FROM t
+rawfails SELECT struct_pack(t.*) FROM t
+# A star over a FROM item of its own SELECT stays served, also under the
+# name of the outer table.
+same SELECT id FROM u WHERE id IN (SELECT x.* FROM (SELECT id FROM v) x) ORDER BY id
+same SELECT id FROM u WHERE id IN (SELECT u.* FROM (SELECT id FROM v) u) ORDER BY id
+same WITH c AS (SELECT id FROM v) SELECT id FROM u WHERE id IN (SELECT c.* FROM c) ORDER BY id
 
 # v.secret_n, constant mask 2.
 same SELECT id, secret_n FROM v ORDER BY id

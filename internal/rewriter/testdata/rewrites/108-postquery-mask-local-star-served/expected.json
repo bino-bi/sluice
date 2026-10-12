@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT e.id FROM (SELECT sluice_src.id, sluice_src.name, sluice_src.email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) e WHERE e.id IN (SELECT e.* FROM (SELECT id FROM pg.hr.badge) e)",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/fpe-ssn",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "afb9a08225fd9bde",
+  "masks": [
+    "pg.hr.employees.ssn=fpe"
+  ]
+}

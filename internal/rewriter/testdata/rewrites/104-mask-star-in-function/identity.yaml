@@ -1,0 +1,4 @@
+subject: hello
+groups: [analytics]
+claims:
+  tenantId: acme
