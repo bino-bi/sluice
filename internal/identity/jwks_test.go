@@ -3,8 +3,10 @@
 package identity_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -97,15 +99,15 @@ func base64URL(b []byte) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// ecCoords extracts the X/Y coordinates from an ECDSA public key
-// without relying on the deprecated big.Int field accessors directly.
-// The Go 1.23 standard library still stores them as big.Int internally
-// and the JWK encoding (RFC 7518) requires their byte form, so we fall
-// back to the deprecated accessors behind a tiny wrapper to keep the
-// deprecation warning localised.
+// ecCoords extracts the fixed-width X/Y coordinates from an ECDSA public
+// key, as the JWK encoding (RFC 7518) needs them.
 func ecCoords(key *ecdsa.PublicKey) (x, y []byte) {
-	//nolint:staticcheck // JWK encoding requires the raw coordinates.
-	return key.X.Bytes(), key.Y.Bytes()
+	b, err := key.Bytes()
+	if err != nil {
+		panic(err)
+	}
+	n := (len(b) - 1) / 2
+	return b[1 : 1+n], b[1+n:]
 }
 
 func encodeBigInt(n int64) []byte {
@@ -255,6 +257,85 @@ func TestJWKSClientMalformedPayload(t *testing.T) {
 
 	client := identity.NewJWKSClient(identity.JWKSClientOptions{})
 	_, _, err := client.KeyFor(context.Background(), srv.URL, "kid", 0)
+	if !errors.Is(err, identity.ErrJWKSMalformed) {
+		t.Fatalf("want ErrJWKSMalformed; got %v", err)
+	}
+}
+
+// ecJWKSServer serves one EC signing key with the given raw coordinates.
+func ecJWKSServer(t *testing.T, crv string, x, y []byte) *httptest.Server {
+	t.Helper()
+	body := fmt.Sprintf(`{"keys":[{"kty":"EC","kid":"k","use":"sig","crv":%q,"x":%q,"y":%q}]}`,
+		crv, base64URL(x), base64URL(y))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestJWKSClientECKey(t *testing.T) {
+	curves := map[string]elliptic.Curve{
+		"P-256": elliptic.P256(),
+		"P-384": elliptic.P384(),
+		"P-521": elliptic.P521(),
+	}
+	for crv, curve := range curves {
+		t.Run(crv, func(t *testing.T) {
+			priv, err := ecdsa.GenerateKey(curve, rand.Reader)
+			if err != nil {
+				t.Fatalf("gen ec: %v", err)
+			}
+			x, y := ecCoords(&priv.PublicKey)
+			srv := ecJWKSServer(t, crv, x, y)
+
+			client := identity.NewJWKSClient(identity.JWKSClientOptions{})
+			key, _, err := client.KeyFor(context.Background(), srv.URL, "k", 0)
+			if err != nil {
+				t.Fatalf("KeyFor: %v", err)
+			}
+			if !priv.PublicKey.Equal(key) {
+				t.Fatalf("parsed key differs from the served key")
+			}
+		})
+	}
+}
+
+// Some issuers strip the leading zero bytes of a coordinate.
+func TestJWKSClientECKeyShortCoordinate(t *testing.T) {
+	var (
+		priv *ecdsa.PrivateKey
+		x, y []byte
+	)
+	for {
+		var err error
+		priv, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("gen ec: %v", err)
+		}
+		x, y = ecCoords(&priv.PublicKey)
+		if x[0] == 0 {
+			break
+		}
+	}
+	srv := ecJWKSServer(t, "P-256", bytes.TrimLeft(x, "\x00"), y)
+
+	client := identity.NewJWKSClient(identity.JWKSClientOptions{})
+	key, _, err := client.KeyFor(context.Background(), srv.URL, "k", 0)
+	if err != nil {
+		t.Fatalf("KeyFor: %v", err)
+	}
+	if !priv.PublicKey.Equal(key) {
+		t.Fatalf("parsed key differs from the served key")
+	}
+}
+
+func TestJWKSClientRejectsECPointOffCurve(t *testing.T) {
+	coord := bytes.Repeat([]byte{1}, 32)
+	srv := ecJWKSServer(t, "P-256", coord, coord)
+
+	client := identity.NewJWKSClient(identity.JWKSClientOptions{})
+	_, _, err := client.KeyFor(context.Background(), srv.URL, "k", 0)
 	if !errors.Is(err, identity.ErrJWKSMalformed) {
 		t.Fatalf("want ErrJWKSMalformed; got %v", err)
 	}

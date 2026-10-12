@@ -18,7 +18,7 @@
 #   docker build --build-arg VERSION=v0.1.0 -t sluice:v0.1.0 .
 
 # ─── libduckdb (static extension bundle) ─────────────────────────────────
-FROM golang:1.25-bookworm AS libduckdb
+FROM golang:1.26-bookworm AS libduckdb
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake ninja-build python3 zip unzip pkg-config \
@@ -42,7 +42,7 @@ RUN ./scripts/build-libduckdb.sh
 # scripts/build-libduckdb.sh); fetch their signed loadable builds into
 # the layout DuckDB's extension directory expects. Signatures are
 # verified by DuckDB at LOAD time.
-FROM golang:1.25-bookworm AS extensions
+FROM golang:1.26-bookworm AS extensions
 
 ARG TARGETARCH
 WORKDIR /src
@@ -51,7 +51,7 @@ RUN ./scripts/fetch-duckdb-extensions.sh "linux_${TARGETARCH}" /out \
       postgres_scanner mysql_scanner motherduck
 
 # ─── builder ─────────────────────────────────────────────────────────────
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown

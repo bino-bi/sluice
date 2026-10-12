@@ -25,7 +25,7 @@ jobs:
     name: libduckdb bundle (linux/amd64)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/goreleaser/goreleaser-cross:v1.25
+      image: ghcr.io/goreleaser/goreleaser-cross:v1.26.2
       options: --user root
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
     # goreleaser-cross ships all the CGO toolchains (glibc/arm64, macOS SDK,
     # mingw) so one container produces every archive in .goreleaser.yaml.
     container:
-      image: ghcr.io/goreleaser/goreleaser-cross:v1.25
+      image: ghcr.io/goreleaser/goreleaser-cross:v1.26.2
       options: --user root
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

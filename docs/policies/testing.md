@@ -167,7 +167,7 @@ pg_query and DuckDB — so the runner needs a C toolchain, which `ubuntu-latest`
 - uses: actions/checkout@v4
 - uses: actions/setup-go@v5
   with:
-    go-version: "1.25"
+    go-version: "1.26"
 - name: Build sluice
   run: make build
 - name: Validate policies

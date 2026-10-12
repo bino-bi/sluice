@@ -353,18 +353,22 @@ func parseECJWK(k jwkKey) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("invalid EC y: %w", err)
 	}
 	// Coordinate widths must match the curve byte size; otherwise the
-	// point is bogus. We defer on-curve validation to signature
-	// verification (crypto/ecdsa checks it there) to avoid the
-	// deprecated low-level elliptic APIs.
+	// point is bogus.
 	size := (curve.Params().BitSize + 7) / 8
 	if len(xBytes) > size || len(yBytes) > size {
 		return nil, errors.New("EC coordinates exceed curve size")
 	}
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
-	}, nil
+	// SEC 1 uncompressed point: 0x04 || X || Y, each left-padded to the
+	// curve size. Parsing it also rejects a point that is not on the curve.
+	point := make([]byte, 1+2*size)
+	point[0] = 4
+	copy(point[1+size-len(xBytes):], xBytes)
+	copy(point[1+2*size-len(yBytes):], yBytes)
+	pub, err := ecdsa.ParseUncompressedPublicKey(curve, point)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EC point: %w", err)
+	}
+	return pub, nil
 }
 
 // base64URLDecode decodes RFC 7515 base64url with or without padding.

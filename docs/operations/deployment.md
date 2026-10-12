@@ -59,7 +59,7 @@ compiles DuckDB with the `httpfs`/`excel`/`sqlite_scanner` extensions
 statically linked (cached until `scripts/DUCKDB_VERSION` changes, ~30 min
 cold), an `extensions` stage pre-seeds the non-embeddable
 `postgres_scanner`/`mysql_scanner`/`motherduck` loadable extensions,
-`golang:1.25-bookworm` compiles the binary against the bundle, and the
+`golang:1.26-bookworm` compiles the binary against the bundle, and the
 runtime stage is `gcr.io/distroless/cc-debian12:nonroot` (glibc +
 libstdc++, uid/gid 65532, no shell). The image needs no outbound access
 to `extensions.duckdb.org` at runtime for any datasource type. Working
