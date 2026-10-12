@@ -38,8 +38,9 @@ Thumbs.db
 # goreleaser
 /dist/
 
-# Example run output (make docs-check)
+# Example run output and the built site (make docs-check)
 /examples/*/data/
+/site/
 
 # stray root build output (use ./bin/sluice)
 /sluice

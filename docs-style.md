@@ -68,12 +68,19 @@ Use the term on the left. The [glossary](docs/reference/glossary.md) explains ea
 - Keep every diagram listed in `docs-audit/diagrams.md`.
 - Do not delete, redraw or restyle a diagram. Change a label only if the code proves it wrong.
 - You may add a diagram in the same style if it replaces a long paragraph.
+- List each change to a diagram in `docs-audit/diagrams.md` and update its copy in `docs-audit/diagrams/`.
 
 ## 5. Structure
 
 The top-level sections are fixed. Do not remove or rename them:
 
 Home, Getting started, Architecture, Policies, Operations, Security, Reference, Cookbook.
+
+Rules for the Security section:
+
+- The threat model is one table with the columns `Threat | What Sluice does | What you must do`.
+- List only protections that exist in the code. Say under which condition a protection holds.
+- Audit log, hardening and key rotation use short steps and tested examples, not long reasoning.
 
 ## 6. Page template
 

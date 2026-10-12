@@ -1,7 +1,7 @@
 {
   "catalogs": ["shop"],
   "decision": "allow",
-  "duration_ms": 0,
+  "duration_ms": "<ms>",
   "event_type": "query",
   "origin": "rest",
   "policies_applied": [

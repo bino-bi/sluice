@@ -31,8 +31,11 @@ BANNED = [
 BANNED_RE = re.compile(r"(?<![\w-])(" + "|".join(BANNED) + r")(?![\w-])", re.I)
 COUNT_RE = re.compile(
     r"\b(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+"
-    r"(built-in\s+)?(policy kinds|mask types|mcp tools|tools|metrics|error codes|"
-    r"data ?source types|drivers)\b", re.I)
+    r"(built-in\s+)?(policy kinds|kinds|mask types|mcp tools|tools|metrics|error codes|"
+    r"data ?source types|drivers|engines|transports|recipes|endpoints|commands|providers|sinks)\b",
+    re.I)
+ABBREV_RE = re.compile(r"\b(e\.g|i\.e|etc|vs)\.", re.I)
+HTML_CODE_RE = re.compile(r"<(pre|code)\b", re.I)
 NESTED_PAREN_RE = re.compile(r"\([^()]*\([^()]*\)")
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 FENCE_RE = re.compile(r"^(\s*)(```+|~~~+)\s*([\w-]*)")
@@ -46,10 +49,12 @@ NAV = ["Home", "Getting started", "Architecture", "Policies", "Operations",
 
 
 def clean_inline(text: str) -> str:
-    text = re.sub(r"`[^`]*`", " CODE ", text)
+    # A code span counts with all its words, but is not checked for banned words.
+    text = re.sub(r"`([^`]*)`", lambda m: " " + re.sub(r"\S+", "CODE", m.group(1)) + " ", text)
     text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"</?[a-zA-Z][^<>]*>", " ", text)
+    text = ABBREV_RE.sub(r"\1", text)
     return re.sub(r"[*_]{1,3}", "", text)
 
 
@@ -65,8 +70,14 @@ def paragraphs(lines):
 
     for no, line in lines:
         stripped = line.strip()
-        if not stripped or stripped.startswith(("!!!", "???", "===")):
+        if not stripped:
             yield from flush()
+            continue
+        if stripped.startswith(("!!!", "???", "===")):
+            yield from flush()
+            title = re.search(r'"([^"]*)"', stripped)
+            if title:
+                yield no, title.group(1)
             continue
         stripped = re.sub(r"^>\s?", "", stripped)
         if stripped.startswith("#"):
@@ -107,10 +118,19 @@ def check_prose(rel, units, errors):
                 errors.append(f"{rel}:{no}: semicolon chain")
 
 
+def indented_code(line: str, prev_blank: bool, prev_text: str) -> bool:
+    """Markdown reads 4 spaces after a blank line as code, unless a list or block holds it."""
+    if not prev_blank or not re.match(r"^( {4}|\t)\S", line):
+        return False
+    held = LIST_RE.match(prev_text) or prev_text.startswith((" ", "\t", "!!!", "???", "==="))
+    return not held
+
+
 def check_file(md: Path, errors, pinned):
     rel = md.relative_to(ROOT)
     text = COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), md.read_text())
     prose, fence, block, block_start, lang = [], None, [], 0, ""
+    prev_blank, prev_text = True, ""
     for no, line in enumerate(text.splitlines(), 1):
         m = FENCE_RE.match(line)
         if fence is None and m:
@@ -126,6 +146,14 @@ def check_file(md: Path, errors, pinned):
         if "--8<--" in line:
             errors.append(f"{rel}:{no}: snippet include outside a code block")
             continue
+        if HTML_CODE_RE.search(re.sub(r"`[^`]*`", "", line)):
+            errors.append(f"{rel}:{no}: HTML code element, use a snippet include")
+        if indented_code(line, prev_blank, prev_text):
+            errors.append(f"{rel}:{no}: indented code block, use a snippet include")
+        if line.strip():
+            prev_text, prev_blank = line, False
+        else:
+            prev_blank = True
         prose.append((no, line))
     if fence is not None:
         errors.append(f"{rel}:{block_start}: code block is not closed")
@@ -157,7 +185,10 @@ def tested_file(path: str) -> str:
 
 def check_block(rel, start, lang, block, errors, pinned):
     body = "\n".join(block).strip("\n")
-    if lang == "mermaid" or body.strip() in pinned:
+    if body.strip() in pinned:
+        return
+    if lang == "mermaid":
+        errors.append(f"{rel}:{start}: mermaid block has no copy in docs-audit/diagrams/")
         return
     lines = [l for l in block if l.strip()]
     if not lines:

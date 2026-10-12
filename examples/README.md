@@ -30,7 +30,7 @@ bash steps/01-query.sh
 | `serve.sh` | Creates the sample data and starts Sluice. Only for examples that need a server. |
 | `steps/NN-name.sh` | One command per file. The steps run in order, from the example folder. |
 | `expected/NN-name.txt` | Output of each step from a real run. Never edit these by hand. |
-| `manual/` | Files a reader uses by hand, for example a systemd unit. They get a syntax check only. |
+| `manual/` | Files a reader uses by hand, for example a systemd unit. They get a syntax check only: `bash -n`, or a JSON, YAML or unit file parse. |
 | `data/` | Created at run time. Not in git. |
 
 An example needs `tests/` or `steps/`, or both. A file that nothing runs must not be shown in the docs.
@@ -64,7 +64,7 @@ make docs-check                         # run everything
 
 Rules:
 
-- Server examples use ports 8080 and 9091. Only one example runs at a time.
+- Server examples use ports 8080 (REST) and 9091 (admin). Some also use 8081 (MCP), 8090 and 8091 (helper processes). Only one example runs at a time.
 - A step holds the command a reader types. Keep it short and without shell tricks.
 - If the SQL holds single quotes, send the request body with a here-document (`-d @- <<'EOF'`). See `multi-tenant/steps/03-acme-asks-for-beta.sh`.
 - Show rewritten SQL with a `rewrittenSql` or `rewrittenSqlContains` expectation in a test suite.

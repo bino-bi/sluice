@@ -14,6 +14,7 @@ Usage: docs-examples.py [--update] [--sluice PATH] [name ...]
 """
 
 import argparse
+import configparser
 import difflib
 import fcntl
 import json
@@ -30,7 +31,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
-PORTS = (8080, 9091)
+# REST, admin, MCP, and the helper processes of approval-workflow and rebac.
+PORTS = (8080, 9091, 8081, 8090, 8091)
 LOCK = Path(tempfile.gettempdir()) / "sluice-docs-examples.lock"
 # The audit writer flushes in the background. Wait so `audit verify` sees every record.
 SETTLE = 0.4
@@ -52,8 +54,8 @@ VOLATILE = {
     "schema_pulled_at": "<time>",
     "build_time": "<time>",
     "remote_ip": "<remote-ip>",
-    "duration_ms": 0,
-    "latency_ms": 0,
+    "duration_ms": "<ms>",
+    "latency_ms": "<ms>",
     "uptime": "<duration>",
     "version": "<version>",
     "sluice_version": "<version>",
@@ -195,6 +197,8 @@ def check_manual(example: Path) -> list[str]:
             elif f.suffix in (".yaml", ".yml"):
                 import yaml  # from docs/requirements.txt
                 list(yaml.safe_load_all(f.read_text()))
+            elif f.suffix == ".service":
+                configparser.ConfigParser(strict=False, interpolation=None).read_string(f.read_text())
         except subprocess.CalledProcessError as e:
             errors.append(f"{f.relative_to(ROOT)}: {e.stderr.strip()}")
         except Exception as e:  # noqa: BLE001

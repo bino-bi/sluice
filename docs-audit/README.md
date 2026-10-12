@@ -16,6 +16,8 @@ The Compliance section was not audited because it is deleted. `security.md` list
 
 One agent per section read every page and checked each claim against the code at commit 6f7b99f. Each agent also ran a local server built from that commit. Rows marked "ran" or "run" were executed. Other rows were checked by reading the code.
 
+File and line references are valid at commit 6f7b99f. Example files were moved and shortened later.
+
 ## Classes
 
 | Class | Meaning |
