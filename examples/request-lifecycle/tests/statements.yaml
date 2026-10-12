@@ -11,3 +11,33 @@ cases:
     sql: "SHOW tables"
     expect:
       outcome: deny
+
+  - name: SET names no table, so allow-customers does not match
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SET threads = 1"
+    expect:
+      outcome: deny
+
+  - name: a function name with a qualifier is rejected
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SELECT name.upper() FROM shop.main.customers"
+    expect:
+      errorCode: ACL_REJECTED
+
+  - name: a table function that is not on the allow list is rejected
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SELECT c.id FROM shop.main.customers c, glob('*') g"
+    expect:
+      errorCode: ACL_REJECTED
+
+  - name: generate_series in FROM runs
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SELECT c.id, n FROM shop.main.customers c, generate_series(1, 2) AS t(n)"
+    expect:
+      outcome: allow
+
+  - name: TABLESAMPLE is rejected
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SELECT id FROM shop.main.customers TABLESAMPLE SYSTEM (50)"
+    expect:
+      errorCode: ACL_REJECTED

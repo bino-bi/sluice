@@ -1,0 +1,4 @@
+{
+  "code": "ERR_POLICY_INVALID",
+  "message": "policy document invalid"
+}

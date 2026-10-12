@@ -36,3 +36,20 @@ cases:
       outcome: allow
       applied: ["SqlAccessPolicy/allow-reference"]
       rewrittenSql: "SELECT code, name FROM ref.main.countries"
+
+  # --8<-- [start:one-catalog]
+  - name: a contractor cannot join two catalogs
+    identity: { subject: carl, groups: [analytics, contractors] }
+    sql: >-
+      SELECT o.id, c.name AS country
+      FROM shop.main.orders o JOIN ref.main.countries c ON c.code = o.country_code
+    expect:
+      outcome: reject
+      rejections: ["one-catalog/no-second-catalog"]
+  # --8<-- [end:one-catalog]
+
+  - name: a contractor reads one catalog
+    identity: { subject: carl, groups: [analytics, contractors] }
+    sql: "SELECT id, country_code FROM shop.main.orders"
+    expect:
+      outcome: allow

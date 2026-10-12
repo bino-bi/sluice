@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: an analyst matches the first clause
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+
+  - name: a support agent matches the second clause
+    identity: { subject: sam, groups: [support] }
+    sql: "SELECT id FROM shop.main.tickets"
+    expect:
+      outcome: allow
+
+  - name: a support agent matches no clause for orders
+    identity: { subject: sam, groups: [support] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: deny

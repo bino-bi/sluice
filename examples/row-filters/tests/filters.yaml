@@ -84,3 +84,13 @@ cases:
       outcome: allow
       filters: []
       rewrittenSql: "SELECT id FROM shop.main.orders"
+
+  - name: an alias in two spellings comes back in lower case
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT EXTRACT(MONTH FROM DATE '2026-03-01') AS Month FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["AS month FROM"] }
+
+  - name: a quoted alias keeps its spelling
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT EXTRACT(MONTH FROM DATE '2026-03-01') AS \"Month\" FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["AS \"Month\" FROM"] }

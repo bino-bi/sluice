@@ -61,6 +61,12 @@ cases:
     expect:
       outcome: allow
       errorCode: ACL_REJECTED
+
+  - name: SHOW has no action, so an allow with actions does not cover it
+    identity: { subject: ada, groups: [admins] }
+    sql: "SHOW TABLES"
+    expect:
+      outcome: deny
   # --8<-- [end:actions]
 
   - name: EXPLAIN SELECT counts as a SELECT

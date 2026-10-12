@@ -6,7 +6,7 @@
     "groups": ["analysts"]
   },
   "sql": "SELECT name, ssn FROM shop.main.people ORDER BY id",
-  "reasons": ["policy approve-pii-reads: PII columns on people require a data-steward sign-off"],
+  "reasons": ["policy approve-pii-reads: PII columns on people need the approval of a data steward"],
   "policies": ["approve-pii-reads"],
   "accept_url": "<accept-url>",
   "reject_url": "<reject-url>",

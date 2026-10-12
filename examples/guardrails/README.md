@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # guardrails
 
-Two `QueryRejectPolicy` objects and two `QueryRewritePolicy` objects for an agent that reads an `orders` table.
+Three `QueryRejectPolicy` objects and two `QueryRewritePolicy` objects for an agent that reads an `orders` table.
 
 ## Run
 

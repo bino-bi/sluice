@@ -57,8 +57,8 @@ var pages = map[apitypes.Kind]string{
 	apitypes.KindSQLAccessPolicy:    "[Access control](../policies/access-control.md)",
 	apitypes.KindRowFilterPolicy:    "[Row filters](../policies/row-filters.md)",
 	apitypes.KindColumnMaskPolicy:   "[Column masks](../policies/column-masks.md)",
-	apitypes.KindQueryRejectPolicy:  "[Guardrails](../policies/guardrails.md)",
-	apitypes.KindQueryRewritePolicy: "[Guardrails](../policies/guardrails.md)",
+	apitypes.KindQueryRejectPolicy:  "[Rejects and rewrites](../policies/guardrails.md)",
+	apitypes.KindQueryRewritePolicy: "[Rejects and rewrites](../policies/guardrails.md)",
 	apitypes.KindApprovalPolicy:     "[Approvals](../policies/approvals.md)",
 	apitypes.KindDataSource:         "[Data sources](../operations/data-sources.md)",
 	apitypes.KindSubjectBinding:     "[Subjects](../policies/subjects.md)",
@@ -77,7 +77,7 @@ type doc struct{ req, text string }
 var docs = map[string]doc{
 	"object.apiVersion":           {"yes", "{values}. See [Kinds](#kinds)."},
 	"object.kind":                 {"yes", "See [Kinds](#kinds)."},
-	"object.metadata.name":        {"yes", "Lower-case letters, digits and `-`. Unique per kind."},
+	"object.metadata.name":        {"yes", "Lower-case letters, digits and `-`. Starts and ends with a letter or digit. Unique per kind."},
 	"object.metadata.labels":      {"", "Free keys and values. Sluice ignores them."},
 	"object.metadata.annotations": {"", "Free keys and values. Sluice ignores them."},
 	"object.metadata.priority":    {"", "0 to 1000. Higher comes first."},
@@ -97,7 +97,7 @@ var docs = map[string]doc{
 	"Clause.subjects.jwtClaims[].pattern": {"", "Regular expression for `Matches`."},
 	"Clause.subjects.groups":              {"", "Group names. One is enough."},
 	"Clause.subjects.apiKeys":             {"", "Subject ids of API key subjects."},
-	"Clause.subjects.roles":               {"", "Values of the `roles` claim."},
+	"Clause.subjects.roles":               {"", "Values of the `roles` claim. Without the claim, Sluice uses the groups."},
 	"Clause.resources":                    {"", "Tables to match."},
 
 	"ResourceSelector.catalogs": {"", "Catalog names. `*` is a wildcard."},

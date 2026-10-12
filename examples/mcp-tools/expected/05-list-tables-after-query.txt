@@ -6,11 +6,11 @@ data: {
     "content": [
       {
         "type": "text",
-        "text": "1 table(s)"
+        "text": "0 table(s)"
       }
     ],
     "structuredContent": {
-      "tables": ["shop.main.products"]
+      "tables": []
     }
   }
 }

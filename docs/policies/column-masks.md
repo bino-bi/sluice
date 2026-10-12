@@ -43,19 +43,19 @@ A mask runs in one of two places. "SQL" means the mask is part of the rewritten 
 
 | Type | Result | `args` | Runs |
 |---|---|---|---|
-| `null` | `NULL` | None | SQL |
-| `constant` | A fixed value | `value`: required. Text, number or boolean | SQL |
+| `null` | `NULL` | None. YAML needs quotes: `type: "null"` | SQL |
+| `constant` | A fixed value | `value`: required. Text, number or boolean. A list shows as text such as `[1 2]` | SQL |
 | `partial` | The first and last characters. `maskChar` replaces the rest. | `showFirst`, `showLast`: default 0, one must be above 0. `maskChar`: default `*` | SQL |
 | `hash` | A SHA-256 hash as hex text | `algorithm`: `sha256` or `hmac_sha256`, default `sha256`. `saltRef`: a `secret://` reference to the salt, required for `hmac_sha256` | SQL for `sha256`, post-query for `hmac_sha256` |
-| `regex` | The text with every match of `pattern` replaced | `pattern`: required, RE2, at most 512 bytes. `replacement`: default empty | SQL |
+| `regex` | The text with every match of `pattern` replaced | `pattern`: required, a regular expression in RE2 syntax, at most 512 bytes. `replacement`: default empty | SQL |
 | `truncate` | The first `length` characters | `length`: required, 1 or more. `suffix`: text to add after a cut | SQL |
-| `fpe` | The characters of the alphabet, encrypted. Other characters stay. | `keyRef`: required, a secret. `alphabet`: `numeric`, `lower` or `alphanumeric`, default `numeric`. `customAlphabet`: 2 to 36 characters. `tweak`: hex, at most 16 bytes | Post-query |
+| `fpe` | The characters of the alphabet, encrypted. Other characters stay. | `keyRef`: required, a `secret://` reference to the key. `alphabet`: `numeric`, `lower` or `alphanumeric`, default `numeric`. `customAlphabet`: 2 to 36 characters. `tweak`: hex, at most 16 bytes | Post-query |
 | `jitter` | The number, moved by up to `range` | `range`: required, between 0 and 1. 0.1 means 10 percent. `seed` | Post-query |
 | `fake` | An invented value | `fakeType`: required, one of `name`, `first_name`, `last_name`, `email`, `phone`, `company`, `city`, `country`, `uuid`. `seed` | Post-query |
 
 - `hash`, `fpe`, `jitter` and `fake` give the same output for the same input.
 - `seed` is plain text or a `secret://` reference. See [Server config](../operations/server-config.md) for secrets.
-- Another `type` or wrong `args` fail `sluice policy validate`. Unknown keys in `args` pass.
+- Another `type` and most wrong `args` fail `sluice policy validate`. It does not check the form of `saltRef` and `keyRef`, or the type of `value`. Unknown keys in `args` pass.
 
 ## More examples
 
@@ -89,7 +89,7 @@ The secrets come from the environment:
 
 **What happened:** every column shows its mask. `card` keeps its format. `salary` stays within 10 percent of the real number.
 
-A suite shows where each mask runs:
+A [suite](testing.md) shows where each mask runs:
 
 ```yaml
 --8<-- "examples/column-masks/tests/masks.yaml:all"
@@ -101,11 +101,21 @@ A `sha256` mask with `saltRef` also needs its secret when the suite runs.
 
 One mask wins. Masks never stack. Sluice picks the higher `priority`, then the more specific selector, then the first name in alphabetical order.
 
-## Limits
+`hide-phone` also masks `phone`. `mask-phone` from the first example has the higher priority and wins:
+
+```yaml
+--8<-- "examples/column-masks/policies.d/hide-phone.yaml:2"
+```
+
+```yaml
+--8<-- "examples/column-masks/tests/masks.yaml:one-mask"
+```
+
+## SQL forms refused on a post-query mask
 
 A column with a post-query mask can only be a plain item of the outer select list.
 
-| Refused on a table with a post-query mask | Error code |
+| Refused form | Error code |
 |---|---|
 | The masked column in `WHERE`, `GROUP BY`, `ORDER BY`, a join condition, an expression, a subquery or a CTE | `ERR_MASK_UNSUPPORTED_CONTEXT` |
 | `SELECT *` inside or over a subquery or a CTE. List the columns. | `ERR_MASK_UNSUPPORTED_CONTEXT` |
@@ -120,12 +130,25 @@ A column with a post-query mask can only be a plain item of the outer select lis
 --8<-- "examples/column-masks/expected/03-post-query-mask-in-where.txt"
 ```
 
-On every masked table, `EXPLAIN` fails with `ERR_UNSUPPORTED_SYNTAX`. Some DuckDB forms fail too. See [SQL forms refused on filtered or masked tables](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
+Every masked table also refuses `EXPLAIN` and some DuckDB forms. See [SQL forms refused on filtered or masked tables](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
 
-- Sluice must know the columns of a masked table. A missing table fails with `ERR_REWRITE_FAILED`. A data source that Sluice cannot read fails with `ERR_DATASOURCE_UNAVAILABLE`. Add the mask before you add a new column.
-- A mask can change the column type. A comparison that needs the old type fails with `ERR_QUERY_FAILED`. So does `rowid`.
-- `sluice policy validate` does not read secrets. A missing secret fails the query with `ERR_INTERNAL`. So does an `fpe` key that is not 16, 24 or 32 bytes long.
-- `jitter` on a text column and `fpe` on a very short value return HTTP 200 with a cut JSON body.
+## Errors on a masked table
+
+| Cause | Result |
+|---|---|
+| The table does not exist | `ERR_REWRITE_FAILED` |
+| Sluice cannot read the data source | `ERR_DATASOURCE_UNAVAILABLE` |
+| A column changed after the last reload | `ERR_QUERY_FAILED` |
+| A comparison needs the column type from before the mask | `ERR_QUERY_FAILED` |
+| The query reads `rowid` | `ERR_QUERY_FAILED` |
+| A secret is missing, or `saltRef` or `keyRef` is not a `secret://` reference | HTTP 500, `ERR_INTERNAL` |
+| The `fpe` key is not 16, 24 or 32 bytes long | HTTP 500, `ERR_INTERNAL` |
+| `jitter` on a text column, `fpe` on a very short value | HTTP 200 with a cut JSON body |
+
+## Limits
+
+- Sluice keeps the column list of a masked table until a [reload](../operations/hot-reload.md). Reload after a column changes.
+- `sluice policy validate` does not read secrets.
 - A `sha256` hash without `saltRef` can be guessed for common values. Use `hmac_sha256` or set `saltRef`.
 
 ## See also

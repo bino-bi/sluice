@@ -3,6 +3,8 @@
 
 One `employees` table with a `ColumnMaskPolicy` for every mask type.
 
+`policies.d/hide-phone.yaml` is a second mask on `phone`. It has a lower priority than `mask-phone` and loses.
+
 ## Run
 
 ```bash

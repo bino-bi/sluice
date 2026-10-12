@@ -10,7 +10,7 @@ client (REST / MCP) ─▶ identify ─▶ parse ─▶ policy ─▶ rewrite �
 
 ## Example
 
-This row filter limits each subject to the rows of its tenant.
+This row filter limits each [subject](reference/glossary.md) to the rows of its tenant.
 
 ```yaml
 --8<-- "examples/hello-sluice/policies.d/filter-tenant.yaml:2"

@@ -15,6 +15,18 @@ cases:
     sql: "SELECT id FROM shop.main.orders"
     expect:
       outcome: deny
+
+  - name: a limit that is not a constant counts as 0
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 500 + 1"
+    expect:
+      outcome: allow
+
+  - name: in a union only the first SELECT counts
+    identity: { subject: ines, groups: [interns] }
+    sql: "(SELECT id FROM shop.main.orders LIMIT 50) UNION ALL SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
   # --8<-- [end:limit]
 
   - name: a large limit does not pass the condition
@@ -23,19 +35,17 @@ cases:
     expect:
       outcome: deny
 
-  # --8<-- [start:claim]
-  - name: the gold tier reads reports
-    identity: { subject: gina, claims: { tier: gold } }
-    sql: "SELECT id FROM shop.main.reports"
+  - name: LIMIT ALL counts as 0
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT ALL"
     expect:
       outcome: allow
 
-  - name: a subject without the claim is denied, with no error
-    identity: { subject: nora }
-    sql: "SELECT id FROM shop.main.reports"
+  - name: a limit after a union is not seen
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders UNION ALL SELECT id FROM shop.main.orders LIMIT 5"
     expect:
       outcome: deny
-  # --8<-- [end:claim]
 
   # --8<-- [start:error]
   - name: with the claim the condition decides

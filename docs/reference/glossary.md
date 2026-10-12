@@ -8,6 +8,7 @@ The docs use one term for each concept.
 |---|---|
 | [Admin API](admin-api.md) | Endpoints for the operator on a separate port. |
 | [Allow](../policies/access-control.md) | A `SqlAccessPolicy` that lets a subject read a table. |
+| [Anchor](../security/audit.md) | The SHA-256 of the genesis. `sluice audit verify --anchor` checks the first record against it. |
 | [API key](../policies/subjects.md) | A secret that a client sends in the `X-Api-Key` header. |
 | [Approval](../policies/approvals.md) | A hold on a query until a person accepts or rejects it. |
 | [Audit log](../security/audit.md) | The files where Sluice records each query and its decision. |
@@ -24,19 +25,23 @@ The docs use one term for each concept.
 | Genesis | The secret that starts the hash chain. |
 | Grant | The right to run an approved query once. |
 | Hash chain | Each audit record holds the hash of the record before it. |
+| [JWKS](../policies/subjects.md) | JSON Web Key Set: the public keys of a JWT issuer. |
 | Mask type | How a column mask changes a value, for example `null` or `partial`. |
 | [MCP](mcp.md) | Model Context Protocol. AI agents use it to call Sluice. |
+| [OpenFGA](../policies/rebac.md) | A server that stores relations between subjects and tables. A `RelationshipPolicy` asks it. |
 | Pepper | A server secret that Sluice mixes into every API key hash. |
 | [Policy](../policies/index.md) | A YAML object that tells Sluice what to allow, filter, mask, reject, rewrite or hold. |
 | Policy directory | The directory with the YAML files that Sluice loads. |
 | [Policy kind](policy-schema.md) | The `kind` of a policy, for example `RowFilterPolicy`. |
+| [ReBAC](../policies/rebac.md) | Access control by relations between subjects and tables. |
 | [Reject](../policies/guardrails.md) | Sluice refuses a statement because of its form: `ACL_REJECTED`. |
 | [Reload](../operations/hot-reload.md) | Sluice loads the policy directory again without a restart. |
 | [Rewritten SQL](../architecture/request-lifecycle.md) | The statement that Sluice sends to DuckDB, with filters, masks and limits. |
 | [Row filter](../policies/row-filters.md) | A policy that adds a condition to every read of a table. |
 | [Secret reference](../operations/server-config.md) | A value such as `secret://env/NAME`. Sluice reads the secret from there. |
 | [Selector](../policies/matching.md) | The subjects and tables a policy covers: `match` and `exclude`. |
-| [Server config](configuration.md) | The YAML file that you pass to `sluice serve --config`. |
+| [Server config](../operations/server-config.md) | The YAML file that you pass to `sluice serve --config`. |
 | Subject | The identity of a client, from its JWT or API key. |
 | [Subject binding](../policies/subjects.md) | A `SubjectBinding` object. It maps credentials to subjects. |
+| [Suite](../policies/testing.md) | A YAML file with cases for `sluice policy test`. |
 | [Tag](../policies/classification.md) | A label on tables or columns, set by a `DataClassification` object. |

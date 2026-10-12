@@ -1,0 +1,13 @@
+{
+  "info": {
+    "title": "Sluice",
+    "version": "<version>"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/health": {},
+    "/v1/query": {},
+    "/v1/ready": {},
+    "/v1/version": {}
+  }
+}

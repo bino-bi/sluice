@@ -13,6 +13,3 @@
 | [Error codes](error-codes.md) | Error codes and their HTTP status. |
 | [Configuration](configuration.md) | Keys and defaults of the server config. |
 | [Glossary](glossary.md) | The terms that these docs use. |
-
-`make docs-generate` writes CLI, Policy schema, Metrics, Error codes and Configuration from the code.
-Do not edit these pages by hand.

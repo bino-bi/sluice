@@ -2,6 +2,8 @@
 docker build -t sluice:dev .
 cd examples/hello-sluice
 python3 ../seed.py seed.sql data/shop.db
+# The container runs as another user and writes the audit log to data/.
+chmod -R a+rwX data
 SLUICE_IMAGE=sluice:dev docker compose up
 # --8<-- [end:up]
 

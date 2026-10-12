@@ -2,7 +2,7 @@
 
 # PII masking
 
-Analysts query a customer table, but they never see the real `email`, `phone` or `ssn`.
+PII is personal data, such as an email address. Analysts query a customer table, but they never see the real `email`, `phone` or `ssn`.
 
 ## Example
 
@@ -65,7 +65,7 @@ A filter on a masked column sees the masked value. This search for `alice` finds
 ## Limits
 
 - A mask without `resources.columns` masks nothing. Sluice gives no warning.
-- Some mask types, for example `fake`, run after the query. A filter, join or `GROUP BY` on such a column fails with `ERR_MASK_UNSUPPORTED_CONTEXT`. See [the refused forms](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
+- Some mask types, for example `fake`, run after the query. A filter, join or `GROUP BY` on such a column fails with `ERR_MASK_UNSUPPORTED_CONTEXT`. See [Column masks](../policies/column-masks.md).
 
 ## See also
 

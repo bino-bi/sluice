@@ -2,7 +2,7 @@
 
 # Operations
 
-This section shows how to run Sluice. As an operator, you handle these parts:
+As an operator, you handle these parts of Sluice:
 
 | Part | Server config key | Default | What it is |
 |---|---|---|---|
@@ -10,10 +10,10 @@ This section shows how to run Sluice. As an operator, you handle these parts:
 | Admin listener | `admin.listen` | `:9091`, off | The [Admin API](../reference/admin-api.md) and `/metrics`. Turn it on with `admin.enabled: true` and set a [token](server-config.md). |
 | Policy directory | `policies.directory` | `./policies.d` | Policies, subject bindings and [data sources](data-sources.md). Sluice [reloads](hot-reload.md) it. |
 | Audit directory | `audit.file.path` | None | The [audit log](../security/audit.md). Sluice creates it with mode `0750`. |
-| State directory | `budget.stateDir` | `./state` | Budget counters, with `budget.enabled: true`. Sluice creates it with mode `0700`. |
+| State directory | `budget.stateDir`, `approval.stateDir` | `./state` | Budget counters with `budget.enabled: true`, approvals with `approval.persist: true`. Sluice creates it with mode `0700`. |
 
-- Without `audit.file.path`, Sluice writes the audit log to the temp folder of the system and logs a warning.
-- Every `.yaml` and `.yml` file in the policy directory must be a policy object. Sluice skips hidden folders and the folders `tests` and `testdata`.
+- Without `audit.file.path`, Sluice writes the audit log to the temp directory of the system and logs a warning.
+- Every `.yaml` and `.yml` file in the policy directory must be a policy object. Sluice skips hidden directories and the directories `tests` and `testdata`.
 
 ## Pages
 

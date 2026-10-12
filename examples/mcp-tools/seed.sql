@@ -11,6 +11,14 @@ INSERT INTO products VALUES
   (2, 'A5 Notebook',   799),
   (3, 'Black Pen',     199);
 
+CREATE TABLE orders (
+  id         INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL
+);
+
+INSERT INTO orders VALUES
+  (1, 2);
+
 -- No policy allows this table.
 CREATE TABLE customers (
   id    INTEGER PRIMARY KEY,

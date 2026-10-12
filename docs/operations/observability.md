@@ -61,16 +61,16 @@ The admin listener serves `GET /metrics`. It needs `admin.enabled: true` and the
 
 ## Tracing
 
-Add a `tracing` block to the server config. Sluice then sends spans to an OTLP collector.
+Add a `tracing` block to the server config. Sluice then sends spans to an OpenTelemetry (OTLP) collector. A span is one timed step of a request.
 
 ```yaml
 --8<-- "examples/observability/tracing.yaml:2"
 ```
 
 - `protocol` is `grpc` or `http`. `insecure: true` sends without TLS.
-- Sluice continues the trace of a W3C `traceparent` header.
+- Sluice continues the trace of a W3C `traceparent` request header.
 - Every REST request and every MCP request over HTTP gets a span.
-- A query adds the span `query` with the children `query.parse`, `query.policy`, `query.rewrite`, `query.execute` and `query.mask`.
+- A query adds the span `query` with the children `query.parse`, `query.policy`, `query.rewrite` and `query.execute`. A post-query [column mask](../policies/column-masks.md) adds `query.mask`.
 - The `query` span holds the query id, origin, decision, SQL fingerprint, catalogs and error code, never the SQL text. It ends before Sluice sends the rows.
 
 ## See also

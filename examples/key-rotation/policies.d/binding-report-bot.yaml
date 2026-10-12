@@ -6,9 +6,5 @@ metadata:
 spec:
   apiKeys:
     - id: "report-bot-2026a"
-      hashRef: "secret://env/REPORT_BOT_2026A_HASH"
-      groups: ["agents"]
-    # The new key. It needs its own id.
-    - id: "report-bot-2026b"
-      hashRef: "secret://env/REPORT_BOT_2026B_HASH"
+      hashRef: "secret://file//etc/sluice/secrets/report-bot-2026a.hash"
       groups: ["agents"]

@@ -36,7 +36,9 @@ Leave the server running. Open a second terminal in the `sluice` folder:
 --8<-- "examples/hello-sluice/expected/01-query.txt"
 ```
 
-The API key maps to the subject `hello` with the group `analytics` and the tenant `acme`. The policy `allow-analytics` lets this group read `customers` and `orders`.
+The outputs are real, but indented. Values that change between runs appear as placeholders such as `<query-id>`.
+
+The API key maps to the [subject](../reference/glossary.md) `hello` with the group `analytics` and the tenant `acme`. The policy `allow-analytics` lets this group read `customers` and `orders`.
 
 The row filter kept only the rows of tenant `acme`, two of five customers.
 
@@ -98,11 +100,13 @@ The compose file of the example pulls a released image. A release can behave dif
 --8<-- "examples/install/manual/docker-example.sh:up"
 ```
 
-The first build compiles DuckDB and takes about 30 minutes. The `curl` steps work as shown. Run the `sluice` commands inside the container, from `examples/hello-sluice`:
+The first build compiles DuckDB and takes about 30 minutes. From a second terminal, send the `curl` commands of sections 2 and 3. Run the `sluice` command of section 5 inside the container, from `examples/hello-sluice`:
 
 ```bash
 --8<-- "examples/install/manual/docker-example.sh:cli"
 ```
+
+`make docs-check` does not run these commands.
 
 ## See also
 

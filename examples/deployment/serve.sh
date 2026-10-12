@@ -14,8 +14,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
   -keyout data/tls/server.key -out data/tls/server.crt 2>/dev/null
 # --8<-- [end:cert]
 
+# --8<-- [start:start]
 # Demo secrets. Do not use these values in production.
 export SLUICE_ADMIN__TOKEN="demo-admin-token-change-me"
 export SLUICE_AUDIT_GENESIS="deployment-demo-genesis"
 
 exec sluice serve --config server.yaml
+# --8<-- [end:start]

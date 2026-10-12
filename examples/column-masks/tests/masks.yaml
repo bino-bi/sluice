@@ -22,6 +22,7 @@ cases:
         - "hr.main.employees.salary=jitter"
   # --8<-- [end:all]
 
+  # --8<-- [start:one-mask]
   - name: each column has one mask
     identity: { subject: hr-analyst, groups: [analysts] }
     sql: "SELECT id FROM hr.main.employees"
@@ -34,9 +35,11 @@ cases:
         - "hr.main.employees.email=hash"
         - "hr.main.employees.name=fake"
         - "hr.main.employees.notes=truncate"
+        # mask-phone and hide-phone match. mask-phone has the higher priority.
         - "hr.main.employees.phone=partial"
         - "hr.main.employees.salary=jitter"
         - "hr.main.employees.ssn=null"
+  # --8<-- [end:one-mask]
 
   - name: a SQL mask works in WHERE and ORDER BY
     identity: { subject: hr-analyst, groups: [analysts] }

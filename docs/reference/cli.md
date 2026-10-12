@@ -21,7 +21,7 @@ Every command accepts `--help`. A `bool` flag takes no value. The binary also ha
 | 2 | `datasource check` | The directory holds no `DataSource` object. |
 | 3 | `config validate`, `policy validate`, `policy explain` | A policy or the server config is not valid. |
 | 3 | `policy test` | A policy file is not valid, a case failed, or no case ran. |
-| 4 | `audit verify` | The hash chain is broken. |
+| 4 | `audit verify` | The hash chain is broken, a line is not JSON, or the anchor differs. |
 
 ## apikey hash
 
@@ -45,7 +45,7 @@ Validate the audit-log hash chain under `<audit-dir>`.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--anchor` | string |  | pin the genesis record's prior_hash, the hex sha256 of the seed |
+| `--anchor` | string |  | expected prior_hash of the first record: the hex SHA-256 of the genesis |
 | `--json` | bool |  | emit the report as JSON |
 
 See [Audit log](../security/audit.md).
@@ -66,7 +66,7 @@ The state directory must exist. The command creates `budget.db` there if the fil
 
 ## config validate
 
-Validate sluice server config and policy directory.
+Validate the server config and the policy directory.
 
 `sluice config validate <policy-dir> [flags]`
 
@@ -118,14 +118,14 @@ Explain the effective policy for a subject and target.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--claims` | strings |  | extra claims as key=value (comma-separated) |
-| `--email` | string |  | synthetic email claim |
+| `--email` | string |  | email of the subject |
 | `--groups` | strings |  | subject groups (comma-separated) |
-| `--issuer` | string |  | synthetic issuer (iss claim) |
-| `--json` | bool |  | emit ExplainResult as JSON |
+| `--issuer` | string |  | issuer (iss claim) |
+| `--json` | bool |  | print the result as JSON |
 | `--policies-dir` | string | `./policies.d` | directory containing policy files |
-| `--sql` | string |  | simulated SQL; parsed and explained as the live path would see it |
+| `--sql` | string |  | SQL statement to explain. The command does not run it |
 | `--table` | string |  | target table as catalog.schema.table |
-| `--user` | string |  | synthetic subject identifier (required) |
+| `--user` | string |  | subject id (required) |
 
 You need `--user` and at least one of `--table` and `--sql`. This call asks which policies apply when `alice` reads one table:
 
@@ -173,19 +173,19 @@ A directory that does not exist counts as empty, and the command prints OK. A po
 
 ## schema export
 
-Export JSON Schema for the policy DSL.
+Export the JSON Schema of a policy kind.
 
 `sluice schema export [flags]`
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--kind` | string |  | export only this Kind (e.g. SqlAccessPolicy) |
+| `--kind` | string |  | policy kind to export, for example SqlAccessPolicy |
 
 Without `--kind` the command ends with exit status 1. So does `--kind RowFilterPolicy`.
 
 ## serve
 
-Start the sluice server.
+Start the Sluice server.
 
 `sluice serve [flags]`
 
@@ -198,7 +198,7 @@ Starts the REST API. The MCP server and the admin API start when the server conf
 
 ## version
 
-Print sluice build identity.
+Print the build version.
 
 `sluice version [flags]`
 

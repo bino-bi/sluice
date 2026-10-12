@@ -32,7 +32,7 @@ A call without the token:
 --8<-- "examples/server-config/expected/03-admin-without-token.txt"
 ```
 
-What happened: `SLUICE_ADMIN__TOKEN` set `admin.token`, so the admin API refuses the call. The pepper comes from a file.
+What happened: `SLUICE_ADMIN__TOKEN` set `admin.token`, so the admin API refuses the call.
 
 ## How Sluice loads the config
 
@@ -65,7 +65,9 @@ There are no other providers. Sluice refuses a secret file that group or others 
 | `RelationshipPolicy` | `backend.tokenRef` |
 | Column mask arguments | `saltRef`, `keyRef`, `seed` |
 
-`admin.token` holds the token itself. Sluice caches a secret for 10 minutes or until a reload.
+`admin.token` holds the token itself.
+
+Sluice reads the secrets of the server config only at start. A [reload](hot-reload.md) reads the secrets of policy objects again. Until then, Sluice caches a mask or data source secret for 10 minutes.
 
 ## Validate before you start
 
@@ -96,7 +98,7 @@ An invalid file ends the command with status 3:
 - A wrong `--config` path is no error. Sluice then uses the defaults.
 - `--strict` checks only policy files for unknown fields.
 - `config validate` does not read secrets. A missing secret of the server config stops `sluice serve`.
-- Sluice keeps a final newline of a pepper or genesis file. Write these files without one.
+- Sluice keeps a final newline of a [pepper or genesis](../reference/glossary.md) file. Write these files without one.
 - `budget.failClosed` matters only at start. If the budget store does not open, `true` stops Sluice and `false` turns budgets off.
 
 ## See also

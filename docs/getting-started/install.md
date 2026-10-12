@@ -8,7 +8,7 @@ These docs describe the `main` branch. A release can behave differently. The API
 
 ## Container image
 
-The image runs on `linux/amd64` and `linux/arm64`. It is distroless and runs as a non-root user. The tag is the release version without the leading `v`. A pre-release never gets the tag `latest`. Set `VERSION` to the release that you want.
+The image runs on `linux/amd64` and `linux/arm64`. It has no shell and runs as a non-root user. The tag is the release version without the leading `v`. A pre-release never gets the tag `latest`. Set `VERSION` to the release that you want.
 
 ```bash
 --8<-- "examples/install/manual/image.sh:pull"
@@ -28,7 +28,7 @@ The [releases page](https://github.com/bino-bi/sluice/releases) has archives for
 --8<-- "examples/install/manual/archive.sh:download"
 ```
 
-A release also holds a signature for `checksums.txt`, a CycloneDX SBOM for each archive and SLSA provenance in `multiple.intoto.jsonl`. Verify the signature:
+A release also holds a signature for `checksums.txt` and, for each archive, a CycloneDX SBOM that lists its software parts. `multiple.intoto.jsonl` holds the SLSA provenance, a signed build record. Verify the signature:
 
 ```bash
 --8<-- "examples/install/manual/archive.sh:cosign"

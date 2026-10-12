@@ -12,6 +12,12 @@ Goal: start Sluice with TLS on the admin listener and check that it is ready.
 --8<-- "examples/deployment/server.yaml:admin"
 ```
 
+Start it:
+
+```bash
+--8<-- "examples/deployment/serve.sh:start"
+```
+
 Check readiness:
 
 ```bash
@@ -32,7 +38,7 @@ Call the admin API:
 --8<-- "examples/deployment/expected/04-admin-healthz.txt"
 ```
 
-What happened: the data source is healthy. The admin API answers only over TLS and with the token.
+What happened: the data source is healthy. The admin API answered over TLS, with the token.
 
 ## Ports and health endpoints
 
@@ -53,8 +59,16 @@ Keep the admin port off the public network.
 
 The REST endpoints need no login.
 
+```bash
+--8<-- "examples/deployment/steps/01-health.sh"
+```
+
 ```json
 --8<-- "examples/deployment/expected/01-health.txt"
+```
+
+```bash
+--8<-- "examples/deployment/steps/03-version.sh"
 ```
 
 ```json
@@ -82,11 +96,11 @@ Without a `tls` block, a listener serves plain HTTP and logs a warning. The exam
 |---|---|
 | `ghcr.io/bino-bi/sluice:<version>` | `linux/amd64` and `linux/arm64`. Use this tag. |
 | `<version>-amd64`, `<version>-arm64` | One architecture. |
-| `latest` | The newest stable release. Never a pre-release. |
+| `latest` | Published only by a stable release, never by a pre-release. |
 
 - The tag has no leading `v`: release `v0.1.0-rc.2` is tag `0.1.0-rc.2`.
 - The images are signed with cosign. See [Install](../getting-started/install.md).
-- The image has no shell and runs as user `65532` in `/var/lib/sluice`. This user must be able to read the mounted files.
+- The image has no shell and runs as user `65532` in `/var/lib/sluice`. This user must read the mounted files and write the audit log. For the compose file below, run `sudo chown -R 65532:65532 data` in `examples/deployment` first.
 - The image declares `8080`, `8081` and `9090`. Publish the ports that you configured.
 - `docker build -t sluice:dev .` builds your own image. `SLUICE_IMAGE=sluice:dev` makes the example compose files use it.
 - `--build-arg LIBDUCKDB_JOBS=8` raises the 4 jobs of its DuckDB compile.
@@ -100,6 +114,8 @@ Without a `tls` block, a listener serves plain HTTP and logs a warning. The exam
 ```ini
 --8<-- "examples/deployment/manual/sluice.service:2"
 ```
+
+## Signals and exit status
 
 | Signal | Effect |
 |---|---|
@@ -118,7 +134,7 @@ Most data source types need a DuckDB extension. Some builds download it to `~/.d
 | `linux_amd64` release, `make build-static` | `httpfs`, `excel`, `sqlite_scanner` | `postgres`, `mysql`, `motherduck` |
 | `linux_arm64` and `darwin` releases, `make build` | Nothing | Every type except `duckdb_file` |
 
-`make build-static` first runs `make libduckdb`, a slow compile. `scripts/fetch-duckdb-extensions.sh` fills the folder ahead of time.
+`make build-static` first runs `make libduckdb`, a slow compile. `scripts/fetch-duckdb-extensions.sh` fills the directory ahead of time.
 
 ## See also
 

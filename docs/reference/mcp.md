@@ -39,10 +39,10 @@ The answer holds the rows as text and as `structuredContent`.
 | `await_approval` | `approval_id` (required), `timeout_seconds` | The same, after a wait of at most 55 seconds |
 
 - `row_limit` works like `max_rows` in the [REST API](rest-api.md).
-- `table` is a name of the form `catalog.schema.table`.
+- `table` is a name of the form `catalog.schema.table`. A shorter name is matched as written, so a policy that names the schema does not match it.
 - `limit` is 500 by default and at most 1000. Pass `next_cursor` as `cursor` to get the next page. A `cursor` that is not valid gives `ERR_SYNTAX`.
 - `explain_access` runs no query.
-- The approval tools read the state of a held query. An unknown id gives `ERR_APPROVAL_EXPIRED`. See [Approvals](../policies/approvals.md).
+- The approval tools read the state of a held query. An unknown id gives `ERR_APPROVAL_EXPIRED`. Without `approval.publicBaseUrl` both tools give `ERR_INTERNAL`. See [Approvals](../policies/approvals.md).
 - A failed call has `isError: true`. Its text starts with the [error code](error-codes.md) and can name the policy and the query id.
 
 ## Transports
@@ -64,22 +64,22 @@ The answer holds the rows as text and as `structuredContent`.
 `list_tables` and `list_accessible_tables` show a table only when both are true:
 
 - A policy allows the subject to read the table.
-- Sluice has loaded the schema of the table. A query or `describe_table` on the table does that.
+- Sluice has loaded the schema of its data source. `describe_table` on one table that the subject can read does that. A query does it only for a table with a column mask.
 
-A fresh server lists nothing. A reload empties the list again.
+A fresh server lists nothing. A reload empties the list again. So call `describe_table` first:
 
 ```bash
---8<-- "examples/mcp-tools/steps/03-list-tables.sh"
+--8<-- "examples/mcp-tools/steps/06-describe-table.sh"
+```
+
+Then `list_tables` shows every table that the subject can read:
+
+```bash
+--8<-- "examples/mcp-tools/steps/07-list-tables-again.sh"
 ```
 
 ```text
---8<-- "examples/mcp-tools/expected/03-list-tables.txt"
-```
-
-After `describe_table` on `shop.main.products`, the same call returns:
-
-```text
---8<-- "examples/mcp-tools/expected/05-list-tables-again.txt"
+--8<-- "examples/mcp-tools/expected/07-list-tables-again.txt"
 ```
 
 `describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its loaded tables. A catalog without loaded tables stays visible.

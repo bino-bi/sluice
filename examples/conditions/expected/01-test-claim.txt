@@ -1,0 +1,5 @@
+PASS  the gold tier reads reports
+PASS  another tier is denied
+PASS  a subject without the claim is denied, with no error
+
+3 passed, 0 failed, 3 total

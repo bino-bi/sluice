@@ -12,9 +12,10 @@ Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `re
 | `GET` | `/v1/approvals/{id}` | API key or JWT | Returns the state of an approval to its owner. |
 | `GET`, `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. |
 | `GET`, `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. |
-| `GET` | `/v1/health` | none | Returns 200 while the server runs. |
+| `GET` | `/v1/health` | none | Returns 200 while the server runs. See [Deployment](../operations/deployment.md). |
 | `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
-| `GET` | `/v1/version` | none | Returns the version of the build. |
+| `GET` | `/v1/version` | none | Returns the version of the build. See [Deployment](../operations/deployment.md). |
+| `GET` | `/openapi.json` | none | Returns an OpenAPI document that names paths but describes no operation. |
 
 Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
 
@@ -39,7 +40,7 @@ The table has 4 rows, so `truncated` is `true`.
 | `sql` | string | The SQL statement. |
 | `max_rows` | int | Row limit. Default `limits.maxRows`, at most `limits.maxRowsCeiling`. |
 | `timeout_ms` | int | Query timeout. Default `limits.queryTimeout`, at most `limits.maxQueryTimeout`. |
-| `format` | string | `json` (default) or `csv`. Without it the `Accept` header decides. |
+| `format` | string | `json` (default) or `csv`. Without it the `Accept` header decides: `text/csv` gives CSV, `application/json` or `*/*` gives JSON. |
 | `meta` | object | String pairs for the audit record (`client_meta`). At most 16 pairs, 64-byte keys, 256-byte values. |
 
 ## Response fields
@@ -94,6 +95,8 @@ An error is a JSON object. [Error codes](error-codes.md) lists every code with i
 | `policy` | Policy that refused the query, if one did. |
 | `details` | Extra data, for example `approval_id`. |
 
+A 404 for an unknown path and a 405 are plain text. The approval routes answer 404 as `{"error": "not found"}`.
+
 ## Approval routes
 
 The routes exist when the server config sets `approval.publicBaseUrl`. Send the token as `?token=` or as an `X-Approval-Token` header. See [Approvals](../policies/approvals.md).
@@ -102,11 +105,15 @@ The routes exist when the server config sets `approval.publicBaseUrl`. Send the 
 |---|---|
 | Right token | 200, `note: recorded` |
 | Same decision again | 200, `note: already decided` |
-| Other decision later | 409 |
+| Other decision later | 409. After the query ran: 200, state `consumed` |
 | Unknown id or wrong token | 404 |
-| `HEAD`, or a header `Purpose: prefetch` | 204, no change |
+| `HEAD`, or a header `Purpose`, `Sec-Purpose` or `X-Moz` with the value `prefetch` or `preview` | 204, no change |
 
-`GET /v1/approvals/{id}` returns:
+`GET /v1/approvals/{id}` returns the state:
+
+```bash
+--8<-- "examples/approval-workflow/steps/07-status.sh"
+```
 
 ```json
 --8<-- "examples/approval-workflow/expected/07-status.txt"
@@ -114,11 +121,11 @@ The routes exist when the server config sets `approval.publicBaseUrl`. Send the 
 
 ## Limits
 
-- An unknown body field, `format` or `Accept` value gives 400 `ERR_SYNTAX`.
-- A body over `rest.maxBodyBytes` gives 413 `ERR_PAYLOAD_TOO_LARGE`.
-- A request longer than `rest.requestTimeout` gives 504 `ERR_TIMEOUT`.
+- A body field outside the Request fields table gives 400 `ERR_SYNTAX`, except `params`: Sluice ignores it.
+- A statement with a parameter such as `$1` gives 400 `ERR_UNSUPPORTED_SYNTAX`. [Request lifecycle](../architecture/request-lifecycle.md) lists the statement rules.
+- An unknown `format` or `Accept` value gives 400 `ERR_SYNTAX`. A request for Arrow output gives 400 `ERR_UNSUPPORTED_SYNTAX`.
+- A body over `rest.maxBodyBytes` gives 413 `ERR_PAYLOAD_TOO_LARGE`. A request longer than `rest.requestTimeout` gives 504 `ERR_TIMEOUT`.
 - `limits.globalRps` and `limits.perIpRps` limit `/v1/query` before authentication: 429 `ERR_RATE_LIMITED`.
-- A 404 or 405 answer is plain text, not JSON.
 
 ## See also
 

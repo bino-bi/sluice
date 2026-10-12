@@ -37,7 +37,7 @@ A [suite](testing.md) case shows the rewritten SQL:
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `spec.filter.predicate` | object | | The filter as a tree of column checks. |
-| `spec.filter.expression` | string | | The filter as a CEL expression. Set this or `predicate`, not both. |
+| `spec.filter.expression` | string | | The filter as a [CEL](conditions.md) expression. Set this or `predicate`, not both. |
 | `spec.combine` | string | `restrictive` | How this filter joins other filters on the same table. |
 
 Shared fields: [Policies](index.md). Selectors: [Matching](matching.md). Table names match in any letter case.
@@ -121,22 +121,24 @@ Ben is in both groups, `sales` and `leads`:
 
 ## SQL forms refused on filtered or masked tables
 
-On a table with a row filter or column mask, Sluice refuses these forms. A query with only a limit or sample may use the first three.
+On a table with a row filter or column mask, Sluice refuses these forms. A query with only a limit or sample may use the first four.
 
 | Form | Error code | Write instead |
 |---|---|---|
 | `EXPLAIN` | `ERR_UNSUPPORTED_SYNTAX` | Not available |
 | The text `sluice_src` | `ERR_UNSUPPORTED_SYNTAX` | Another name |
 | Schema before a column: `main.orders.id` | `ERR_UNSUPPORTED_SYNTAX` | `orders.id` |
+| A table without alias named like a DuckDB keyword: `FROM shop.main.show` | `ERR_UNSUPPORTED_SYNTAX` | `FROM shop.main.show s` |
 | `**` or `//` beside another arithmetic operator | `ERR_UNSUPPORTED_SYNTAX` | `pow(a, b)`, `divide(a, b)` |
-| A condition in parentheses before `IS NULL`, `IN`, `BETWEEN` | `ERR_UNSUPPORTED_SYNTAX` | `coalesce(a OR b) IS NULL` |
+| A condition in parentheses before `IS NULL`, `IN`, `BETWEEN`, `= ANY` | `ERR_UNSUPPORTED_SYNTAX` | `coalesce(a OR b) IS NULL` |
 | Lambda with a comparison: `x -> x > 1` | `ERR_UNSUPPORTED_SYNTAX` | `x -> (x > 1)` |
 | `->>` beside `AND`, `OR`, `NOT` | `ERR_UNSUPPORTED_SYNTAX` | `(j ->> 'a') = '1'` |
 | `EXTRACT(days FROM d)` | `ERR_UNSUPPORTED_SYNTAX` | `EXTRACT(day FROM d)` |
 | `ARRAY[[1, 2], [3, 4]]` | `ERR_UNSUPPORTED_SYNTAX` | `ARRAY[ARRAY[1, 2], ARRAY[3, 4]]` |
 | Quoted DuckDB keyword: `WITH "at" AS` | `ERR_UNSUPPORTED_SYNTAX` | Another name |
+| PostgreSQL keyword as a named argument: `struct_pack("default" := id)` | `ERR_UNSUPPORTED_SYNTAX` | Another name |
 | Bare keyword alias: `SELECT 1 at` | `ERR_SYNTAX` | `SELECT 1 AS "at"` |
-| `0x1f`, `0o17`, `0b11` | `ERR_SYNTAX` | The decimal number |
+| `0x1f`, `0o17`, `0b11` | `ERR_SYNTAX`. At the end of a select item: `ERR_UNSUPPORTED_SYNTAX` | The decimal number |
 | `INTERVAL '1 02' DAY TO HOUR` | `ERR_SYNTAX` | `INTERVAL '1 day 2 hours'` |
 | `E'\u0041'`, `U&'\0041'` | `ERR_SYNTAX` | The character itself |
 
@@ -147,6 +149,8 @@ On a table with a row filter or column mask, Sluice refuses these forms. A query
 ```json
 --8<-- "examples/row-filters/expected/03-refused-form.txt"
 ```
+
+On such a table, an alias comes back in lower case when the query also spells the word another way. `EXTRACT(MONTH FROM d) AS Month` returns `month`. Quote the alias to keep its spelling: `AS "Month"`.
 
 ## Limits
 

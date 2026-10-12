@@ -2,7 +2,7 @@
 
 # Audit log
 
-Sluice writes an audit record for every query decision. `sluice audit verify` checks the hash chain of the records.
+Sluice writes an audit record for every query decision. `sluice audit verify` checks the [hash chain](../reference/glossary.md) of the records.
 
 ## Example
 
@@ -61,12 +61,13 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `sql_fingerprint`, `rewritten_fingerprint` | Hashes of the sent and the rewritten SQL |
 | `tables`, `catalogs` | What the query reads |
 | `policies_applied` | The policies behind the decision |
-| `decision`, `error_code`, `message` | `allow`, `deny`, `reject` or `error`, with code and text |
-| `row_count`, `truncated` | Result size, on `query-result` only |
+| `decision`, `message` | `allow`, `deny`, `reject` or `error`, with the reason |
+| `error_code` | Not on a policy `deny` or `reject`. A refused write is `error` with `ACL_REJECTED` |
+| `row_count`, `truncated` | Result size, on `query-result` only. Left out when 0 or `false` |
 | `duration_ms` | Time since the request started |
 | `client_meta` | The `meta` pairs of the request |
 | `extras` | Other data, for example `approval_id` |
-| `sluice_version` | The build |
+| `sluice_version`, `parser_version` | The build. The parser, on `genesis` only |
 | `prior_hash`, `hash` | The hash chain |
 
 ## Event types
@@ -81,7 +82,21 @@ What happened: the changed record in line 4 no longer matches its hash.
 
 ## Hash chain
 
-Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the record before it. The first `prior_hash` is the SHA-256 of the genesis in `audit.file.genesis`. Pass it to verify as `--anchor`.
+Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the record before it. The first `prior_hash` is the [anchor](../reference/glossary.md): the SHA-256 of the [genesis](../reference/glossary.md) in `audit.file.genesis`. Pass it to verify as `--anchor`:
+
+```bash
+--8<-- "examples/audit-log/steps/08-verify-anchor.sh"
+```
+
+```text
+--8<-- "examples/audit-log/expected/08-verify-anchor.txt"
+```
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Chain intact |
+| 1 | Directory or file not readable |
+| 4 | Chain broken, a line that is not JSON, or another anchor |
 
 ## Sinks
 
@@ -109,7 +124,7 @@ Syslog and S3 get copies. Their failures never stop a query. See [Configuration]
 ## Limits
 
 - No record for a failed login, a reload, other admin calls, or a request over `limits.globalRps`, `limits.perIpRps` or `limits.maxConcurrent`.
-- Verify does not detect that the newest records are missing.
+- The hash has no secret key. Verify does not detect missing newest records, or a change when the later hashes are computed again. Store each `last_hash` on another host. A changed log no longer contains it.
 - A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
 - On shutdown, Sluice waits up to 10 seconds to write queued records.

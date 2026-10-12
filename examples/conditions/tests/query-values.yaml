@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Each case lists the rules of query-values that fire. A rule that is missing did not see its part of the query.
+cases:
+  - name: a plain SELECT shows every part
+    identity: { subject: pia, groups: [probes] }
+    sql: "WITH t AS (SELECT 1 AS id) SELECT * FROM shop.main.customers c JOIN t ON t.id = c.id ORDER BY 1 LIMIT 5"
+    expect:
+      outcome: reject
+      rejections:
+        - query-values/cte
+        - query-values/star
+        - query-values/joins
+        - query-values/order-by
+        - query-values/limit
+        - query-values/customers
+
+  - name: a JOIN keyword counts as a join
+    identity: { subject: pia, groups: [probes] }
+    sql: "SELECT o.id FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id"
+    expect:
+      outcome: reject
+      rejections: ["query-values/joins", "query-values/customers"]
+
+  - name: a comma join counts as 0
+    identity: { subject: pia, groups: [probes] }
+    sql: "SELECT o.id FROM shop.main.orders o, shop.main.customers c WHERE c.id = o.customer_id"
+    expect:
+      outcome: reject
+      rejections: ["query-values/customers"]
+
+  - name: a table without catalog and schema keeps the empty parts
+    identity: { subject: pia, groups: [probes] }
+    sql: "SELECT id FROM Orders"
+    expect:
+      outcome: reject
+      rejections: ["query-values/bare-orders"]
+
+  - name: in a union the values describe only the first SELECT
+    identity: { subject: pia, groups: [probes] }
+    sql: "SELECT id FROM shop.main.orders UNION ALL SELECT * FROM shop.main.customers ORDER BY 1 LIMIT 5"
+    expect:
+      outcome: reject
+      rejections: ["query-values/union", "query-values/customers"]
+
+  - name: a WITH before a union is not seen
+    identity: { subject: pia, groups: [probes] }
+    sql: "WITH t AS (SELECT id FROM shop.main.customers) SELECT id FROM shop.main.orders UNION ALL SELECT id FROM t"
+    expect:
+      outcome: reject
+      rejections: ["query-values/union", "query-values/customers"]
+
+  - name: a subquery is not seen, but its table is listed
+    identity: { subject: pia, groups: [probes] }
+    sql: "SELECT q.id FROM (SELECT * FROM shop.main.customers ORDER BY id LIMIT 5) q"
+    expect:
+      outcome: reject
+      rejections: ["query-values/customers"]

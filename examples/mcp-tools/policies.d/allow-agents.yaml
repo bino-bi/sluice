@@ -13,4 +13,4 @@ spec:
         resources:
           catalogs: ["shop"]
           schemas: ["main"]
-          tables: ["products"]
+          tables: ["products", "orders"]

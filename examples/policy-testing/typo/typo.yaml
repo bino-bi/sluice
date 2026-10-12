@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Both statements have a typo: SELEC.
+cases:
+  - name: a deny case with only an outcome passes
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELEC id FROM shop.main.orders"
+    expect:
+      outcome: deny
+
+  - name: with errorCode the same case fails
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELEC id FROM shop.main.orders"
+    expect:
+      outcome: deny
+      errorCode: ACL_DENIED

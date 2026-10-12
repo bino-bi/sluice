@@ -2,7 +2,7 @@
 
 # Policy engines
 
-The policy engine decides on each query: allow, deny or reject, and which row filters and column masks apply. You select it with `policies.engine` in the server config.
+The engine decides on each query: allow, deny or reject, and which row filters and column masks apply. You select it with `policies.engine` in the server config.
 
 | `policies.engine` | Decides with |
 |---|---|
@@ -16,10 +16,14 @@ Sluice checks these names at start. `sluice config validate` does not check them
 
 ## Example
 
-Goal: the YAML policies allow two tables. A Rego module denies a query that reads both.
+Goal: a YAML policy allows two tables. A Rego module denies a query that reads both.
 
 ```yaml
 --8<-- "examples/policy-engines/server.yaml:engine"
+```
+
+```yaml
+--8<-- "examples/policy-engines/policies.d/allow-analytics.yaml:2"
 ```
 
 ```rego
@@ -27,6 +31,18 @@ Goal: the YAML policies allow two tables. A Rego module denies a query that read
 ```
 
 Sluice reads the rule `main` of the package `sluice`. Change this with `policies.opa.query`.
+
+A query on one table runs:
+
+```bash
+--8<-- "examples/policy-engines/steps/01-one-table.sh"
+```
+
+```json
+--8<-- "examples/policy-engines/expected/01-one-table.txt"
+```
+
+A join of both tables is denied:
 
 ```bash
 --8<-- "examples/policy-engines/steps/02-rego-denies.sh"
@@ -36,7 +52,7 @@ Sluice reads the rule `main` of the package `sluice`. Change this with `policies
 --8<-- "examples/policy-engines/expected/02-rego-denies.txt"
 ```
 
-What happened: the YAML policies allow both tables, but a deny from any member wins. For a query on one table the module abstains, and the YAML policies decide alone.
+What happened: for one table the module abstains (gives no opinion), so the YAML policy decides alone. For the join the module denies, and a deny from any member wins.
 
 ## What each engine can return
 
@@ -54,7 +70,7 @@ A Rego module that returns no result denies the query. An unknown field in its r
 
 ## How `composite` merges
 
-1. An error in one member fails the request with `ERR_INTERNAL`. An example is an OpenFGA server that does not answer.
+1. An error in one member fails the request, mostly with `ERR_INTERNAL`. An OpenFGA server that does not answer within the policy's `backend.timeout` gives `ERR_TIMEOUT`.
 2. A deny from any member wins.
 3. Then a reject from any member wins.
 4. One member must allow. An allow from Rego is enough, also for a table that no YAML policy allows. If all members abstain, Sluice denies the query.

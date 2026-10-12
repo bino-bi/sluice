@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: CC-BY-4.0
 # Runs the released image with the files of this example.
-# The checks do not run this file.
+# This file is not run by make docs-check.
 services:
   sluice:
     image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
@@ -14,7 +14,7 @@ services:
     volumes:
       - ../server.yaml:/etc/sluice/server.yaml:ro
       - ../policies.d:/etc/sluice/policies.d:ro
-      # Database, certificate and audit log. User 65532 writes the audit log here.
+      # User 65532 must own this directory: it reads the TLS key and writes the audit log.
       - ../data:/etc/sluice/data
     working_dir: /etc/sluice
     command: ["serve", "--config=/etc/sluice/server.yaml"]

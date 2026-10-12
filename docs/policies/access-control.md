@@ -32,24 +32,26 @@ A query on another table:
 --8<-- "examples/access-control/expected/02-other-table.txt"
 ```
 
-The allow names only `orders`. No policy allows `customers`, so Sluice denies the second query.
+**What happened:** the allow names only `orders`. No policy allows `customers`, so Sluice denies the second query.
 
 ## Fields
 
-| Field | Default | Meaning |
-|---|---|---|
-| `effect` | required | `allow` or `deny`, in lower case. |
-| `match` | required | Subjects and tables. See [Matching](matching.md). |
-| `message` | `access denied` | For a deny: the error message. |
-| `errorCode` | `ACL_DENIED` | For a deny: the error code. |
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `effect` | string | required | `allow` or `deny`, in lower case. |
+| `match` | object | required | Subjects and tables. See [Matching](matching.md). |
+| `message` | string | `access denied` | For a deny: the error message. |
+| `errorCode` | string | `ACL_DENIED` | For a deny: the error code. |
 
 `exclude`, `conditions` and `enforcementMode` work as on [every policy](index.md).
 
-`resources.actions` limits a clause to statement types: `SELECT`, `INSERT`, `UPDATE` or `DELETE`, in upper case. `EXPLAIN SELECT` counts as `SELECT`.
+`resources.actions` limits a clause to statement types: `SELECT`, `INSERT`, `UPDATE` or `DELETE`, in upper case. `EXPLAIN SELECT` counts as `SELECT`. `SHOW` has no action: a clause with `actions` never matches it.
 
 ## More examples
 
 ### Every table needs an allow
+
+An analyst joins `orders` with `customers`.
 
 ```bash
 --8<-- "examples/access-control/steps/03-join.sh"
@@ -87,6 +89,8 @@ A deny on one table denies the whole query. If several denies match, the one wit
 
 ### Actions
 
+The admin allow lists `SELECT`, the analyst allow no action.
+
 ```yaml
 --8<-- "examples/access-control/tests/access.yaml:actions"
 ```
@@ -102,8 +106,8 @@ Sluice checks denies first. A denied query gets no reject rule, row filter, colu
 ## Limits
 
 - Sluice runs only read statements. A write gets `ACL_REJECTED`, also when an allow lists its action. See [Request lifecycle](../architecture/request-lifecycle.md).
-- A statement without a table, such as `SELECT 1`, needs an allow clause that names no table.
-- With another [policy engine](../architecture/policy-engines.md), a query without a matching allow can still run.
+- A statement without a table, such as `SELECT 1`, needs an allow clause without `catalogs`, `schemas`, `tables` and `tags`.
+- With another [engine](../architecture/policy-engines.md), a query without a matching allow can still run.
 
 ## See also
 

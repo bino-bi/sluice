@@ -30,7 +30,7 @@ The fourth case comes from a second suite, shown below.
 
 ## Suite format
 
-A suite is a YAML file without `apiVersion`.
+A suite is a YAML file without `apiVersion`. The runner ignores unknown keys: a typo such as `outcom` skips the check.
 
 | Key | Meaning |
 |---|---|
@@ -48,12 +48,12 @@ A suite is a YAML file without `apiVersion`.
 | `denyPolicy` | Name of the deny policy. |
 | `rejections` | Reject rules that fired, as `policy/rule`. |
 | `filters` | Tables with a row filter, as `catalog.schema.table` in lower case. |
-| `masks` | Every mask on the tables read, as `table.column=type`. |
+| `masks` | Every mask on the tables read, as `table.column=type`. The column is the policy's pattern, such as `phone_*`. |
 | `postMasks` | The masks that run after the query, same form. |
-| `applied` | Every enforcing policy that matched, as `Kind/Name`. |
+| `applied` | Every policy in `Enforce` mode that matched, as `Kind/Name`. |
 | `rewrittenSql` | The whole rewritten SQL. |
 | `rewrittenSqlContains` | Parts of the rewritten SQL. |
-| `errorCode` | The error that must happen: `ACL_DENIED` for a deny, the rule code for a reject, else the rewrite error. |
+| `errorCode` | The error that must happen: `ACL_DENIED` for a deny, the rule code for a reject, else the rewrite error. The runner ignores the `errorCode` of a deny policy. |
 
 Lists compare as sets, so the order is free. SQL checks ignore white space. An `allow` case fails when the rewrite fails, unless it sets `errorCode`.
 
@@ -89,6 +89,10 @@ The second case of this suite is wrong.
 
 With `--json`:
 
+```bash
+--8<-- "examples/policy-testing/steps/02-json.sh"
+```
+
 ```json
 --8<-- "examples/policy-testing/expected/02-json.txt"
 ```
@@ -97,7 +101,7 @@ With `--json`:
 
 | Flag | Meaning |
 |---|---|
-| `--tests <path>` | Suite file or folder, without subfolders. Default: `<policy-dir>/tests`. |
+| `--tests <path>` | Suite file or directory, without subdirectories. Default: `<policy-dir>/tests`. |
 | `--strict` | Refuse unknown fields in policies. |
 | `--json` | Print the report as JSON. |
 
@@ -107,14 +111,13 @@ With `--json`:
 | 1 | Bad flag, missing tests path, broken suite file, or a policy compile error such as an unknown tag. |
 | 3 | A policy with an invalid field, a failing case, or no case at all. |
 
-## What the test runner does not check
+## Limits
 
 - Only the YAML engine runs. OPA and `RelationshipPolicy` do not.
 - No SQL runs. A query on a missing column still passes.
-- Approvals. A case cannot expect a held query.
-- Row limits, timeouts, rate limits and budgets.
-- Logins: `subjects.apiKeys` never matches and `subject.auth_method` is empty.
-- Unknown keys in a suite. A typo such as `outcom` skips the check.
+- SQL that does not parse reads no table. A `deny` case with a typo then passes, unless it sets `errorCode`.
+- Not checked: approvals, timeouts, rate limits, budgets and the server row limit (`limits.maxRows`, `max_rows`). A `QueryRewritePolicy` limit shows in `rewrittenSql`.
+- No authentication method: `subjects.apiKeys` never matches and `subject.auth_method` is empty.
 
 ## See also
 

@@ -20,6 +20,15 @@ cases:
     sql: "SELECT orders.id FROM shop.main.orders"
     expect: { outcome: allow, rewrittenSqlContains: ["orders.id"] }
 
+  - name: a table without alias whose name is a DuckDB keyword
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.show"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: the same table with an alias
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.show s"
+    expect: { outcome: allow, rewrittenSqlContains: ["FROM shop.main.show sluice_src"] }
+
   - name: power next to another operator
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, 2 * 3 ** 2 AS x FROM shop.main.orders"
@@ -44,6 +53,10 @@ cases:
   - name: a comparison in parentheses before BETWEEN
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu') BETWEEN false AND true"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a comparison in parentheses before = ANY
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu') = ANY (ARRAY[true])"
     expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
   - name: coalesce around the condition
     identity: { subject: ana, groups: [sales] }
@@ -91,10 +104,23 @@ cases:
     sql: "WITH \"at\" AS (SELECT id FROM shop.main.orders) SELECT id FROM \"at\""
     expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
 
+  - name: a PostgreSQL keyword as a named argument
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, struct_pack(\"default\" := id) AS s FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: another name for the argument
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, struct_pack(fallback := id) AS s FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["fallback := id"] }
+
   - name: a hex number
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, 0x1f AS x FROM shop.main.orders"
     expect: { errorCode: ERR_SYNTAX }
+  - name: a hex number at the end of a select item
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 0x1f FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
   - name: an octal number
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, 0o17 AS x FROM shop.main.orders"

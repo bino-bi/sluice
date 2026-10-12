@@ -3,6 +3,8 @@
 
 Four `RowFilterPolicy` objects on one `orders` table: a template value, nested checks, a CEL expression and a permissive filter.
 
+`policies.d/table-show.yaml` covers a table `show` that is not in the sample data. Only `tests/refused-forms.yaml` reads it.
+
 ## Run
 
 ```bash

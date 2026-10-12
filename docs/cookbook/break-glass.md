@@ -2,7 +2,7 @@
 
 # Break-glass access
 
-Analysts read `email` masked. A member of the `sre` group reads the real value, and the audit log shows who did.
+Break-glass access lets chosen operators read a masked column unmasked. Analysts read `email` masked. A member of the operator group `sre` reads the real value, and the audit log shows who did.
 
 ## Example
 

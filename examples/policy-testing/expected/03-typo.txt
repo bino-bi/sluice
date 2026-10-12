@@ -1,0 +1,6 @@
+PASS  a deny case with only an outcome passes
+FAIL  with errorCode the same case fails
+        rewrite requested but SQL did not parse: parser: syntax error: syntax error at or near "SELEC"
+
+1 passed, 1 failed, 2 total
+[exit status 3]

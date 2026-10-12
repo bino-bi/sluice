@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CC-BY-4.0
 schema:
   shop.main.customers: [id, name, email]
+  shop.main.suppliers: [id, phone_home, phone_work]
 
 cases:
   # --8<-- [start:allow]
@@ -51,3 +52,16 @@ cases:
       outcome: allow
       errorCode: ERR_UNSUPPORTED_SYNTAX
   # --8<-- [end:deny]
+
+  - name: a mask is listed with the column pattern of its policy
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id, phone_home FROM shop.main.suppliers"
+    expect:
+      outcome: allow
+      masks: ["shop.main.suppliers.phone_*=null"]
+
+  - name: SQL that does not parse counts as a deny
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELEC id FROM shop.main.orders"
+    expect:
+      outcome: deny

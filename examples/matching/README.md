@@ -8,11 +8,13 @@ Policies and suites that show how `match` and `exclude` work. This example needs
 ```bash
 cd examples/matching
 sluice policy test policies.d --tests tests
+bash steps/01-test-any.sh
 ```
 
 | Suite | Shows |
 |---|---|
-| `tests/any-all.yaml` | `any` and `all`. |
+| `tests/any.yaml` | `any`. The step `steps/01-test-any.sh` runs only this suite. |
+| `tests/all.yaml` | `all`. |
 | `tests/subjects.yaml` | Groups, roles and every `jwtClaims` operator. |
 | `tests/resources.yaml` | Catalogs, schemas, tables and wildcards. |
 | `tests/exclude.yaml` | `exclude` for each policy kind. |

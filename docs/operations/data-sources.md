@@ -26,6 +26,8 @@ Goal: attach a SQLite file and a DuckDB file, then join them in one query.
 
 What happened: `metadata.name` became the catalog name, so the tables are `shop.main.orders` and `ref.main.countries`. Sluice attached both files at start.
 
+`limits.disableCrossCatalog: true` rejects a query on several catalogs with `ACL_REJECTED`. See [Cross-source joins](../cookbook/cross-source-joins.md).
+
 ## Types
 
 | `type` | Reads | Fields | Credentials |
@@ -38,7 +40,7 @@ What happened: `metadata.name` became the catalog name, so the tables are `shop.
 | `http` | Files behind HTTP URLs | `urls`, `format` | `headersRef`: JSON object of headers |
 | `motherduck` | A MotherDuck database | `database` | `tokenRef`: the token |
 
-Fields that end in `Ref` take a [secret reference](server-config.md). The checks validate the files below but connect to no service.
+Fields that end in `Ref` take a [secret reference](server-config.md). The files below are validated, but not tested against a real service.
 
 === "postgres"
 
@@ -72,17 +74,9 @@ Fields that end in `Ref` take a [secret reference](server-config.md). The checks
 
 - `postgres`, `mysql`: the URL needs a user and a database. The default ports are 5432 and 3306. `mysql` also accepts `mariadb://`.
 - `s3`, `http`: each path or URL becomes one view in the schema `main`. Sluice reads nothing else.
-- `s3`, `http`: the file extension selects the format. Without one, set `format` to `parquet`, `csv`, `json` or `xlsx`.
-- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every folder below. `endpoint` names an S3-compatible store.
+- `s3`, `http`: the extension selects the format: `.parquet`, `.csv`, `.json`, `.ndjson`, `.jsonl` or `.xlsx`. `format` sets `parquet`, `csv`, `json` or `xlsx` for every path.
+- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. `endpoint` names an S3-compatible store.
 - `http`: no wildcards. Sluice sends the headers only to the hosts of `urls`.
-
-## Always true
-
-- Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
-- Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
-- A source that Sluice cannot attach stops the start. `datasources.failFast: false` only skips a source with a missing file or a bad URL.
-- One query can join tables of several catalogs. See [Cross-source joins](../cookbook/cross-source-joins.md).
-- `limits.disableCrossCatalog: true` rejects such a query with `ACL_REJECTED`.
 
 ## Check the files
 
@@ -96,6 +90,10 @@ Fields that end in `Ref` take a [secret reference](server-config.md). The checks
 
 The command only reads the files. An invalid file ends it with status 1:
 
+```bash
+--8<-- "examples/data-sources/steps/03-check-invalid.sh"
+```
+
 ```text
 --8<-- "examples/data-sources/expected/03-check-invalid.txt"
 ```
@@ -104,9 +102,11 @@ A running server tests every source at start and then every 30 seconds. `GET /v1
 
 ## Limits
 
-- `datasource check` and `config validate` miss some errors. An `s3` source without `region` or a `motherduck` source without `tokenRef` stops `sluice serve`.
-- A `sqlite` or `duckdb_file` file must exist at start.
-- The health test does not see a file that you remove later. Queries then fail with `ERR_INTERNAL`.
+- Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
+- Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
+- A source that fails a check of its type stops the start. Examples: a missing `sqlite` or `duckdb_file` file, `s3` without `region`, `motherduck` without `tokenRef`. `datasource check` and `config validate` miss these errors.
+- `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not list it. A broken `duckdb_file` file still stops the start.
+- The health test does not read a `sqlite` file. A file that you remove later, or that is no database, stays healthy. Queries then fail with `ERR_INTERNAL`.
 
 ## See also
 

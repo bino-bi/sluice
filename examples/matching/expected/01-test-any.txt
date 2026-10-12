@@ -1,0 +1,5 @@
+PASS  an analyst matches the first clause
+PASS  a support agent matches the second clause
+PASS  a support agent matches no clause for orders
+
+3 passed, 0 failed, 3 total

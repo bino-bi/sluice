@@ -6,7 +6,7 @@ Two tenants share one database. One row filter limits each API key to the rows o
 
 ## Example
 
-Start the server with `examples/multi-tenant/serve.sh`. Each tenant has a subject binding. For API keys, the `claims` of a binding are fixed values.
+Start the server with `examples/multi-tenant/serve.sh`. Each tenant has a [subject binding](../reference/glossary.md). For API keys, the `claims` of a binding are fixed values.
 
 ```yaml
 --8<-- "examples/multi-tenant/policies.d/bindings-tenants.yaml:2"

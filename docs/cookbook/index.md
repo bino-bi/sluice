@@ -10,7 +10,7 @@ Each recipe is a complete setup under `examples/` that you can run.
 | [PII masking](pii-masking.md) | Three columns come back masked. | `ColumnMaskPolicy` |
 | [Break-glass access](break-glass.md) | One group sees the real values. | `ColumnMaskPolicy` |
 | [Approval workflow](approval-workflow.md) | A person must accept a query. | `ApprovalPolicy` |
-| [Cross-source joins](cross-source-joins.md) | One query joins two data sources. | `SqlAccessPolicy`, `ColumnMaskPolicy` |
+| [Cross-source joins](cross-source-joins.md) | One query joins two data sources. | `ColumnMaskPolicy` |
 | [MCP agents](mcp-agents.md) | An agent queries under a row limit. | `QueryRewritePolicy` |
 
 Every recipe also has a `SqlAccessPolicy`. Without an allow, Sluice denies every query.
@@ -21,4 +21,4 @@ Every recipe also has a `SqlAccessPolicy`. Without an allow, Sluice denies every
 2. Start the server with `examples/<name>/serve.sh`.
 3. From the example folder, run the files in `steps/` in order.
 
-`expected/` holds the real output of each step.
+`expected/` holds the real output of each step. The recipes show it indented, with placeholders such as `<query-id>` for values that change.

@@ -45,7 +45,7 @@ Every response has an `X-Admin-Request-Id` header.
 | Parameter | Meaning |
 |---|---|
 | `user` | Subject id. Required. |
-| `table` | Table name with one, two or three parts. Required. |
+| `table` | Table as `catalog.schema.table`. Required. A shorter name is matched as written, so a policy that names the schema does not match it. |
 | `issuer` | Issuer of the subject. |
 | `groups` | Groups, separated by commas. |
 | `claims` | One `key=value` pair. Repeat the parameter for more. |

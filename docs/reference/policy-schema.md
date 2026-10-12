@@ -9,7 +9,7 @@ A policy object is a YAML document with these fields.
 |---|---|---|---|
 | `apiVersion` | string | yes | `sluice.bino.bi/v1alpha1`, `sluice.bino.bi/v1beta1`. See [Kinds](#kinds). |
 | `kind` | string | yes | See [Kinds](#kinds). |
-| `metadata.name` | string | yes | Lower-case letters, digits and `-`. Unique per kind. |
+| `metadata.name` | string | yes | Lower-case letters, digits and `-`. Starts and ends with a letter or digit. Unique per kind. |
 | `metadata.labels` | map |  | Free keys and values. Sluice ignores them. |
 | `metadata.annotations` | map |  | Free keys and values. Sluice ignores them. |
 | `metadata.priority` | int |  | 0 to 1000. Higher comes first. |
@@ -22,8 +22,8 @@ A policy object is a YAML document with these fields.
 | [`SqlAccessPolicy`](#sqlaccesspolicy) | `sluice.bino.bi/v1alpha1` | [Access control](../policies/access-control.md) |
 | [`RowFilterPolicy`](#rowfilterpolicy) | `sluice.bino.bi/v1alpha1` | [Row filters](../policies/row-filters.md) |
 | [`ColumnMaskPolicy`](#columnmaskpolicy) | `sluice.bino.bi/v1alpha1` | [Column masks](../policies/column-masks.md) |
-| [`QueryRejectPolicy`](#queryrejectpolicy) | `sluice.bino.bi/v1alpha1` | [Guardrails](../policies/guardrails.md) |
-| [`QueryRewritePolicy`](#queryrewritepolicy) | `sluice.bino.bi/v1alpha1` | [Guardrails](../policies/guardrails.md) |
+| [`QueryRejectPolicy`](#queryrejectpolicy) | `sluice.bino.bi/v1alpha1` | [Rejects and rewrites](../policies/guardrails.md) |
+| [`QueryRewritePolicy`](#queryrewritepolicy) | `sluice.bino.bi/v1alpha1` | [Rejects and rewrites](../policies/guardrails.md) |
 | [`ApprovalPolicy`](#approvalpolicy) | `sluice.bino.bi/v1alpha1` | [Approvals](../policies/approvals.md) |
 | [`DataSource`](#datasource) | `sluice.bino.bi/v1alpha1` | [Data sources](../operations/data-sources.md) |
 | [`SubjectBinding`](#subjectbinding) | `sluice.bino.bi/v1alpha1` | [Subjects](../policies/subjects.md) |
@@ -61,7 +61,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `subjects.jwtClaims[].pattern` | string |  | Regular expression for `Matches`. |
 | `subjects.groups` | []string |  | Group names. One is enough. |
 | `subjects.apiKeys` | []string |  | Subject ids of API key subjects. |
-| `subjects.roles` | []string |  | Values of the `roles` claim. |
+| `subjects.roles` | []string |  | Values of the `roles` claim. Without the claim, Sluice uses the groups. |
 | `resources` | [ResourceSelector](#resourceselector) |  | Tables to match. |
 
 ### ResourceSelector

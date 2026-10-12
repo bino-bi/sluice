@@ -33,3 +33,20 @@ spec:
     type: fake
     args:
       fakeType: name
+---
+# The column is a pattern. A suite writes the pattern, not the column name.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-phones
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["suppliers"]
+          columns: ["phone_*"]
+  mask:
+    type: "null"

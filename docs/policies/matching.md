@@ -12,24 +12,34 @@ Analysts read `orders`. Support agents read `tickets`.
 --8<-- "examples/matching/policies.d/allow-reporting.yaml:2"
 ```
 
+The [suite](testing.md):
+
 ```yaml
---8<-- "examples/matching/tests/any-all.yaml:any"
+--8<-- "examples/matching/tests/any.yaml:2"
 ```
 
-Under `any`, one matching clause is enough. In a clause, `subjects` and `resources` must both match.
+```bash
+--8<-- "examples/matching/steps/01-test-any.sh"
+```
+
+```text
+--8<-- "examples/matching/expected/01-test-any.txt"
+```
+
+**What happened:** under `any`, one matching clause is enough. In a clause, `subjects` and `resources` must both match.
 
 ## Fields
 
-| Field | Meaning |
-|---|---|
-| `any` | Clauses. One must match. |
-| `all` | Clauses. All must match. |
-| `subjects` | In a clause. If missing, every subject matches. |
-| `resources` | In a clause. If missing, every table matches. |
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `any` | list | none | Clauses. One must match. |
+| `all` | list | none | Clauses. All must match. |
+| `subjects` | object | every subject | The subjects of a clause. |
+| `resources` | object | every table | The tables of a clause. |
 
 With both `any` and `all`, one `any` clause or all `all` clauses must match.
 
-A selector works per table or per query:
+A [selector](../reference/glossary.md) works per table or per query:
 
 | Kind | `match` | `exclude` |
 |---|---|---|
@@ -88,10 +98,12 @@ A subject needs both groups.
 ```
 
 ```yaml
---8<-- "examples/matching/tests/any-all.yaml:all"
+--8<-- "examples/matching/tests/all.yaml:all"
 ```
 
 ### Roles and claims
+
+Auditors from Germany or Austria read `audit_notes`.
 
 ```yaml
 --8<-- "examples/matching/policies.d/allow-auditors.yaml:2"
@@ -103,6 +115,8 @@ A subject needs both groups.
 
 ### Wildcards
 
+Analysts read some `lake` tables.
+
 ```yaml
 --8<-- "examples/matching/policies.d/allow-lake.yaml:2"
 ```
@@ -112,6 +126,8 @@ A subject needs both groups.
 ```
 
 ### Exclude a group
+
+The `sre` group reads `email` without the mask.
 
 ```yaml
 --8<-- "examples/matching/policies.d/mask-email.yaml:2"
@@ -123,7 +139,7 @@ A subject needs both groups.
 
 ### Which policy wins
 
-Sluice orders policies by `metadata.priority`, highest first, then by name. One mask applies per column. At equal priority, the mask with more names without a wildcard wins. Other kinds have no such rule. This mask has the priority of `mask-email`:
+One mask applies per column: the one with the highest [priority](index.md). At equal priority, the mask with more names without a wildcard wins. Other kinds have no such rule. This mask has the priority of `mask-email`:
 
 ```yaml
 --8<-- "examples/matching/policies.d/mask-email-customers.yaml:2"

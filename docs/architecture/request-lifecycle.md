@@ -33,13 +33,15 @@ sequenceDiagram
     S->>A: completion record + budget usage (at close)
 ```
 
+Diagram numbers count messages, not stages.
+
 ## Stages
 
 1. **Transport limits and login.** The REST API checks its rate limits. Sluice maps the API key or token to a subject.
 2. **Admission.** Sluice checks the concurrency limit, the subject's [rate limit and budget](../policies/subjects.md) and the SQL size. It caps the requested timeout and row count.
 3. **Parse.** Sluice parses the statement with the PostgreSQL grammar and finds its tables.
 4. **Statement checks.** Sluice checks function calls and table names.
-5. **Policy.** The [policy engine](policy-engines.md) allows, denies or rejects the query.
+5. **Policy.** The [engine](policy-engines.md) allows, denies or rejects the query.
 6. **Approval.** An [approval policy](../policies/approvals.md) can hold the query until a person accepts it.
 7. **Rewrite.** Sluice refuses writes and DDL. It adds [row filters](../policies/row-filters.md), [column masks](../policies/column-masks.md) and [limits](../policies/guardrails.md) to the SQL.
 8. **Execute.** DuckDB runs the rewritten SQL.
@@ -85,7 +87,7 @@ A typing error gives a parse error:
 --8<-- "examples/request-lifecycle/expected/02-parse-error.txt"
 ```
 
-What happened: the error code shows which stage stopped each request.
+What happened: each request stopped at a different stage. Several stages share the code `ACL_REJECTED`.
 
 ## Statements Sluice runs
 
@@ -93,12 +95,13 @@ What happened: the error code shows which stage stopped each request.
 |---|---|
 | `SELECT` | Runs |
 | `EXPLAIN` of a `SELECT` | Runs. `ERR_UNSUPPORTED_SYNTAX` if a row filter or column mask applies |
-| `SHOW` | Runs |
+| `SHOW` | Runs only for a subject with an allow policy whose `match` has no `resources` and no `actions` |
+| `SET` | As `SHOW`. DuckDB refuses most settings with `ERR_QUERY_FAILED` |
 | `INSERT`, `UPDATE`, `DELETE` | `ACL_REJECTED` |
 | DDL, `COPY` | `ERR_UNSUPPORTED_SYNTAX` |
 | `ATTACH` | `ERR_SYNTAX` |
 
-Policies see no table in `SHOW`. It needs an allow policy whose `match` names no table. A deny policy on a table does not hide that table from `SHOW`.
+Policies see no table in `SHOW` and `SET`. An allow policy without `resources` is broad. A deny policy on a table does not hide that table from `SHOW`. A setting that DuckDB accepts stays active for later requests. Give such a policy only to subjects you trust. Name the tables in every other allow policy.
 
 ## Where a request stops
 
@@ -112,26 +115,31 @@ Policies see no table in `SHOW`. It needs an allow policy whose `match` names no
 | Parse | Parser cannot read the statement | `ERR_SYNTAX` |
 | | Two statements in one request | `ERR_MULTIPLE_STATEMENTS` |
 | | Identifier over 63 bytes, nesting too deep | `ERR_UNSUPPORTED_SYNTAX` |
-| Statement checks | Function not on the allowlist | `ACL_REJECTED` |
+| Statement checks | Function not on the allow list, or written as `schema.f(x)` or `x.f()` | `ACL_REJECTED` |
+| | Function in `FROM` other than `generate_series`, `range`, `unnest` | `ACL_REJECTED` |
+| | `TABLESAMPLE` | `ACL_REJECTED` |
+| | Table name with `/`, `\`, `:`, `*`, `?` or `[` | `ACL_REJECTED` |
 | | Table written as `catalog.table` | `ACL_REJECTED` |
 | | Second catalog with `limits.disableCrossCatalog` | `ACL_REJECTED` |
 | | Parameter such as `$1` | `ERR_UNSUPPORTED_SYNTAX` |
 | Policy | No allow, or a deny policy | `ACL_DENIED` or the policy's code |
 | | Reject rule | `ACL_REJECTED` or the rule's code |
-| | Engine error | `ERR_INTERNAL` |
+| | Engine error | `ERR_INTERNAL`, `ERR_TIMEOUT` |
 | Approval | Waiting for a person | `ERR_APPROVAL_PENDING` |
 | | Rejected or expired | `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED` |
 | | Queue full | `ERR_RATE_LIMITED` |
-| | `approval.publicBaseUrl` not set | `ERR_INTERNAL` |
+| | `ApprovalPolicy` added by a reload, `approval.publicBaseUrl` not set | `ERR_INTERNAL` |
 | Rewrite | Write statement | `ACL_REJECTED` |
 | | DDL, `COPY` | `ERR_UNSUPPORTED_SYNTAX` |
-| | Form refused on a filtered or masked table | `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
+| | [Form refused on a filtered or masked table](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables) | `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
 | | Masked table missing in the schema cache | `ERR_REWRITE_FAILED` |
 | | Schema cannot be loaded | `ERR_DATASOURCE_UNAVAILABLE` |
 | | Template value the subject lacks | `ERR_INTERNAL` |
+| | Statement too large for the DuckDB parse check | `ERR_PAYLOAD_TOO_LARGE` |
 | Rewrite or execute | Timeout, client gone | `ERR_TIMEOUT`, `ERR_CANCELED` |
 | Execute | DuckDB refuses the statement | `ERR_QUERY_FAILED` |
 | | Data source not reachable | `ERR_DATASOURCE_UNAVAILABLE` |
+| | Other error | `ERR_INTERNAL` |
 | Post-query masks | Result columns do not match, mask cannot be built | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |
 | Audit | Audit queue full | `ERR_AUDIT_UNAVAILABLE` |
 
@@ -139,6 +147,11 @@ Policies see no table in `SHOW`. It needs an allow policy whose `match` names no
 
 - Parse and rewrite errors show only if the policies allow the statement. A deny or reject comes first.
 - `ERR_SYNTAX` also covers a table alias that is a DuckDB keyword and an unquoted identifier with a non-letter Unicode character.
-- More SQL forms are refused on filtered or masked tables. See [Row filters](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
 - A request stopped by the transport limits, the login or `limits.maxConcurrent` leaves no audit record.
 - With `cache.rewrite.enabled`, a cached rewrite keeps the old column list of a masked table until `cache.rewrite.ttl` ends or a reload.
+
+## See also
+
+- [Error codes](../reference/error-codes.md)
+- [Policy engines](policy-engines.md)
+- [Audit log](../security/audit.md)

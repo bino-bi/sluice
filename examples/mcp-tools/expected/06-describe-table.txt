@@ -1,7 +1,7 @@
 event: message
 data: {
   "jsonrpc": "2.0",
-  "id": 4,
+  "id": 6,
   "result": {
     "content": [
       {

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: hide-phone
+  priority: 10
+spec:
+  match:
+    any:
+      - resources:
+          columns: ["phone"]
+  mask:
+    type: "null"

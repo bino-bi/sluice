@@ -2,7 +2,7 @@
 
 # MCP agents
 
-An AI agent queries Sluice over MCP. Policies apply to MCP calls as they do to REST calls.
+An AI agent queries Sluice over [MCP](../reference/glossary.md). Policies apply to MCP calls as they do to REST calls.
 
 ## Example
 
@@ -22,7 +22,7 @@ The agent's API key maps to the group `agents`. The group may read `products`, a
 --8<-- "examples/mcp-agent/policies.d/limit-agents.yaml:2"
 ```
 
-Open a session. The step stores the session id in `data/mcp-session`.
+Open a session. The step stores the session id in `data/mcp-session`. It needs curl 7.84 or later.
 
 ```bash
 --8<-- "examples/mcp-agent/steps/01-initialize.sh"
@@ -80,7 +80,7 @@ A query on `customers` is denied. The agent gets `ACL_DENIED` as a tool error.
 
 ### Claude Desktop
 
-Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` checks the key once at start. Replace the path. Run `serve.sh` once to create the data, then stop it. The checks do not run this file.
+Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` checks the key once at start. Replace the path. Run `serve.sh` once to create the data, then stop it. `make docs-check` does not run this file.
 
 ```json
 --8<-- "examples/mcp-agent/manual/claude-desktop.json"

@@ -20,7 +20,7 @@ approval:
   publicBaseUrl: "http://localhost:8080"
   # A held query waits this long for a decision. Then it answers ERR_APPROVAL_PENDING.
   syncWait: 1s
-  # A request without a decision expires after this time.
+  # An approval without a decision expires after this time.
   requestTtl: 15m
   # After the accept, the query must run within this time.
   grantTtl: 5m

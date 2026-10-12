@@ -11,7 +11,7 @@ admin:
 
 # --8<-- [start:policies]
 policies:
-  # serve.sh copies policies.d to this folder, so the steps can change files.
+  # serve.sh copies policies.d to this directory, so the steps can change files.
   directory: "./data/policies"
   reload: true
 # --8<-- [end:policies]

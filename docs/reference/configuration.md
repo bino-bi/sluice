@@ -102,7 +102,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `approval.publicBaseUrl` |  | Base URL of the accept and reject links. |
 | `approval.webhooks[].url` |  | Receiver of approval requests. |
 | `approval.webhooks[].headersRef` |  | Secret reference: JSON object of headers. |
-| `approval.webhooks[].timeout` | `10s` | Timeout of one delivery. |
+| `approval.webhooks[].timeout` | `10s` | Timeout of one delivery. At most 10s. |
 | `approval.syncWait` | `20s` | Wait for a decision before `ERR_APPROVAL_PENDING`. At most `rest.requestTimeout` minus 2 s. |
 | `approval.requestTtl` | `15m` | Lifetime of a pending approval. |
 | `approval.grantTtl` | `5m` | Lifetime of a grant. |

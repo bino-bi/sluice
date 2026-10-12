@@ -6,7 +6,13 @@ Sluice loads the policy directory again without a restart. A running query finis
 
 ## Example
 
-Goal: allow a second table while the server runs. No policy allows `customers` yet:
+Goal: allow a second table while the server runs.
+
+```yaml
+--8<-- "examples/reload/server.yaml:policies"
+```
+
+No policy allows `customers` yet:
 
 ```bash
 --8<-- "examples/reload/steps/01-denied.sh"
@@ -27,6 +33,10 @@ Copy this file into the policy directory:
 ```
 
 The same query now returns rows:
+
+```bash
+--8<-- "examples/reload/steps/03-allowed.sh"
+```
 
 ```json
 --8<-- "examples/reload/expected/03-allowed.txt"
@@ -63,21 +73,43 @@ These need a restart: the server config and every `DataSource` change.
 
 ## An invalid file
 
-One invalid file stops the whole reload, and the old policies stay active. `POST /admin/reload` then returns:
+One invalid file stops the whole reload, and the old policies stay active. Here a file has a wrong `effect`:
+
+```bash
+--8<-- "examples/reload/steps/06-reload-fails.sh"
+```
 
 ```json
 --8<-- "examples/reload/expected/06-reload-fails.txt"
 ```
 
-The other code is `ERR_POLICY_INVALID`. After a file change, the log names the file. So does `sluice policy validate`:
+After a file change, the log shows the cause. So does `sluice policy validate`:
+
+```bash
+--8<-- "examples/reload/steps/07-validate.sh"
+```
 
 ```text
 --8<-- "examples/reload/expected/07-validate.txt"
 ```
 
+`ERR_CONFIG_INVALID` means Sluice cannot load a file: broken YAML, an unknown kind, a wrong field value. `ERR_POLICY_INVALID` means a policy does not compile, as here with an unknown tag:
+
+```bash
+--8<-- "examples/reload/steps/12-reload-fails-compile.sh"
+```
+
+```json
+--8<-- "examples/reload/expected/12-reload-fails-compile.txt"
+```
+
 ## Confirm a reload
 
 `GET /admin/healthz` counts the reloads in `config_version`. The log shows `config watch: reload applied`.
+
+```bash
+--8<-- "examples/reload/steps/04-healthz.sh"
+```
 
 ```json
 --8<-- "examples/reload/expected/04-healthz.txt"
@@ -85,9 +117,8 @@ The other code is `ERR_POLICY_INVALID`. After a file change, the log names the f
 
 ## Limits
 
-- The watcher reacts only to `.yaml` and `.yml` files that are not hidden.
-- The watcher misses folders created after the start.
-- A reload resets every rate limit bucket.
+- Sluice watches the policy directory for `.yaml` and `.yml` files that are not hidden.
+- It misses directories created after the start.
 - A duplicate JWT issuer or a broken OPA module does not stop the reload. Sluice warns and keeps the old state of that part.
 - An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`.
 

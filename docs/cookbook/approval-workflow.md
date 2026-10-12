@@ -52,11 +52,19 @@ The approver opens the accept link.
 
 Alice sends the same query again. Now it runs.
 
+```bash
+--8<-- "examples/approval-workflow/steps/04-query-runs.sh"
+```
+
 ```json
 --8<-- "examples/approval-workflow/expected/04-query-runs.txt"
 ```
 
 She sends it a third time. Sluice holds it again.
+
+```bash
+--8<-- "examples/approval-workflow/steps/05-query-held-again.sh"
+```
 
 ```json
 --8<-- "examples/approval-workflow/expected/05-query-held-again.txt"
@@ -66,7 +74,7 @@ She sends it a third time. Sluice holds it again.
 
 ## More examples
 
-The approver opens the reject link of the new request.
+The approver opens the reject link of the new approval.
 
 ```bash
 --8<-- "examples/approval-workflow/steps/06-reject.sh"
@@ -76,7 +84,7 @@ The approver opens the reject link of the new request.
 --8<-- "examples/approval-workflow/expected/06-reject.txt"
 ```
 
-Alice reads the state of her request with her own key.
+Alice reads the state of her approval with her own key.
 
 ```bash
 --8<-- "examples/approval-workflow/steps/07-status.sh"

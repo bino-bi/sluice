@@ -49,20 +49,20 @@ Exit status 3 means an invalid policy. Without `--strict`, Sluice ignores unknow
 | [`DataClassification`](classification.md) | Puts tags on tables and columns. |
 | [`RelationshipPolicy`](rebac.md) | Asks OpenFGA about a table. |
 
-The last two kinds use `apiVersion: sluice.bino.bi/v1beta1`, all others `sluice.bino.bi/v1alpha1`. Another value is a load error.
+`DataClassification` and `RelationshipPolicy` use `apiVersion: sluice.bino.bi/v1beta1`, all other kinds `sluice.bino.bi/v1alpha1`. Another value is a load error.
 
 ## Shared fields
 
-| Field | Default | Meaning |
-|---|---|---|
-| `metadata.name` | required | Lower case letters, digits and `-`. Unique per kind. |
-| `metadata.priority` | `0` | 0 to 1000. The highest comes first, then the name decides. |
-| `spec.match` | required | Subjects and tables the policy covers. See [Matching](matching.md). |
-| `spec.exclude` | none | Subjects or tables to leave out. |
-| `spec.conditions` | none | CEL expressions that must all be true. See [Conditions](conditions.md). |
-| `spec.enforcementMode` | `Enforce` | `Enforce`, `Audit` or `DryRun`. |
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `metadata.name` | string | required | Lower case letters and digits, also `-` between them. Unique per kind. |
+| `metadata.priority` | int | `0` | 0 to 1000. The highest comes first, then the name decides. |
+| `spec.match` | object | required | Subjects and tables the policy covers. See [Matching](matching.md). |
+| `spec.exclude` | object | none | Subjects or tables to leave out. |
+| `spec.conditions` | list | none | CEL expressions that must all be true. See [Conditions](conditions.md). |
+| `spec.enforcementMode` | string | `Enforce` | `Enforce`, `Audit` or `DryRun`. |
 
-The first six kinds have the `spec` fields. `RelationshipPolicy` has no `conditions`.
+`SubjectBinding`, `DataSource` and `DataClassification` do not have the `spec` fields. `RelationshipPolicy` has no `conditions`.
 
 ## Enforcement mode
 
@@ -84,8 +84,8 @@ The decision is `allow`. The deny shows only under `shadow`, here and in the [ad
 
 ## Loading
 
-- Sluice reads all `*.yaml` and `*.yml` files under `policies.directory` (default `./policies.d`), also in subfolders.
-- It skips `tests`, `testdata` and folders that start with a dot.
+- Sluice reads all `*.yaml` and `*.yml` files under `policies.directory` (default `./policies.d`), also in subdirectories.
+- It skips `tests`, `testdata` and directories that start with a dot.
 - One file can hold many objects, separated by `---`.
 - With an empty policy directory, Sluice denies every query.
 - A query needs at least a `DataSource`, a `SubjectBinding` and an allow.

@@ -27,3 +27,5 @@ spec:
           catalogs: ["shop"]
           schemas: ["main"]
           tables: ["salaries"]
+  # The test runner reports ACL_DENIED for this deny, not this code.
+  errorCode: SALARIES_HIDDEN

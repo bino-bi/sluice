@@ -19,7 +19,7 @@ The script creates `data/shop.db` from `seed.sql` and `data/ref.duckdb` from `se
 | `steps/04-join-masked.sh` | The mask on `customer_id` still applies inside the join. |
 | `steps/05-validate-manual.sh` | The policy files in `manual/postgres-s3/` are valid. |
 
-`policies.d/` holds the data sources, keys, allow policies and the mask. `expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
+`policies.d/` holds the data sources, keys, allow policies, the mask and a reject policy for the suite. `expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
 
 ## Postgres and S3
 

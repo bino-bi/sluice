@@ -30,6 +30,10 @@ An analyst of the tenant `acme` reads the orders.
 
 A guest sends the same query.
 
+```bash
+--8<-- "examples/opa/steps/02-guest.sh"
+```
+
 ```json
 --8<-- "examples/opa/expected/02-guest.txt"
 ```
@@ -45,14 +49,14 @@ A guest sends the same query.
 | `tables[]` | `catalog`, `schema`, `table`, and `key` as `catalog.schema.table` |
 | `shape` | `has_select_star`, `is_aggregate`, `has_cte`, `has_union`, `has_limit`, `limit`, `has_where`, `joins` |
 
-| Result field | Meaning |
-|---|---|
-| `allow` | `true` allows. `false` or absent denies. |
-| `abstain` | `true`: the other composite members decide. |
-| `deny_reason` | `message`, `code`, `policy` for the error. |
-| `row_filters[]` | `table` (a `key` from the input), `predicate` as in a [row filter](row-filters.md), `combine`. |
-| `column_masks[]` | `table`, `column`, and `mask` as in a [column mask](column-masks.md). |
-| `rejections[]` | `rule`, `message`, `code`. One entry rejects the query. |
+| Result field | Type | Default | Meaning |
+|---|---|---|---|
+| `allow` | boolean | `false` | `true` allows. `false` denies. |
+| `abstain` | boolean | `false` | `true`: the other composite members decide. |
+| `deny_reason` | object | | `message`, `code`, `policy` for the error. |
+| `row_filters[]` | list | | `table` (a `key` from the input), `predicate` as in a [row filter](row-filters.md), `combine`. |
+| `column_masks[]` | list | | `table`, `column`, and `mask` as in a [column mask](column-masks.md). |
+| `rejections[]` | list | | `rule`, `message`, `code`. One entry rejects the query. |
 
 An undefined result denies the query. The header `X-Sluice-Applied-Policies` and the audit record show the name `opa`.
 

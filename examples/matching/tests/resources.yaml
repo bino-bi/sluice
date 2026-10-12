@@ -49,3 +49,9 @@ cases:
     sql: 'SELECT id FROM lake.raw."export.v1"'
     expect:
       outcome: allow
+
+  - name: a clause with catalogs and schemas does not cover a statement without a table
+    identity: { subject: sara, groups: [sre] }
+    sql: "SELECT 1"
+    expect:
+      outcome: deny

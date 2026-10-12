@@ -42,7 +42,7 @@ Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also ha
 | 2 | ~datasource check~ | The directory holds no ~DataSource~ object. |
 | 3 | ~config validate~, ~policy validate~, ~policy explain~ | A policy or the server config is not valid. |
 | 3 | ~policy test~ | A policy file is not valid, a case failed, or no case ran. |
-| 4 | ~audit verify~ | The hash chain is broken. |
+| 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, or the anchor differs. |
 `
 
 // notes holds the hand-written text of a command section, keyed by the
@@ -90,7 +90,7 @@ var notes = map[string]string{
 // overrides maps an exact help text to its page text: style rule breaks, glossary terms, facts the help leaves out.
 var overrides = map[string]string{
 	"server pepper \u2014 raw value or secret:// URI":    "server pepper, raw value or secret:// URI",
-	"pin the genesis record's prior_hash (sha256(seed))": "pin the genesis record's prior_hash, the hex sha256 of the seed",
+	"pin the genesis record's prior_hash (sha256(seed))": "expected prior_hash of the first record: the hex SHA-256 of the genesis",
 	"reject unknown YAML fields":                         "reject unknown YAML fields in policies",
 	"key material presented by the caller":               "key material presented by the client",
 	"path to sluice.yaml (optional)":                     "path to the server config (optional)",
@@ -101,6 +101,17 @@ var overrides = map[string]string{
 	"directory containing policy manifests":              "directory containing policy files",
 	"Validate every policy manifest under <policy-dir>":  "Validate every policy file under <policy-dir>",
 	"transport: stdio or streamable_http":                "transport: stdio or streamable_http (also http, streamable-http, streamablehttp)",
+	"Validate sluice server config and policy directory": "Validate the server config and the policy directory",
+	"Export JSON Schema for the policy DSL":              "Export the JSON Schema of a policy kind",
+	"export only this Kind (e.g. SqlAccessPolicy)":       "policy kind to export, for example SqlAccessPolicy",
+	"Start the sluice server":                            "Start the Sluice server",
+	"Print sluice build identity":                        "Print the build version",
+	"emit ExplainResult as JSON":                         "print the result as JSON",
+	"synthetic subject identifier (required)":            "subject id (required)",
+	"synthetic issuer (iss claim)":                       "issuer (iss claim)",
+	"synthetic email claim":                              "email of the subject",
+
+	"simulated SQL; parsed and explained as the live path would see it": "SQL statement to explain. The command does not run it",
 }
 
 var (

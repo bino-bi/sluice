@@ -30,6 +30,10 @@ The mask policy names no table and no column. It matches the tag.
 
 The table `suppliers` also has an `email` column, but no tag.
 
+```bash
+--8<-- "examples/classification/steps/02-suppliers.sh"
+```
+
 ```json
 --8<-- "examples/classification/expected/02-suppliers.txt"
 ```
@@ -38,16 +42,16 @@ The table `suppliers` also has an `email` column, but no tag.
 
 ## Fields
 
-| Field | Meaning |
-|---|---|
-| `rules[].resources` | `catalogs`, `schemas`, `tables` and `columns`, with wildcards. No `tags`, no `actions`. |
-| `rules[].tags` | One or more tags. Allowed: lower-case letters, digits, `.`, `_`, `-`. First and last character: letter or digit. |
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `rules[].resources` | object | required | `catalogs`, `schemas`, `tables` and `columns`, with wildcards. No `tags`, no `actions`. |
+| `rules[].tags` | list | required | Allowed: lower-case letters, digits, `.`, `_`, `-`. First and last character: letter or digit. |
 
 You can use `resources.tags` in access, row filter, mask, reject, rewrite and approval policies. One tag of the list must match. Name fields in the same clause must match too. The order of the files does not matter.
 
 ## More examples
 
-A deny policy matches the tag `restricted` and leaves out the group `auditors`.
+Goal: only the group `auditors` reads tables with the tag `restricted`.
 
 ```yaml
 --8<-- "examples/classification/policies.d/deny-restricted.yaml:2"
@@ -60,6 +64,8 @@ A deny policy matches the tag `restricted` and leaves out the group `auditors`.
 ```json
 --8<-- "examples/classification/expected/03-payroll.txt"
 ```
+
+**What happened:** `payroll` has the tag, and Alice is not in `auditors`.
 
 ## Limits
 

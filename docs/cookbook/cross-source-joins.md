@@ -64,12 +64,23 @@ This suite case shows the rewritten SQL. The mask stays on the `orders` side.
 --8<-- "examples/cross-source-join/tests/join.yaml:masked-join"
 ```
 
-The same join on Postgres and S3 is in `examples/cross-source-join/manual/postgres-s3/`. The checks do not run it.
+A `QueryRejectPolicy` rejects a query on more than one catalog for selected subjects.
+
+```yaml
+--8<-- "examples/cross-source-join/policies.d/reject-two-catalogs.yaml:2"
+```
+
+This suite case proves it.
+
+```yaml
+--8<-- "examples/cross-source-join/tests/join.yaml:one-catalog"
+```
+
+The same join on Postgres and S3 is in `examples/cross-source-join/manual/postgres-s3/`. `make docs-check` only validates its policies.
 
 ## Limits
 
 - `limits.disableCrossCatalog: true` in the server config rejects every query that names more than one catalog: `ACL_REJECTED`.
-- A `QueryRejectPolicy` with the rule `size(query.catalogs) > 1` does the same for selected subjects.
 
 ## See also
 

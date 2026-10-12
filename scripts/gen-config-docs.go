@@ -148,7 +148,7 @@ var meaning = map[string]string{
 	"approval.publicBaseUrl":         "Base URL of the accept and reject links.",
 	"approval.webhooks[].url":        "Receiver of approval requests.",
 	"approval.webhooks[].headersRef": "Secret reference: JSON object of headers.",
-	"approval.webhooks[].timeout":    "Timeout of one delivery.",
+	"approval.webhooks[].timeout":    "Timeout of one delivery. At most 10s.",
 	"approval.syncWait":              "Wait for a decision before `ERR_APPROVAL_PENDING`. At most `rest.requestTimeout` minus 2 s.",
 	"approval.requestTtl":            "Lifetime of a pending approval.",
 	"approval.grantTtl":              "Lifetime of a grant.",

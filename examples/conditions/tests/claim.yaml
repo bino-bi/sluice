@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: the gold tier reads reports
+    identity: { subject: gina, claims: { tier: gold } }
+    sql: "SELECT id FROM shop.main.reports"
+    expect:
+      outcome: allow
+
+  - name: another tier is denied
+    identity: { subject: sam, claims: { tier: silver } }
+    sql: "SELECT id FROM shop.main.reports"
+    expect:
+      outcome: deny
+
+  - name: a subject without the claim is denied, with no error
+    identity: { subject: nora }
+    sql: "SELECT id FROM shop.main.reports"
+    expect:
+      outcome: deny

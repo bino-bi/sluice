@@ -2,7 +2,7 @@
 
 # Threat model
 
-This page lists the threats that Sluice covers. Each row shows what Sluice does and what you must do.
+This page lists the threats that Sluice covers, and what you must do.
 
 ## Trust boundaries
 
@@ -28,7 +28,7 @@ flowchart LR
     ADM -.-> P
 ```
 
-Both listeners serve plain HTTP until you set `tls`.
+REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 
 ## Threats
 
@@ -39,35 +39,30 @@ Both listeners serve plain HTTP until you set `tls`.
 | A client sends DDL, `COPY`, `BEGIN`, `ATTACH`, `INSTALL` or `LOAD` | Refuses the statement: `ERR_UNSUPPORTED_SYNTAX`, or `ERR_SYNTAX` for the last three | Nothing |
 | A client sends two statements in one request | Refuses the request: `ERR_MULTIPLE_STATEMENTS` | Nothing |
 | A client calls a function that reads files or settings, such as `read_csv` or `duckdb_settings` | Runs only functions on its allow list. Others: `ACL_REJECTED` | Nothing |
-| A client reads rows of another tenant | A `RowFilterPolicy` filters every read of the table. The filter value is a bound parameter | Write a filter for every tenant table. Keep the filter column in every matched table |
+| A client reads rows of another tenant | A `RowFilterPolicy` filters every read of the table. The filter value is a bound parameter | Write a filter for every tenant table. Keep the filter column in every matched table. Without it, reads fail: `ERR_QUERY_FAILED` |
 | A client reads a PII column | A `ColumnMaskPolicy` replaces the values of the column | Pick the mask type. `partial` shows a prefix. Unsalted `sha256` values can be guessed |
 | A client reads policy SQL or bound values with `EXPLAIN` | Refuses `EXPLAIN` on a table with a row filter or column mask: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
 | A client reads bound values with `$n` parameters | Refuses the statement: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
-| SQL that DuckDB reads in another way than the parser, for example a name over 63 bytes | Before a rewrite, checks that DuckDB reads the SQL the same way. Refuses long names: `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX` | Nothing |
-| A two-part table name such as `shop.customers` | Rejects the statement: `ACL_REJECTED` | Write `catalog.schema.table` |
-| A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRows` caps every result | Add a `QueryRewritePolicy` on `tables: ["**"]` |
-| A client dumps a table over many queries | Daily budget per subject: `ERR_BUDGET_EXCEEDED` | Set `budget.enabled: true` and `budget` on the subject binding |
-| A client floods Sluice with requests | Global and per-IP rate limits before login, one per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding. `limits.perIpRps` is off by default |
+| A client gets around a policy with SQL that Sluice and DuckDB read differently | Rejects a two-part table name such as `shop.customers`: `ACL_REJECTED`. Refuses a name over 63 bytes. Before a rewrite, checks that DuckDB reads the SQL the same way: `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX` | Write `catalog.schema.table` |
+| A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRows` caps every result. Both count result rows | Add a `QueryRewritePolicy` on `tables: ["**"]` |
+| A client dumps a table over many queries | Daily budget per subject on result rows and run time: `ERR_BUDGET_EXCEEDED`. The query that crosses the budget is still served | Set `budget.enabled: true`. Set `budget` on the subject binding, with `claims.subjectId` or `issuer` |
+| A client floods Sluice with requests | On the REST listener, global and per-IP rate limits before login. One rate limit per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding, with `claims.subjectId` or `issuer`. `limits.perIpRps` is off by default |
 | A client sends a risky query form | A `QueryRejectPolicy` rule rejects it: `ACL_REJECTED` | Write the rules |
-| A read that a person must accept first | An `ApprovalPolicy` holds the query: `ERR_APPROVAL_PENDING`. A grant runs the same query once | Set `approval.publicBaseUrl` and a webhook. Keep the webhook channel private. Run one instance |
-| A stolen API key | Stores only an HMAC of each key with a pepper. Rate limit and budget cap its use | Keep the pepper secret. Use one key id per client. [Rotate keys](key-rotation.md) |
+| A client runs a sensitive query that nobody approved | An `ApprovalPolicy` holds the query until an approver accepts it: `ERR_APPROVAL_PENDING`. A grant runs the same query once. Accept and reject links need only their token | Set `approval.publicBaseUrl` and a webhook. Keep the webhook channel private. Run one instance |
+| A stolen API key | Stores only an HMAC of each key with a [pepper](../reference/glossary.md). Rate limit and budget, when set, cap its use | Keep the pepper secret. Use one key id per client. [Rotate keys](key-rotation.md) |
 | A forged JWT | Checks signature, algorithm and issuer, and the audience when set. Refuses `alg: none` | Set `issuer`, `audience` and `jwksUrl` |
-| A changed audit log | Hash chain. `sluice audit verify` exits with status 4 and names file and line | Run verify with `--anchor` on a schedule. Keep a copy and the last hash on another host |
-| A query without an audit record | `audit.failClosed`: `ERR_AUDIT_UNAVAILABLE` when the audit queue does not take the record | Keep it `true`. Alert on `sluice_audit_write_errors_total` |
+| A changed audit log | [Hash chain](../reference/glossary.md). `sluice audit verify` exits with status 4 and names file and line, unless the later hashes were computed again | Run verify with [`--anchor`](../reference/glossary.md) on a schedule. Keep a copy and each `last_hash` on another host and compare, see [Audit log](audit.md) |
+| A query without an audit record | `audit.failClosed`: `ERR_AUDIT_UNAVAILABLE` when the audit queue does not take the record. A failed disk write does not stop queries | Keep it `true`. Alert on `sluice_audit_write_errors_total` |
 | An open admin API | Own listener, off by default, bearer token | Set `admin.token` in the server config. Bind `admin.listen` to a private interface |
-| Traffic read on the network | TLS and client certificates on both listeners, TLS 1.2 or newer | Set `rest.tls` and `admin.tls`, or use a TLS proxy |
+| Traffic read on the network | TLS and client certificates on the REST and admin listeners, TLS 1.2 or newer | Set `rest.tls` and `admin.tls`, or use a TLS proxy |
+| Traffic to MCP over HTTP is read, or the listener is flooded | Nothing before login: `mcp.listen` has no `tls` setting and no rate limit | Put a TLS proxy in front, or use stdio |
 | A secret file open to other users | Refuses a file that group or others can write. Warns when others can read it | `chmod 0600` |
 | DuckDB reads local files or other URLs | Turns off external access and extension install, locks the settings. Only the configured S3 bucket and HTTP URLs stay readable | List only the URLs you need |
 | A user with database credentials | Nothing. This user does not pass through Sluice | Give database credentials only to Sluice |
+| A person who controls the host | Nothing. This person can read every secret and change policies | Protect the host |
+| The holder of the admin token | Nothing. The admin API shows policies and audit records | Give the token to operators only |
 
-Notes:
-
-- For writes, DDL and two statements, policies run first. When no allow policy matches, the answer is `ACL_DENIED`.
-- Rate limit and budget on a subject binding need `claims.subjectId` or `issuer`. See [Hardening](hardening.md).
-- Sluice checks the budget before a query. The query that crosses the budget is still served.
-- A table without the filter column cannot be read: `ERR_QUERY_FAILED`.
-- Accept and reject URLs of an approval carry a token. An unknown id and a wrong token return the same 404.
-- A failed disk write of an audit record does not stop queries.
+In most rows, a statement that no allow policy matches gets `ACL_DENIED` instead of the row's code. With `resources` in every allow policy, this covers `BEGIN`, `ATTACH`, `INSTALL`, `LOAD` and most DDL.
 
 ## Example
 
@@ -105,10 +100,11 @@ What happened: Sluice refused each statement before it reached DuckDB.
 
 ## Limits
 
-- Sluice limits what a subject can read. It does not control what a client does with these rows.
+- Sluice does not control what a client does with the rows it reads.
 - Counts and sums over allowed rows can show facts about single rows.
 - `EXPLAIN` on a table without a row filter or column mask is served. The plan can show the file path of a data source.
-- `sluice audit verify` does not detect when the newest records are removed.
+- The row limit, `limits.maxRows` and `rowsPerDay` count result rows. One `list()` or `string_agg()` row can hold a whole table.
+- `sluice audit verify` does not detect removed newest records, or a change when the later hashes are computed again.
 
 ## See also
 

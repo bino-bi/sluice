@@ -16,5 +16,5 @@ spec:
         message: "list the columns you need"
       - name: no-big-joins
         expression: "query.joins > 2"
-        message: "join at most three tables"
+        message: "use at most two JOINs"
         code: "TOO_MANY_JOINS"
