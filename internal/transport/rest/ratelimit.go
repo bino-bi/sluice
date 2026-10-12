@@ -60,7 +60,7 @@ func (s *Server) denyRateLimited(w http.ResponseWriter, r *http.Request, scope s
 		"scope", scope,
 		"remote", r.RemoteAddr,
 	)
-	writeError(w, r, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("request rate limit exceeded"))
+	s.writeError(w, r, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("request rate limit exceeded"))
 }
 
 // remoteIP extracts the host from RemoteAddr, falling back to the whole

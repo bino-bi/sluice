@@ -31,6 +31,8 @@ type LoggingConfig struct {
 	Level  slog.Level
 	Format string // "json" (default) or "text"
 	Output io.Writer
+	// MaxErrorBytes cuts the text of an "error" attribute. 0 is no cut.
+	MaxErrorBytes int
 }
 
 // MetricsConfig toggles the Prometheus registry wiring. The HTTP handler is

@@ -26,6 +26,25 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Audit.SQLSampleBytes != 2048 {
 		t.Errorf("Audit.SQLSampleBytes = %d, want 2048", cfg.Audit.SQLSampleBytes)
 	}
+	if cfg.Logging.MaxErrorBytes != 4096 {
+		t.Errorf("Logging.MaxErrorBytes = %d, want 4096", cfg.Logging.MaxErrorBytes)
+	}
+}
+
+// An explicit 0 turns the cut of logged errors off. It must not fall back
+// to the default.
+func TestLoadServer_LoggingMaxErrorBytesZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sluice.yaml")
+	if err := os.WriteFile(path, []byte("logging:\n  maxErrorBytes: 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.Logging.MaxErrorBytes != 0 {
+		t.Errorf("Logging.MaxErrorBytes = %d, want 0", cfg.Logging.MaxErrorBytes)
+	}
 }
 
 func TestLoadServer_AuditSQLSampleBytesOverride(t *testing.T) {
@@ -82,10 +101,14 @@ func TestLoadServer_YAMLOverrides(t *testing.T) {
 func TestLoadServer_EnvOverride(t *testing.T) {
 	t.Setenv("SLUICE_REST__LISTEN", ":9000")
 	t.Setenv("SLUICE_LIMITS__MAXROWS", "42")
+	t.Setenv("SLUICE_LOGGING__MAXERRORBYTES", "0")
 
 	cfg, err := LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.Logging.MaxErrorBytes != 0 {
+		t.Errorf("Logging.MaxErrorBytes = %d, want 0 (via env)", cfg.Logging.MaxErrorBytes)
 	}
 	if cfg.REST.Listen != ":9000" {
 		t.Errorf("REST.Listen = %q, want :9000 (via env)", cfg.REST.Listen)

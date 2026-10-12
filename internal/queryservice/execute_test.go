@@ -3,6 +3,7 @@
 package queryservice_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
+	"github.com/bino-bi/sluice/internal/telemetry"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -757,6 +759,58 @@ func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
 	}
 	if len(a.all()) != 1 {
 		t.Fatalf("expected 1 audit record on rewrite error, got %d", len(a.all()))
+	}
+}
+
+// The audit record of a failed execution carries the code the client
+// gets. A statement DuckDB refused is logged with its cause, because the
+// client only gets the code.
+func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
+	const cause = "Binder Error: no column x"
+	cases := []struct {
+		name   string
+		err    error
+		code   pkgerr.Code
+		logged bool
+	}{
+		{"rejected", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrRejected, errors.New(cause)), pkgerr.CodeQueryFailed, true},
+		// DuckDB quotes values of the statement. The handler cuts the
+		// "error" attribute.
+		{"rejected, long cause", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrRejected, errors.New(cause+strings.Repeat("A", 100000))), pkgerr.CodeQueryFailed, true},
+		{"timeout", context.DeadlineExceeded, pkgerr.CodeTimeout, false},
+		{"other", errors.New("boom"), pkgerr.CodeInternal, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var log bytes.Buffer
+			a := &fakeAudit{}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: &fakeExecutor{err: tc.err},
+				Audit:    a,
+				Logger:   telemetry.NewLogger(&log, telemetry.LoggingConfig{Format: "json", MaxErrorBytes: 4096}),
+			})
+			_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+			ae := pkgerr.FromError(err)
+			if ae == nil || ae.Code != tc.code {
+				t.Fatalf("err = %v, want %s", err, tc.code)
+			}
+			if recs := a.all(); len(recs) != 1 || recs[0].ErrorCode != string(tc.code) {
+				t.Fatalf("audit records = %+v, want one with %s", recs, tc.code)
+			}
+			got := log.String()
+			if !tc.logged && got != "" {
+				t.Fatalf("log = %q, want nothing", got)
+			}
+			if len(got) > 8192 {
+				t.Fatalf("log line has %d bytes, want the cause cut", len(got))
+			}
+			if tc.logged && !(strings.Contains(got, `"level":"WARN"`) && strings.Contains(got, ae.QueryID) && strings.Contains(got, cause)) {
+				t.Fatalf("log = %q, want a WARN line with the query_id and the cause", got)
+			}
+		})
 	}
 }
 

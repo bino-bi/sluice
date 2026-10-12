@@ -33,6 +33,7 @@ const (
 	// Execution
 	CodeTimeout         Code = "ERR_TIMEOUT"
 	CodeCanceled        Code = "ERR_CANCELED"
+	CodeQueryFailed     Code = "ERR_QUERY_FAILED"
 	CodeRateLimited     Code = "ERR_RATE_LIMITED"
 	CodeBudgetExceeded  Code = "ERR_BUDGET_EXCEEDED"
 	CodePayloadTooLarge Code = "ERR_PAYLOAD_TOO_LARGE"
@@ -72,6 +73,7 @@ var httpStatusByCode = map[Code]int{
 	CodePolicyInvalid:         http.StatusBadRequest,
 	CodeTimeout:               http.StatusGatewayTimeout,
 	CodeCanceled:              statusClientClosedRequest,
+	CodeQueryFailed:           http.StatusBadRequest,
 	CodeRateLimited:           http.StatusTooManyRequests,
 	CodeBudgetExceeded:        http.StatusTooManyRequests,
 	CodePayloadTooLarge:       http.StatusRequestEntityTooLarge,
@@ -100,6 +102,7 @@ var defaultMessage = map[Code]string{
 	CodePolicyInvalid:         "policy document invalid",
 	CodeTimeout:               "request timed out",
 	CodeCanceled:              "request canceled",
+	CodeQueryFailed:           "the database rejected the query",
 	CodeRateLimited:           "too many requests",
 	CodeBudgetExceeded:        "query budget exceeded",
 	CodePayloadTooLarge:       "payload too large",
@@ -145,6 +148,7 @@ func AllCodes() []Code {
 		CodePolicyInvalid,
 		CodeTimeout,
 		CodeCanceled,
+		CodeQueryFailed,
 		CodeRateLimited,
 		CodeBudgetExceeded,
 		CodePayloadTooLarge,

@@ -30,6 +30,9 @@ func (c *ServerConfig) Validate() error {
 	if c.Tracing.SampleRatio < 0 || c.Tracing.SampleRatio > 1 {
 		errs = append(errs, fmt.Errorf("tracing.sampleRatio: %v out of range [0, 1]", c.Tracing.SampleRatio))
 	}
+	if c.Logging.MaxErrorBytes < 0 {
+		errs = append(errs, fmt.Errorf("logging.maxErrorBytes: %d is negative (0 turns the cut off)", c.Logging.MaxErrorBytes))
+	}
 	if c.DataSources.Reload {
 		errs = append(errs, errors.New(
 			"datasources.reload: parsed but unimplemented — DataSource manifest changes require a restart (docs/operations/server-config.md)"))

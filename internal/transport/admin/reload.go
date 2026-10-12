@@ -31,7 +31,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, policy.ErrSnapshotInvalid) {
 			code = pkgerr.CodePolicyInvalid
 		}
-		writeAPIError(w, pkgerr.Wrap(code, err))
+		s.writeAPIError(w, r, pkgerr.Wrap(code, err))
 		return
 	}
 	resp := reloadResponse{Ok: true}

@@ -23,7 +23,7 @@ and error codes.
 | [Policy schema](policy-schema.md) | JSON Schema 2020-12 for all 11 policy kinds | Generated |
 | [Configuration](configuration.md) | `server.yaml` fields, defaults, `SLUICE_*` env overrides | Generated |
 | [Metrics](metrics.md) | The Prometheus surface on the admin listener | Generated |
-| [Error codes](error-codes.md) | The 24-code catalogue with HTTP mappings | Generated |
+| [Error codes](error-codes.md) | The 23-code catalogue with HTTP mappings | Generated |
 
 Related pages outside this section:
 

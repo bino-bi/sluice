@@ -196,7 +196,7 @@ CPU time and rows served; client streaming time is deliberately excluded).
 | Policy | `ACL_DENIED`, `ACL_REJECTED` (or a policy's custom code) |
 | Approval | `ERR_APPROVAL_PENDING`, `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED`, `ERR_RATE_LIMITED` (broker full) |
 | Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX` (DuckDB cannot parse the statement), `ERR_REWRITE_FAILED` (also a masked table the schema cache does not know), `ERR_DATASOURCE_UNAVAILABLE` (the schema of its catalog cannot be loaded, or the catalog is not attached), `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_PAYLOAD_TOO_LARGE` and `ERR_INTERNAL` (DuckDB parse check) |
-| Execute | `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_INTERNAL` |
+| Execute | `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_QUERY_FAILED` (DuckDB refuses the statement: a name it does not know or a value that does not fit), `ERR_INTERNAL` |
 | Post-query masks | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |
 | Audit gate | `ERR_AUDIT_UNAVAILABLE` |
 

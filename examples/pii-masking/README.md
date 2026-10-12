@@ -76,7 +76,8 @@ Expected:
 
 ## Seeing the rewrite
 
-The rewritten SQL is never logged. To inspect it, write a policy test
+The rewritten SQL of a served query is not logged (the log line of a failed
+query can hold a piece of it). To inspect it, write a policy test
 with a `rewrittenSqlContains` expectation and run
 `./bin/sluice policy test policies.d`, or use
 `./bin/sluice policy explain` to see which policies fire for a given
