@@ -27,13 +27,13 @@ Counted with `scripts/docs-wordcount.py`. Code blocks are not counted. Tables ar
 | home | 1 | 1 | 328 | 180 | -45% |
 | getting-started | 4 | 2 | 1728 | 652 | -62% |
 | architecture | 4 | 3 | 4063 | 1372 | -66% |
-| policies | 13 | 13 | 9887 | 5984 | -39% |
+| policies | 13 | 13 | 9887 | 5982 | -39% |
 | operations | 6 | 6 | 3380 | 2020 | -40% |
 | security | 5 | 5 | 3390 | 2570 | -24% |
 | compliance | 4 | 0 | 1443 | 0 | -100% |
 | reference | 9 | 10 | 4945 | 4980 | 1% |
 | cookbook | 7 | 7 | 2670 | 1298 | -51% |
-| **total** | 53 | 47 | 31834 | 19056 | **-40%** |
+| **total** | 53 | 47 | 31834 | 19054 | **-40%** |
 
 The target was at least 40% less. Reference stays the same size: its tables now list every working field, flag and key, and it holds the new glossary.
 
