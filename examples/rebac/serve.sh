@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 python3 ../seed.py seed.sql data/shop.db
 
 # Stands in for an OpenFGA server. Answers from tuples.json.
-python3 openfga-stub.py &
+python3 openfga-stub.py tuples.json &
 
 # Demo secrets. Do not use these values in production.
 export SLUICE_APIKEY_PEPPER="rebac-demo-pepper"

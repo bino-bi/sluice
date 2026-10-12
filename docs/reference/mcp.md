@@ -39,7 +39,7 @@ The answer holds the rows as text and as `structuredContent`.
 | `await_approval` | `approval_id` (required), `timeout_seconds` | The same, after a wait of at most 55 seconds |
 
 - `row_limit` works like `max_rows` in the [REST API](rest-api.md).
-- `table` is a name of the form `catalog.schema.table`. A shorter name is matched as written, so a policy that names the schema does not match it.
+- `table` is a name of the form `catalog.schema.table`. Sluice does not add a missing catalog or schema. A policy that names them does not match a shorter name.
 - `limit` is 500 by default and at most 1000. Pass `next_cursor` as `cursor` to get the next page. A `cursor` that is not valid gives `ERR_SYNTAX`.
 - `explain_access` runs no query.
 - The approval tools read the state of a held query. An unknown id gives `ERR_APPROVAL_EXPIRED`. Without `approval.publicBaseUrl` both tools give `ERR_INTERNAL`. See [Approvals](../policies/approvals.md).

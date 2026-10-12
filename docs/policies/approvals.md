@@ -93,13 +93,13 @@ With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --js
 
 | Key | Default | Meaning |
 |---|---|---|
-| `approval.publicBaseUrl` | | Without it, Sluice does not start with an `ApprovalPolicy`. |
+| `approval.publicBaseUrl` | | Base URL of the accept and reject links. Without it, Sluice does not start with an `ApprovalPolicy`. |
 | `approval.webhooks[].headersRef` | | Secret with a JSON map of headers. |
 | `approval.webhooks[].timeout` | 10s | Timeout of one try. At most 10s. |
 | `approval.syncWait` | 20s | Wait before the 202. At most `rest.requestTimeout` minus 2 seconds. |
-| `approval.requestTtl` | 15m | Life of an open approval. |
+| `approval.requestTtl` | 15m | Life of a pending approval. |
 | `approval.grantTtl` | 5m | Life of a grant. |
-| `approval.maxPending` | 1000 | Maximum open approvals. A further query gets 429 `ERR_RATE_LIMITED`. |
+| `approval.maxPending` | 1000 | Maximum pending approvals. A further query gets 429 `ERR_RATE_LIMITED`. |
 | `approval.sqlSampleBytes` | 2048 | Longest `sql` in the webhook. 0 sends none. |
 | `approval.persist` | `false` | Keeps approvals, grants and links in `approval.stateDir`. |
 
@@ -126,7 +126,7 @@ The subject that asked reads the state with `GET /v1/approvals/{id}`. Other subj
 --8<-- "examples/approval-workflow/expected/07-status.txt"
 ```
 
-MCP clients use `check_approval` and `await_approval`. The operator lists open approvals with `GET /admin/approvals`. The [audit log](../security/audit.md) records each approval, decision and expiry.
+MCP clients use `check_approval` and `await_approval`. The operator lists pending approvals with `GET /admin/approvals`. The [audit log](../security/audit.md) records each approval, decision and expiry.
 
 ## Limits
 
@@ -134,7 +134,7 @@ MCP clients use `check_approval` and `await_approval`. The operator lists open a
 - Without `approval.persist`, a restart drops all approvals and grants. A query that waits never survives a restart. Run one instance: instances do not share approvals.
 - A link needs no login, only its token. A wrong id or token gets 404.
 - A `HEAD` request, or a request with the header `Purpose`, `Sec-Purpose` or `X-Moz` set to exactly `prefetch` or `preview`, changes nothing. Any other `GET` of a link decides.
-- The other link after a decision gets 409. After the query ran, each link answers 200 with state `consumed`.
+- The other link after a decision gets 409. After the query ran, each link answers 200 with state `consumed`. After `approval.requestTtl`, Sluice forgets a decided approval and each link gets 404.
 
 ## See also
 

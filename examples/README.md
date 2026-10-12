@@ -49,6 +49,7 @@ The output is changed in two ways before it is stored:
 
 - JSON is indented for reading. This includes the `data:` lines of MCP answers.
 - Values that differ between runs or builds are replaced with a placeholder such as `<query-id>`, `<time>`, `<hash>` or `<digest>`.
+- The duration fields `duration_ms` and `latency_ms` are removed.
 
 A step that ends with a non-zero status gets a last line `[exit status N]`.
 

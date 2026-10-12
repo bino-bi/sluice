@@ -105,7 +105,7 @@ A running server tests every source at start and then every 30 seconds. `GET /v1
 - Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
 - Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
 - A source that fails a check of its type stops the start. Examples: a missing `sqlite` or `duckdb_file` file, `s3` without `region`, `motherduck` without `tokenRef`. `datasource check` and `config validate` miss these errors.
-- `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not list it. A broken `duckdb_file` file still stops the start.
+- `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not list it. A source that Sluice cannot attach still stops the start: a database that is down, or a broken `duckdb_file` file.
 - The health test does not read a `sqlite` file. A file that you remove later, or that is no database, stays healthy. Queries then fail with `ERR_INTERNAL`.
 
 ## See also

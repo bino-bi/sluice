@@ -1,1 +1,1 @@
-cp data/rotated/binding-report-bot.yaml data/policies/
+cp rotated/binding-report-bot.yaml data/policies/

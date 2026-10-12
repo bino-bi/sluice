@@ -138,3 +138,12 @@ cases:
       SELECT id FROM n UNION ALL SELECT id FROM shop.main.orders
     expect:
       outcome: allow
+
+  - name: with only a limit, an alias spelled two ways comes back in lower case
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT EXTRACT(MONTH FROM DATE '2026-03-01') AS Month, id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT extract ('month' FROM '2026-03-01'::date) AS month, id
+        FROM shop.main.orders LIMIT 3

@@ -1,1 +1,1 @@
-chmod 600 data/secrets/report-bot-2026b.hash
+chmod 600 /tmp/sluice-key-rotation/report-bot-2026b.hash

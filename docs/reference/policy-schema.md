@@ -209,7 +209,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `rules` | list | yes | At least one rule. |
-| `rules[].resources` | [ResourceSelector](#resourceselector) | yes | Tables and columns. No `tags`, no `actions`. |
+| `rules[].resources` | [ResourceSelector](#resourceselector) |  | Tables and columns. No `tags`, no `actions`. Without it, the rule tags every table. |
 | `rules[].tags` | []string | yes | Tags to set. Lower-case letters, digits, `.`, `_`, `-`. |
 
 ## RelationshipPolicy

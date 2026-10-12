@@ -12,9 +12,9 @@ Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `re
 | `GET` | `/v1/approvals/{id}` | API key or JWT | Returns the state of an approval to its owner. |
 | `GET`, `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. |
 | `GET`, `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. |
-| `GET` | `/v1/health` | none | Returns 200 while the server runs. See [Deployment](../operations/deployment.md). |
+| `GET` | `/v1/health` | none | Returns 200 with `status` and `version` while the server runs. |
 | `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
-| `GET` | `/v1/version` | none | Returns the version of the build. See [Deployment](../operations/deployment.md). |
+| `GET` | `/v1/version` | none | Returns `version`, `commit`, `build_time`, `go` and `parser_version` of the build. |
 | `GET` | `/openapi.json` | none | Returns an OpenAPI document that names paths but describes no operation. |
 
 Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
@@ -121,7 +121,7 @@ The routes exist when the server config sets `approval.publicBaseUrl`. Send the 
 
 ## Limits
 
-- A body field outside the Request fields table gives 400 `ERR_SYNTAX`, except `params`: Sluice ignores it.
+- A body field outside the Request fields table gives 400 `ERR_SYNTAX`, except `params`: Sluice ignores an array there.
 - A statement with a parameter such as `$1` gives 400 `ERR_UNSUPPORTED_SYNTAX`. [Request lifecycle](../architecture/request-lifecycle.md) lists the statement rules.
 - An unknown `format` or `Accept` value gives 400 `ERR_SYNTAX`. A request for Arrow output gives 400 `ERR_UNSUPPORTED_SYNTAX`.
 - A body over `rest.maxBodyBytes` gives 413 `ERR_PAYLOAD_TOO_LARGE`. A request longer than `rest.requestTimeout` gives 504 `ERR_TIMEOUT`.

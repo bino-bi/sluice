@@ -10,7 +10,7 @@ Each recipe is a complete setup under `examples/` that you can run.
 | [PII masking](pii-masking.md) | Three columns come back masked. | `ColumnMaskPolicy` |
 | [Break-glass access](break-glass.md) | One group sees the real values. | `ColumnMaskPolicy` |
 | [Approval workflow](approval-workflow.md) | A person must accept a query. | `ApprovalPolicy` |
-| [Cross-source joins](cross-source-joins.md) | One query joins two data sources. | `ColumnMaskPolicy` |
+| [Cross-source joins](cross-source-joins.md) | One query joins two data sources. | `ColumnMaskPolicy`, `QueryRejectPolicy` |
 | [MCP agents](mcp-agents.md) | An agent queries under a row limit. | `QueryRewritePolicy` |
 
 Every recipe also has a `SqlAccessPolicy`. Without an allow, Sluice denies every query.

@@ -4,7 +4,6 @@
     "ticket": "T-1"
   },
   "decision": "allow",
-  "duration_ms": "<ms>",
   "event_type": "query",
   "origin": "rest",
   "policies_applied": [

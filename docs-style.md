@@ -82,6 +82,29 @@ Rules for the Security section:
 - List only protections that exist in the code. Say under which condition a protection holds.
 - Audit log, hardening and key rotation use short steps and tested examples, not long reasoning.
 
+### One owner per fact
+
+Write a fact on one page. Link to that page from the others.
+
+| Fact | Owner page |
+|---|---|
+| Server config keys and defaults | `reference/configuration.md` (generated) |
+| All fields of every policy kind | `reference/policy-schema.md` (generated) |
+| Error codes and HTTP status | `reference/error-codes.md` (generated) |
+| Metrics | `reference/metrics.md` (generated) |
+| CLI commands, flags, exit codes | `reference/cli.md` (generated) |
+| REST fields, admin endpoints, MCP tools | `reference/rest-api.md`, `admin-api.md`, `mcp.md` |
+| `metadata`, `priority`, `enforcementMode` | `policies/index.md` |
+| `match`, `exclude`, wildcards | `policies/matching.md` |
+| `conditions`, the `query.*` values | `policies/conditions.md`, `policies/guardrails.md` |
+| Stages, statements Sluice runs, error per stage | `architecture/request-lifecycle.md` |
+| Engine selection, composite rules | `architecture/policy-engines.md` |
+| API keys, JWT, rate limits, budgets | `policies/subjects.md` |
+| Approval flow and its config | `policies/approvals.md` |
+| Secrets, config loading | `operations/server-config.md` |
+| Health endpoints, ports, TLS, images | `operations/deployment.md` |
+| Audit record fields, sinks, verify | `security/audit.md` |
+
 ## 6. Page template
 
 Use this for feature pages. Reference pages and the threat model may use tables instead.

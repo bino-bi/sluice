@@ -15,7 +15,7 @@ Store the hash of the new key in a file that only the owner can write:
 --8<-- "examples/key-rotation/steps/03-protect-hash-file.sh"
 ```
 
-Add a second entry to the subject binding. The example keeps its hash files in `data/secrets`:
+Add a second entry to the subject binding. A secret file needs an absolute path. The example uses `/tmp/sluice-key-rotation`:
 
 ```yaml
 --8<-- "examples/key-rotation/both/binding-report-bot.yaml:2"

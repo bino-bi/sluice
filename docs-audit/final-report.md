@@ -15,7 +15,7 @@ Base: commit 6f7b99f (`main`). Work: branch `docs/simplify`. The docs describe `
 | Every diagram is still present and renders | Met | Style check compares each diagram with its stored copy |
 | `mkdocs build --strict` passes, no broken links | Met | Part of `make docs-check`. Link and heading checks are turned on in `mkdocs.yml` |
 | The automated style check passes | Met | Part of `make docs-check` |
-| Prose words are down by at least 40% | Met: 41% | Table below |
+| Prose words are down by at least 40% | Met: 40% | Table below |
 | The report lists what was removed, merged, and every mismatch | Met | This file |
 
 ## Prose words before and after
@@ -26,16 +26,16 @@ Counted with `scripts/docs-wordcount.py`. Code blocks are not counted. Tables ar
 |---|---:|---:|---:|---:|---:|
 | home | 1 | 1 | 328 | 180 | -45% |
 | getting-started | 4 | 2 | 1728 | 685 | -60% |
-| architecture | 4 | 3 | 4063 | 1319 | -68% |
-| policies | 13 | 13 | 9887 | 5841 | -41% |
-| operations | 6 | 6 | 3380 | 2006 | -41% |
-| security | 5 | 5 | 3390 | 2487 | -27% |
+| architecture | 4 | 3 | 4063 | 1347 | -67% |
+| policies | 13 | 13 | 9887 | 5932 | -40% |
+| operations | 6 | 6 | 3380 | 2020 | -40% |
+| security | 5 | 5 | 3390 | 2518 | -26% |
 | compliance | 4 | 0 | 1443 | 0 | -100% |
-| reference | 9 | 10 | 4945 | 4964 | 0% |
-| cookbook | 7 | 7 | 2670 | 1288 | -52% |
-| **total** | 53 | 47 | 31834 | 18770 | **-41%** |
+| reference | 9 | 10 | 4945 | 4981 | 1% |
+| cookbook | 7 | 7 | 2670 | 1293 | -52% |
+| **total** | 53 | 47 | 31834 | 18956 | **-40%** |
 
-The target was at least 40% less. Reference shrinks least: its tables now list every working field, flag and key, and it holds the new glossary.
+The target was at least 40% less. Reference stays the same size: its tables now list every working field, flag and key, and it holds the new glossary.
 
 ## Pages removed
 
@@ -52,7 +52,7 @@ New page: `reference/glossary.md`.
 
 - Go package paths, the package tour, parser and rewriter edge cases, cache key details and design history.
 - Feature counts and marketing text.
-- Text that repeated another page. Each fact now has one owner page, listed in the writer rules of `docs-style.md` and in the audit files.
+- Text that repeated another page. Each fact now has one owner page. `docs-style.md` lists the owners.
 - Every claim in the next table: the code does not do it, or a user cannot reach it.
 
 ### Documented before, not implemented
@@ -290,9 +290,9 @@ Line numbers refer to the pages at commit 6f7b99f.
 
 ## Examples
 
-36 example folders under `examples/`, 28 of them start a local server. 164 steps have golden output. 29 suites with 217 cases run with `sluice policy test`. `make docs-check` runs all of them in about 80 seconds.
+36 example folders under `examples/`, 28 of them start a local server. 164 steps have golden output. 29 suites with 218 cases run with `sluice policy test`. `make docs-check` runs all of them in about 80 seconds.
 
-Every code block in `docs/` is a snippet include of one of these files. The only exceptions are the four Mermaid diagrams and the ASCII pipeline on the home page. `scripts/docs-style-check.py` enforces this.
+Every code block in `docs/` is a snippet include of one of these files. The only exceptions are the four Mermaid diagrams and the ASCII pipeline on the home page. `scripts/docs-style-check.py` checks this: a block must include a file that the harness runs, loads, compares or syntax-checks.
 
 | Policy kind | Example with real output |
 |---|---|
@@ -360,7 +360,7 @@ One diagram changed, the component map in `architecture/index.md`. The maintaine
 | `policy-schema.md` | Kinds, fields, types, `apiVersion` and enum values are generated from `pkg/apitypes`. The "Required" and "Meaning" cells are short texts kept in the generator, checked by hand against the code. The value lists for `fakeType`, `alphabet` and the approval `op` are kept by hand |
 | `configuration.md` | Keys and defaults are generated from `internal/config`. The "Meaning" cells and nine defaults of optional blocks are kept in the generator, checked by hand |
 | `metrics.md` | Generated from the metric definitions. One row (`sluice_rest_rate_limited_total`) is kept by hand |
-| `cli.md` | Generated from the `--help` output of the built binary by `scripts/gen-cli-docs.go`. Ten help texts are reworded in the generator to fit the style rules and the glossary. The exit code table is kept by hand, checked by running each command |
+| `cli.md` | Generated from the `--help` output of the built binary by `scripts/gen-cli-docs.go`. Some help texts are reworded in the generator (its `overrides` map) to fit the style rules and the glossary. The exit code table is kept by hand, checked by running each command |
 | `rest-api.md`, `admin-api.md`, `mcp.md` | Written by hand. Each route and tool was checked against the route setup in `internal/transport/` and called on a local server |
 
 A generator stops with an error when a kept text names a field that no longer exists, or when a new field has no text. Each generator has a short skip list for things the code declares and never uses.
@@ -411,11 +411,14 @@ Fresh agents that wrote no page checked the work against the task rules and the 
 | Round | Scope | Serious | Minor | Result |
 |---|---|---:|---:|---|
 | 1 | All pages, examples, scripts and this report | 26 | 78 | All serious findings were real and are fixed. 76 minor findings are fixed, 2 are open points below |
-| 2 | The fixes of round 1 | ROUND2 | ROUND2 | ROUND2 |
+| 2 | The fixes of round 1 | 7 | 30 | 96 of 104 findings of round 1 were fully fixed, 8 partly. All 7 serious findings are fixed: 4 page facts, 1 example whose shown file was not the loaded file, 2 holes in the style check. The minor findings are fixed except the checker limits listed below |
+| 3 | The fixes of round 2 | ROUND3 | ROUND3 | ROUND3 |
 
 Most serious findings of round 1 were limits or security claims that were stated too broadly, and refused SQL forms that the first rewrite had cut. Each such fix is pinned by a test case or a step.
 
 ## Open points
+
+- The style check is a set of text rules. It can miss a count with an unusual noun or a long sentence without an end mark. A reviewer still has to read a new page.
 
 - CI: `.github/workflows/docs-check.yaml` runs `make docs-check` on pull requests and on pushes to `main`. It has not run yet, because no pull request exists for this branch.
 - The Docker paths in the docs and the compose files were not run.

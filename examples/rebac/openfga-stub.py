@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: CC-BY-4.0
 """Stub of the OpenFGA check endpoint for the rebac example. Listens on port 8091.
 
-Answers POST /stores/<store>/check from the tuples in tuples.json.
+Usage: openfga-stub.py <tuples.json>
+
+Answers POST /stores/<store>/check from the tuples in that file.
 Appends each request body to data/checks.jsonl.
 """
 
 import json
 import signal
 import socketserver
+import sys
 from pathlib import Path
 
-TUPLES = json.loads(Path("tuples.json").read_text())
+TUPLES = json.loads(Path(sys.argv[1]).read_text())
 
 
 class Check(socketserver.StreamRequestHandler):

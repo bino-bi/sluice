@@ -197,7 +197,7 @@ var docs = map[string]doc{
 	"SubjectBinding.apiKeys[].groups":        {"", "Groups of the subject."},
 
 	"DataClassification.rules":             {"yes", "At least one rule."},
-	"DataClassification.rules[].resources": {"yes", "Tables and columns. No `tags`, no `actions`."},
+	"DataClassification.rules[].resources": {"", "Tables and columns. No `tags`, no `actions`. Without it, the rule tags every table."},
 	"DataClassification.rules[].tags":      {"yes", "Tags to set. Lower-case letters, digits, `.`, `_`, `-`."},
 
 	"RelationshipPolicy.backend.endpoint":             {"yes", "URL of the OpenFGA API."},

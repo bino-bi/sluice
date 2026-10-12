@@ -124,7 +124,7 @@ Syslog and S3 get copies. Their failures never stop a query. See [Configuration]
 ## Limits
 
 - No record for a failed login, a reload, other admin calls, or a request over `limits.globalRps`, `limits.perIpRps` or `limits.maxConcurrent`.
-- The hash has no secret key. Verify does not detect missing newest records, or a change when the later hashes are computed again. Store each `last_hash` on another host. A changed log no longer contains it.
+- The hash has no secret key. Verify does not detect missing newest records, or a change when the later hashes are computed again. Store each `last_hash` on another host. `--json` prints it in full. A changed log no longer contains it.
 - A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
 - On shutdown, Sluice waits up to 10 seconds to write queued records.

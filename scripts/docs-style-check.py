@@ -24,10 +24,12 @@ BANNED = [
     r"ensur(e|es|ed|ing)", r"comprehensive(ly)?", r"effortless(ly)?",
     r"out[- ]of[- ]the[- ]box", r"under the hood", r"on the wire", r"in[- ]flight",
     r"first[- ]class", r"battle[- ]tested", r"simply", r"just", r"easily",
-    r"delve", r"crucial", r"moreover", r"it(['’]s| is) worth noting", r"note that",
+    r"delv(e|es|ed|ing)", r"crucial(ly)?", r"moreover", r"it(['’]s| is) worth noting", r"note that",
     r"it is important to", r"in summary",
-    r"not yet implemented", r"not implemented yet", r"coming soon", r"planned",
+    r"not yet implemented", r"not implemented yet", r"not supported yet", r"not yet supported",
+    r"coming soon", r"planned", r"roadmap", r"future release", r"todo",
 ]
+DASH_RE = re.compile(r"[—–‒―]|&(mdash|ndash|#8212|#8211|#x2014|#x2013);", re.I)
 BANNED_RE = re.compile(r"(?<![\w-])(" + "|".join(BANNED) + r")(?![\w-])", re.I)
 COUNT_RE = re.compile(
     r"\b(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+"
@@ -35,15 +37,14 @@ COUNT_RE = re.compile(
     r"data ?source types|drivers|engines|transports|recipes|endpoints|commands|providers|sinks)\b",
     re.I)
 ABBREV_RE = re.compile(r"\b(e\.g|i\.e|etc|vs)\.", re.I)
-HTML_CODE_RE = re.compile(r"<(pre|code)\b", re.I)
+HTML_CODE_RE = re.compile(r"<(pre|code|samp|tt|kbd|textarea)\b", re.I)
 NESTED_PAREN_RE = re.compile(r"\([^()]*\([^()]*\)")
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 FENCE_RE = re.compile(r"^(\s*)(```+|~~~+)\s*([\w-]*)")
 SNIPPET_RE = re.compile(r'^\s*--8<-- "([^":]+)(?::([\w-]+))?"\s*$')
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
-MANUAL_RE = re.compile(r"^(manual/.+|docker-compose\.yaml)$")
-RUN_DIRS = ("policies.d/", "tests/", "steps/", "expected/")
+CHECKED_SUFFIX = (".sh", ".json", ".yaml", ".yml", ".service")
 NAV = ["Home", "Getting started", "Architecture", "Policies", "Operations",
        "Security", "Reference", "Cookbook"]
 
@@ -103,7 +104,7 @@ def check_prose(rel, units, errors):
         text = clean_inline(raw)
         for m in BANNED_RE.finditer(text):
             errors.append(f"{rel}:{no}: banned word or phrase: {m.group(0)!r}")
-        if "—" in text or "–" in text:
+        if DASH_RE.search(raw):
             errors.append(f"{rel}:{no}: em or en dash in prose")
         if COUNT_RE.search(text):
             errors.append(f"{rel}:{no}: feature count: {COUNT_RE.search(text).group(0)!r}")
@@ -118,20 +119,28 @@ def check_prose(rel, units, errors):
                 errors.append(f"{rel}:{no}: semicolon chain")
 
 
-def indented_code(line: str, prev_blank: bool, prev_text: str) -> bool:
-    """Markdown reads 4 spaces after a blank line as code, unless a list or block holds it."""
-    if not prev_blank or not re.match(r"^( {4}|\t)\S", line):
+def indent_of(line: str) -> int:
+    return len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip(" "))
+
+
+def indented_code(line: str, prev_blank: bool, before: list[str]) -> bool:
+    """True for a Markdown indented code block: after a blank line, 4 spaces deeper
+    than a paragraph, or 8 deeper than the list item or admonition that holds it."""
+    indent = indent_of(line)
+    if not prev_blank or indent < 4 or FENCE_RE.match(line):
         return False
-    held = LIST_RE.match(prev_text) or prev_text.startswith((" ", "\t", "!!!", "???", "==="))
-    return not held
+    parent = next((p for p in reversed(before) if indent_of(p) < indent), "")
+    holder = LIST_RE.match(parent) or parent.lstrip().startswith(("!!!", "???", "==="))
+    return indent - indent_of(parent) >= (8 if holder else 4)
 
 
 def check_file(md: Path, errors, pinned):
     rel = md.relative_to(ROOT)
     text = COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), md.read_text())
     prose, fence, block, block_start, lang = [], None, [], 0, ""
-    prev_blank, prev_text = True, ""
+    prev_blank, before = True, []
     for no, line in enumerate(text.splitlines(), 1):
+        line = re.sub(r"^(\s*>)+ ?", "", line) if line.lstrip().startswith(">") else line
         m = FENCE_RE.match(line)
         if fence is None and m:
             fence, block, block_start, lang = m.group(2), [], no, m.group(3)
@@ -148,10 +157,11 @@ def check_file(md: Path, errors, pinned):
             continue
         if HTML_CODE_RE.search(re.sub(r"`[^`]*`", "", line)):
             errors.append(f"{rel}:{no}: HTML code element, use a snippet include")
-        if indented_code(line, prev_blank, prev_text):
+        if indented_code(line, prev_blank, before):
             errors.append(f"{rel}:{no}: indented code block, use a snippet include")
         if line.strip():
-            prev_text, prev_blank = line, False
+            before.append(line)
+            prev_blank = False
         else:
             prev_blank = True
         prose.append((no, line))
@@ -163,29 +173,60 @@ def check_file(md: Path, errors, pinned):
 
 
 def tested_file(path: str) -> str:
-    """Return "" when the example harness runs, loads or syntax-checks the file."""
+    """Return "" when the example harness runs, loads, compares or syntax-checks the file."""
     parts = Path(path).parts
-    if len(parts) < 3 or parts[0] != "examples":
+    if len(parts) < 3 or parts[0] != "examples" or ".." in parts:
         return "is not under examples/<name>/"
     example, rel = ROOT / parts[0] / parts[1], "/".join(parts[2:])
     if not (ROOT / path).is_file():
         return "does not exist"
-    if not ((example / "steps").is_dir() or (example / "tests").is_dir()):
+    steps = sorted((example / "steps").glob("*.sh"))
+    suites = sorted((example / "tests").glob("*.y*ml"))
+    if not steps and not suites:
         return "is in an example without tests/ or steps/"
-    if rel.startswith(RUN_DIRS) or rel == "serve.sh" or MANUAL_RE.match(rel):
+    yaml = rel.endswith((".yaml", ".yml"))
+    if re.fullmatch(r"steps/[^/]+\.sh", rel) or rel == "serve.sh":
         return ""
-    # Any other file must be named by something that runs.
-    scripts = [example / "serve.sh", *sorted((example / "steps").glob("*.sh"))]
-    ran = " ".join(f.read_text() for f in scripts if f.is_file())
-    prefixes = ["/".join(parts[2:i]) for i in range(3, len(parts) + 1)]
-    if any(re.search(rf"(?<![\w./-]){re.escape(pre)}(?![\w-])", ran) for pre in prefixes):
+    if rel.startswith("tests/") and yaml and "/" not in rel[6:]:
         return ""
-    return "is not used by serve.sh or a step"
+    if rel.startswith("policies.d/") and yaml:
+        return "" if suites or (example / "serve.sh").exists() or uses(example, "policies.d", whole=True) else \
+            "is in a policies.d that nothing loads"
+    if rel.startswith("expected/"):
+        return "" if (example / "steps" / (Path(rel).stem + ".sh")).is_file() else "has no step that writes it"
+    if rel.startswith("manual/") or rel == "docker-compose.yaml":
+        return "" if rel.endswith(CHECKED_SUFFIX) else "is a manual file without a syntax check"
+    # Any other file must be named in something that runs: by its path, or by its
+    # directory as a whole argument (`sluice policy validate invalid`, `moduleDir: ./rego`).
+    dirs = ["/".join(parts[2:i]) for i in range(3, len(parts))]
+    return "" if uses(example, rel) or any(uses(example, d, whole=True) for d in dirs) else \
+        "is not used by serve.sh, a step or server.yaml"
+
+
+def uses(example: Path, rel: str, whole: bool = False) -> bool:
+    """True when a line that is not a comment in serve.sh, a step or server.yaml names rel."""
+    files = [example / "serve.sh", example / "server.yaml", *sorted((example / "steps").glob("*.sh"))]
+    pattern = re.compile(rf"(?<![\w./-]){re.escape(rel)}(?![\w-])")
+    for f in files:
+        if not f.is_file():
+            continue
+        for line in f.read_text().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            line = line.replace("./", "")
+            if whole:
+                if rel in (tok.strip("\"',;").rstrip("/") for tok in line.split()):
+                    return True
+            elif pattern.search(line):
+                return True
+    return False
 
 
 def check_block(rel, start, lang, block, errors, pinned):
     body = "\n".join(block).strip("\n")
     if body.strip() in pinned:
+        if pinned[body.strip()] != lang:
+            errors.append(f"{rel}:{start}: kept diagram needs the fence language {pinned[body.strip()]!r}")
         return
     if lang == "mermaid":
         errors.append(f"{rel}:{start}: mermaid block has no copy in docs-audit/diagrams/")
@@ -214,12 +255,12 @@ def check_block(rel, start, lang, block, errors, pinned):
 
 
 def check_diagrams(errors):
-    """Every stored diagram must appear unchanged in docs/."""
-    pinned = set()
+    """Every stored diagram must appear unchanged in docs/. Returns body -> fence language."""
+    pinned = {}
     all_docs = "\n".join(p.read_text() for p in sorted((ROOT / "docs").rglob("*.md")))
     for f in sorted((ROOT / "docs-audit" / "diagrams").iterdir()):
         body = f.read_text().strip("\n")
-        pinned.add(body.strip())
+        pinned[body.strip()] = "mermaid" if f.suffix == ".mmd" else ""
         if body not in all_docs:
             errors.append(f"docs-audit/diagrams/{f.name}: diagram is missing or changed in docs/")
     return pinned
@@ -250,6 +291,11 @@ def check_nav(errors):
             nav.append(m.group(1).strip())
     if nav != NAV:
         errors.append(f"mkdocs.yml: top-level nav is {nav}, want {NAV}")
+    if re.search(r"compliance", (ROOT / "mkdocs.yml").read_text(), re.I):
+        errors.append("mkdocs.yml: names the removed Compliance section")
+    for md in (ROOT / "docs").rglob("*"):
+        if "compliance" in md.name.lower():
+            errors.append(f"{md.relative_to(ROOT)}: the Compliance section was removed")
 
 
 def main() -> int:

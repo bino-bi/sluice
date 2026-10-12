@@ -6,19 +6,14 @@ cd "$(dirname "$0")"
 
 python3 ../seed.py seed.sql data/shop.db
 
-# The hash of the old key. Sluice refuses a secret file that group or others can write.
-mkdir -p data/secrets
-echo "1405a2fa32038a9a36404bf383c9973353d368b99ee31cd66afefa0b26c4e742" > data/secrets/report-bot-2026a.hash
-chmod 600 data/secrets/report-bot-2026a.hash
+# The hash of the old key. A secret file needs an absolute path, so the example uses /tmp/sluice-key-rotation.
+# Sluice refuses a secret file that group or others can write.
+rm -rf /tmp/sluice-key-rotation && mkdir -p /tmp/sluice-key-rotation
+echo "1405a2fa32038a9a36404bf383c9973353d368b99ee31cd66afefa0b26c4e742" > /tmp/sluice-key-rotation/report-bot-2026a.hash
+chmod 600 /tmp/sluice-key-rotation/report-bot-2026a.hash
 
 # The steps change the binding, so the server reads a copy of policies.d.
 cp -r policies.d data/policies
-# The bindings name files under /etc/sluice/secrets. The copies name data/secrets.
-mkdir -p data/both data/rotated
-secrets="$PWD/data/secrets"
-sed "s|/etc/sluice/secrets|$secrets|" policies.d/binding-report-bot.yaml > data/policies/binding-report-bot.yaml
-sed "s|/etc/sluice/secrets|$secrets|" both/binding-report-bot.yaml > data/both/binding-report-bot.yaml
-sed "s|/etc/sluice/secrets|$secrets|" rotated/binding-report-bot.yaml > data/rotated/binding-report-bot.yaml
 
 # Demo secrets. Do not use these values in production.
 export SLUICE_APIKEY_PEPPER="key-rotation-demo-pepper"

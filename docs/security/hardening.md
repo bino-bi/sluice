@@ -45,7 +45,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 | JWT subject binding: `issuer`, `audience`, `jwksUrl` | The audience is checked only when set | Set all three |
 | Subject binding: `rateLimit`, `budget` | Both need `claims.subjectId` or `issuer`. Budgets also need `budget.enabled: true` | See the example |
 | `resources` in every allow policy | Without `resources`, an allow policy covers every table | List the tables |
-| `QueryRewritePolicy` on `tables: ["**"]` | Caps result rows and run time of every query. One aggregate row can hold a whole table | See [Guardrails](../policies/guardrails.md) |
+| `QueryRewritePolicy` on `tables: ["**"]` | Caps result rows and run time of every query. One aggregate row can hold a whole table | See [Rejects and rewrites](../policies/guardrails.md) |
 | `credentialsRef` of a data source | Sluice only reads | A read-only database user |
 | `s3` `bucket`, `http` `urls` | DuckDB can read the whole bucket and every listed URL | Only what clients need |
 | `headersRef` | Every URL of the data source gets the same headers | One data source per credential |

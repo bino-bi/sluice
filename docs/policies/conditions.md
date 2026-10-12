@@ -26,7 +26,7 @@ The [suite](testing.md):
 --8<-- "examples/conditions/expected/01-test-claim.txt"
 ```
 
-**What happened:** only the first subject passes the condition. No other policy allows the table, so Sluice denies the others.
+**What happened:** only the first subject passes the condition. No policy allows the other two subjects, so Sluice denies them.
 
 ## Fields
 
@@ -48,7 +48,7 @@ Sluice checks every expression at load. A value alone, such as `query.has_cte`, 
 | `query.tables` | list | Tables as `catalog.schema.table`, lower case. A missing part stays empty: `..orders`. |
 | `query.catalogs` | list | Catalogs that the query reads. |
 | `query.joins` | int | Count of `JOIN` keywords, not of comma joins. |
-| `query.has_limit`, `query.limit` | boolean, int | The query has a `LIMIT`, and its value, or 0 when that is not a constant. |
+| `query.has_limit`, `query.limit` | boolean, int | The query has a `LIMIT`, and its value, or 0 when that is not a plain number, such as `500 + 1` or `'500'`. |
 | `query.has_where`, `query.where_columns` | boolean, list | The query has a `WHERE`, and its columns. |
 | `query.is_aggregate`, `query.group_by_columns` | boolean, list | The query aggregates, and its `GROUP BY` columns. |
 | `query.has_select_star`, `query.has_order_by`, `query.has_union` | boolean | The query has `*`, `ORDER BY`, or a `UNION`, `INTERSECT` or `EXCEPT`. |
@@ -70,7 +70,7 @@ This allow needs a `LIMIT` and a `query.limit` of at most 100.
 --8<-- "examples/conditions/tests/conditions.yaml:limit"
 ```
 
-A `LIMIT` that is not a constant and a `UNION` still pass, so this is not a row limit. For that, use a [`QueryRewritePolicy`](guardrails.md).
+A `LIMIT` that is not a plain number and a `UNION` still pass, so this is not a row limit. For that, use a [`QueryRewritePolicy`](guardrails.md).
 
 ### A condition that fails
 

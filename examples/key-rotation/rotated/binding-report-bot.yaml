@@ -6,5 +6,5 @@ metadata:
 spec:
   apiKeys:
     - id: "report-bot-2026b"
-      hashRef: "secret://file//etc/sluice/secrets/report-bot-2026b.hash"
+      hashRef: "secret://file//tmp/sluice-key-rotation/report-bot-2026b.hash"
       groups: ["agents"]

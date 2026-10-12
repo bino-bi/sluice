@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: CC-BY-4.0
 # Runs the released image with the files of this example.
-# This file is not run by make docs-check.
 services:
   sluice:
     image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}

@@ -54,8 +54,6 @@ VOLATILE = {
     "schema_pulled_at": "<time>",
     "build_time": "<time>",
     "remote_ip": "<remote-ip>",
-    "duration_ms": "<ms>",
-    "latency_ms": "<ms>",
     "uptime": "<duration>",
     "version": "<version>",
     "sluice_version": "<version>",
@@ -65,6 +63,8 @@ VOLATILE = {
     "config_digest": "<digest>",
     "go": "<go-version>",
 }
+# Durations: the server omits a zero value, so the key is removed from every output.
+DROPPED = {"duration_ms", "latency_ms"}
 ID_RULE = (re.compile(r"\b[0-7][0-9A-HJKMNP-TV-Z]{25}\b"), "<id>")
 # Applied to plain text lines only. JSON is handled by key, so sample data stays as it is.
 TEXT_RULES = [
@@ -82,7 +82,8 @@ def scrub(value, key=""):
     if isinstance(value, dict):
         if key == "extras" and "origin" in value:
             value = dict(value, origin="<host>")
-        return {k: VOLATILE[k] if k in VOLATILE and v else scrub(v, k) for k, v in value.items()}
+        return {k: VOLATILE[k] if k in VOLATILE and v else scrub(v, k)
+                for k, v in value.items() if k not in DROPPED}
     if isinstance(value, list):
         return [scrub(v) for v in value]
     if isinstance(value, str) and value[:1] in "{[":

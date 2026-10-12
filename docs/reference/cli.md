@@ -46,7 +46,7 @@ Validate the audit-log hash chain under `<audit-dir>`.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--anchor` | string |  | expected prior_hash of the first record: the hex SHA-256 of the genesis |
-| `--json` | bool |  | emit the report as JSON |
+| `--json` | bool |  | print the report as JSON |
 
 See [Audit log](../security/audit.md).
 
@@ -59,7 +59,7 @@ Show a subject's budget usage for a day (default today, UTC).
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--day` | string |  | UTC day (YYYY-MM-DD); default today |
-| `--json` | bool |  | emit JSON |
+| `--json` | bool |  | print JSON |
 | `--state-dir` | string | `./state` | budget state directory |
 
 The state directory must exist. The command creates `budget.db` there if the file is missing.
@@ -88,7 +88,7 @@ Short form: `sluice ds check`
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--dir` | string | `./policies.d` | directory containing DataSource objects |
-| `--json` | bool |  | emit the report as JSON |
+| `--json` | bool |  | print the report as JSON |
 
 The command does not connect to the data sources.
 
@@ -145,7 +145,7 @@ Run declarative policy test suites against `<policy-dir>`.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--json` | bool |  | emit the report as JSON |
+| `--json` | bool |  | print the report as JSON |
 | `--strict` | bool |  | reject unknown YAML fields in policies |
 | `--tests` | string | `<policy-dir>/tests` | suite file or directory |
 
@@ -204,4 +204,4 @@ Print the build version.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--json` | bool |  | emit version metadata as JSON |
+| `--json` | bool |  | print the version data as JSON |

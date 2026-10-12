@@ -30,7 +30,7 @@ The fourth case comes from a second suite, shown below.
 
 ## Suite format
 
-A suite is a YAML file without `apiVersion`. The runner ignores unknown keys: a typo such as `outcom` skips the check.
+A suite is a YAML file without `apiVersion`. The test runner ignores unknown keys: a typo such as `outcom` skips the check.
 
 | Key | Meaning |
 |---|---|
@@ -53,7 +53,7 @@ A suite is a YAML file without `apiVersion`. The runner ignores unknown keys: a 
 | `applied` | Every policy in `Enforce` mode that matched, as `Kind/Name`. |
 | `rewrittenSql` | The whole rewritten SQL. |
 | `rewrittenSqlContains` | Parts of the rewritten SQL. |
-| `errorCode` | The error that must happen: `ACL_DENIED` for a deny, the rule code for a reject, else the rewrite error. The runner ignores the `errorCode` of a deny policy. |
+| `errorCode` | The error that must happen: `ACL_DENIED` for a deny, the rule code for a reject, else the rewrite error. The test runner ignores the `errorCode` of a deny policy. |
 
 Lists compare as sets, so the order is free. SQL checks ignore white space. An `allow` case fails when the rewrite fails, unless it sets `errorCode`.
 
@@ -115,8 +115,8 @@ With `--json`:
 
 - Only the YAML engine runs. OPA and `RelationshipPolicy` do not.
 - No SQL runs. A query on a missing column still passes.
-- SQL that does not parse reads no table. A `deny` case with a typo then passes, unless it sets `errorCode`.
-- Not checked: approvals, timeouts, rate limits, budgets and the server row limit (`limits.maxRows`, `max_rows`). A `QueryRewritePolicy` limit shows in `rewrittenSql`.
+- SQL that does not parse reads no table. A `deny` case with a typo can then pass, unless it sets `errorCode`.
+- Not checked: timeouts, rate limits, budgets and the server row limit (`limits.maxRows`, `max_rows`). A case cannot expect a held query, but `applied` lists the `ApprovalPolicy`. A `QueryRewritePolicy` limit shows in `rewrittenSql`.
 - No authentication method: `subjects.apiKeys` never matches and `subject.auth_method` is empty.
 
 ## See also

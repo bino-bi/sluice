@@ -45,7 +45,7 @@ Every response has an `X-Admin-Request-Id` header.
 | Parameter | Meaning |
 |---|---|
 | `user` | Subject id. Required. |
-| `table` | Table as `catalog.schema.table`. Required. A shorter name is matched as written, so a policy that names the schema does not match it. |
+| `table` | Table as `catalog.schema.table`. Required. Sluice does not add a missing catalog or schema. A policy that names them does not match a shorter name. |
 | `issuer` | Issuer of the subject. |
 | `groups` | Groups, separated by commas. |
 | `claims` | One `key=value` pair. Repeat the parameter for more. |

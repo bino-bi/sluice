@@ -86,4 +86,4 @@ The same join on Postgres and S3 is in `examples/cross-source-join/manual/postgr
 
 - [Data sources](../operations/data-sources.md)
 - [Access control](../policies/access-control.md)
-- [Guardrails](../policies/guardrails.md)
+- [Rejects and rewrites](../policies/guardrails.md)

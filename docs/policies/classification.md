@@ -44,7 +44,7 @@ The table `suppliers` also has an `email` column, but no tag.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `rules[].resources` | object | required | `catalogs`, `schemas`, `tables` and `columns`, with wildcards. No `tags`, no `actions`. |
+| `rules[].resources` | object | | `catalogs`, `schemas`, `tables` and `columns`, with wildcards. No `tags`, no `actions`. Without it, the rule tags every table. |
 | `rules[].tags` | list | required | Allowed: lower-case letters, digits, `.`, `_`, `-`. First and last character: letter or digit. |
 
 You can use `resources.tags` in access, row filter, mask, reject, rewrite and approval policies. One tag of the list must match. Name fields in the same clause must match too. The order of the files does not matter.

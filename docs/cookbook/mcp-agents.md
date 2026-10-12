@@ -93,5 +93,5 @@ Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` che
 ## See also
 
 - [MCP tools](../reference/mcp.md)
-- [Guardrails](../policies/guardrails.md)
+- [Rejects and rewrites](../policies/guardrails.md)
 - [Subjects](../policies/subjects.md)

@@ -63,10 +63,10 @@ An expression reads `subject.*`, as in [conditions](conditions.md), and these va
 |---|---|---|
 | `query.has_select_star`, `query.has_where`, `query.has_order_by` | boolean | |
 | `query.has_cte`, `query.is_recursive_cte`, `query.has_union`, `query.has_limit` | boolean | `has_union` is also true for `INTERSECT` and `EXCEPT`. |
-| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and these functions: `count`, `sum`, `avg`, `min`, `max`, `bit_and`, `bit_or`, `bit_xor`, `string_agg`, `array_agg`, `json_agg`, `jsonb_agg`. False for other functions, such as `median(x)`, and inside another call: `round(avg(x))`. |
-| `query.limit` | int | 0 when the `LIMIT` is not a constant. |
+| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and these functions: `count`, `sum`, `avg`, `min`, `max`, `bit_and`, `bit_or`, `bit_xor`, `string_agg`, `array_agg`, `json_agg`, `jsonb_agg`. False for other functions, such as `median(x)`, and inside a call, a cast or `CASE`: `round(avg(x))`, `sum(x)::INT`. Any function with `DISTINCT` counts as an aggregate. |
+| `query.limit` | int | 0 when the `LIMIT` is not a plain number, such as `500 + 1` or `'500'`. |
 | `query.joins` | int | Counts the `JOIN` keyword. A comma join counts as 0. |
-| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. A column inside a function call or a cast is missing. |
+| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. Columns inside a function call, a cast, `CASE` or a subquery are missing. |
 | `query.catalogs` | list of text | |
 | `query.tables` | list of text | Lower case, `catalog.schema.table`. |
 

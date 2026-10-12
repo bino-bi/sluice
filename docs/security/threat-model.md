@@ -2,7 +2,7 @@
 
 # Threat model
 
-This page lists the threats that Sluice covers, and what you must do.
+This page lists threats, what Sluice does against each, and what you must do.
 
 ## Trust boundaries
 
@@ -61,6 +61,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A user with database credentials | Nothing. This user does not pass through Sluice | Give database credentials only to Sluice |
 | A person who controls the host | Nothing. This person can read every secret and change policies | Protect the host |
 | The holder of the admin token | Nothing. The admin API shows policies and audit records | Give the token to operators only |
+| A subject learns about one person from many counts and sums | Nothing | Allow such subjects only tables without personal data |
 
 In most rows, a statement that no allow policy matches gets `ACL_DENIED` instead of the row's code. With `resources` in every allow policy, this covers `BEGIN`, `ATTACH`, `INSTALL`, `LOAD` and most DDL.
 

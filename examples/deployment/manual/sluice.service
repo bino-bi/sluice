@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Install as /etc/systemd/system/sluice.service. This file is not run by make docs-check.
+# Install as /etc/systemd/system/sluice.service.
 [Unit]
 Description=Sluice
 After=network-online.target
