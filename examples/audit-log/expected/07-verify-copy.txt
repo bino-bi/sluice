@@ -1,0 +1,2 @@
+audit-<date>.jsonl:4: hash mismatch: stored=<hash> recomputed=<hash>
+[exit status 4]

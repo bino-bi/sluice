@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# One clause per jwtClaims operator. Each clause allows its own table.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-claim-ops
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          jwtClaims:
+            - { claim: level, op: Equals, value: 3 }
+        resources: { catalogs: ["ops"], tables: ["equals"] }
+      - subjects:
+          jwtClaims:
+            - { claim: level, op: NotEquals, value: 3 }
+        resources: { catalogs: ["ops"], tables: ["not_equals"] }
+      - subjects:
+          jwtClaims:
+            - { claim: team, op: In, values: ["red", "blue"] }
+        resources: { catalogs: ["ops"], tables: ["in"] }
+      - subjects:
+          jwtClaims:
+            - { claim: team, op: NotIn, values: ["red", "blue"] }
+        resources: { catalogs: ["ops"], tables: ["not_in"] }
+      - subjects:
+          jwtClaims:
+            - { claim: team, op: Exists }
+        resources: { catalogs: ["ops"], tables: ["exists"] }
+      - subjects:
+          jwtClaims:
+            - { claim: email, op: Matches, pattern: "@example\\.com$" }
+        resources: { catalogs: ["ops"], tables: ["matches"] }

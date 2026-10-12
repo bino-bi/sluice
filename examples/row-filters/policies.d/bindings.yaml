@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The subject id is claims.subjectId. The row filter reads it as {{ subject.sub }}.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: rep-ana
+spec:
+  claims:
+    subjectId: "ana"
+  apiKeys:
+    - id: "sl_demo_ana"
+      hashRef: "secret://env/SLUICE_APIKEY_ANA_HASH"
+      groups: ["sales"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: lead-ben
+spec:
+  claims:
+    subjectId: "ben"
+  apiKeys:
+    - id: "sl_demo_ben"
+      hashRef: "secret://env/SLUICE_APIKEY_BEN_HASH"
+      groups: ["sales", "leads"]

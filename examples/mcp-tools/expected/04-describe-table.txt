@@ -1,0 +1,33 @@
+event: message
+data: {
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "3 column(s)"
+      }
+    ],
+    "structuredContent": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": true,
+          "type": "BIGINT"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "price_cents",
+          "nullable": false,
+          "type": "BIGINT"
+        }
+      ],
+      "table": "shop.main.products"
+    }
+  }
+}

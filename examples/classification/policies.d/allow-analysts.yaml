@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-analysts
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analysts", "auditors"]
+        resources:
+          catalogs: ["shop"]

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-phone
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["hr"]
+          schemas: ["main"]
+          tables: ["employees"]
+          columns: ["phone"]
+  mask:
+    type: partial
+    args:
+      showLast: 4

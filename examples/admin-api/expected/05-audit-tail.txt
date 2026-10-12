@@ -1,0 +1,17 @@
+{
+  "timestamp": "<time>",
+  "event_type": "admin-action",
+  "query_id": "<query-id>",
+  "subject": {
+    "id": "alice",
+    "groups": ["analysts"]
+  },
+  "origin": "admin",
+  "tables": ["shop.main.customers"],
+  "catalogs": ["shop"],
+  "decision": "allow",
+  "sluice_version": "<version>",
+  "message": "policy explain",
+  "prior_hash": "<hash>",
+  "hash": "<hash>"
+}

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: alice
+spec:
+  claims:
+    subjectId: "alice"
+  apiKeys:
+    - id: "sl_demo_alice"
+      hashRef: "secret://env/SLUICE_APIKEY_ALICE_HASH"
+      groups: ["analysts"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: bob
+spec:
+  claims:
+    subjectId: "bob"
+  apiKeys:
+    - id: "sl_demo_bob"
+      hashRef: "secret://env/SLUICE_APIKEY_BOB_HASH"
+      groups: ["analysts"]

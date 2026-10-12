@@ -1,6 +1,4 @@
-# A column mask needs a schema fixture: the wrapper lists the table's
-# columns, and the runner has no live datasource. The star stays and reads
-# the wrapper.
+# Column names in the order of the real table.
 schema:
   pg.public.customers: [id, email, tenant_id]
 

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+# --8<-- [start:policies]
+policies:
+  directory: "./policies.d"
+  engine: composite
+  composite:
+    members: ["yaml", "rebac"]
+# --8<-- [end:policies]
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

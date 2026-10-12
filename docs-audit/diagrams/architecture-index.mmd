@@ -4,7 +4,6 @@ flowchart LR
     OP[Operator] --> ADM["Admin (:9091)"]
     REST --> ID[identity]
     MCP --> ID
-    ADM --> ID
     ID --> QS[queryservice]
     QS --> P[parser]
     QS --> PE[policy engine]
@@ -15,6 +14,7 @@ flowchart LR
     DD --> S1[(Postgres)]
     DD --> S2[(MySQL)]
     DD --> S3[(SQLite)]
-    DD --> S4[(S3 Parquet)]
+    DD --> S4[(S3)]
     DD --> S5[(DuckDB file)]
     DD --> S6[(MotherDuck)]
+    DD --> S7[(HTTP)]

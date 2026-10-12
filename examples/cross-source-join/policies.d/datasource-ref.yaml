@@ -7,5 +7,3 @@ metadata:
 spec:
   type: duckdb_file
   path: ./data/ref.duckdb
-  readonly: true
-  schemas: ["main"]

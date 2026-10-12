@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: warehouse
+spec:
+  type: motherduck
+  database: analytics
+  tokenRef: "secret://env/SLUICE_MOTHERDUCK_TOKEN"

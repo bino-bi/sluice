@@ -2,161 +2,88 @@
 
 # Multi-tenant isolation
 
-**Goal:** three tenants share one `customers` + `orders` catalog; each API key
-sees only its tenant's rows — enforced by a single `RowFilterPolicy`, not by
-separate databases. Runnable version: `examples/multi-tenant/`.
+Two tenants share one database. One row filter limits each API key to the rows of its tenant.
 
-## Ingredients
+## Example
 
-- One `SqlAccessPolicy` allowing the `analytics` group to read both tables.
-- One `RowFilterPolicy` templating `tenant_id` from the caller's claims.
-- One `SubjectBinding` per tenant, stamping a literal `tenantId` claim onto
-  that tenant's API key.
-- A `sqlite` DataSource (`shop`) seeded with three tenants' rows.
-
-## The policies
+Start the server with `examples/multi-tenant/serve.sh`. Each tenant has a subject binding. For API keys, the `claims` of a binding are fixed values.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata: { name: allow-analytics, priority: 100 }
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects:
-          groups: ["analytics"]
-        resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers", "orders"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: RowFilterPolicy
-metadata: { name: filter-tenant, priority: 80 }
-spec:
-  match:
-    any:
-      - resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers", "orders"]
-  combine: restrictive
-  filter:
-    predicate:
-      column: tenant_id
-      op: Equals
-      value: "{{ subject.tenantId }}"
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SubjectBinding
-metadata: { name: tenant-acme }
-spec:
-  claims: { subjectId: "acme-analyst", tenantId: "acme" }
-  apiKeys:
-    - { id: "acme", hashRef: "secret://env/SLUICE_APIKEY_ACME_HASH", groups: ["analytics"] }
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SubjectBinding
-metadata: { name: tenant-beta }
-spec:
-  claims: { subjectId: "beta-analyst", tenantId: "beta" }
-  apiKeys:
-    - { id: "beta", hashRef: "secret://env/SLUICE_APIKEY_BETA_HASH", groups: ["analytics"] }
+--8<-- "examples/multi-tenant/policies.d/bindings-tenants.yaml:2"
 ```
 
-One binding per tenant: in API-key mode the binding-level `claims` values are
-stamped as literal claims on the authenticated session, so
-`{{ subject.tenantId }}` resolves to `acme` for the acme key and `beta` for
-the beta key. The template renders as a bound `$1` parameter — the tenant
-value is never spliced into the SQL string.
-
-## Run and verify
-
-From `examples/multi-tenant/`: seed the database, generate real key hashes
-(the values checked into `docker-compose.yaml` are placeholders — replace
-them), and start the stack.
-
-```bash
-sqlite3 data/shop.db < seed.sql
-sluice apikey hash --pepper multi-tenant-demo-pepper --id acme --material supersecret
-sluice apikey hash --pepper multi-tenant-demo-pepper --id beta --material supersecret
-# paste the two hashes into the environment: block of docker-compose.yaml
-docker compose up
-```
-
-Run the **same** query as both tenants:
-
-```bash
-curl -s -H "X-Api-Key: acme.supersecret" -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT id, tenant_id, email FROM shop.main.customers ORDER BY id"}' \
-     http://localhost:8080/v1/query | jq -c '.rows'
-# [[1,"acme","a1@acme.example"],[2,"acme","a2@acme.example"]]
-```
-
-Repeat with `X-Api-Key: beta.supersecret` — the result sets are disjoint
-(`beta` sees rows 3 and 4 only). The rewritten SQL is:
-
-```sql
-SELECT id, tenant_id, email FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers ORDER BY id
-```
-
-The third tenant, `gamma`, has rows in the table but no `SubjectBinding` — no
-credential exists that could reach them, and default-deny blocks everyone else.
-
-## Test it without a server
-
-Save as `policies.d/tests/isolation.yaml` and run `sluice policy test policies.d`:
+The row filter compares `tenant_id` with the `tenantId` claim.
 
 ```yaml
-cases:
-  - name: acme analyst gets the tenant filter on customers
-    identity: { subject: acme-analyst, groups: [analytics], claims: { tenantId: acme } }
-    sql: "SELECT id, tenant_id, email FROM shop.main.customers"
-    expect:
-      outcome: allow
-      filters: ["shop.main.customers"]
-      applied: ["RowFilterPolicy/filter-tenant", "SqlAccessPolicy/allow-analytics"]
-      rewrittenSqlContains: ["tenant_id = $1"]
-
-  - name: subject without a binding is denied by default
-    identity: { subject: stranger, groups: [guests] }
-    sql: "SELECT id FROM shop.main.customers"
-    expect:
-      outcome: deny
+--8<-- "examples/multi-tenant/policies.d/filter-tenant.yaml:2"
 ```
 
-## Common error
+The acme key reads the customers.
 
-!!! danger "Do not copy this shape — it never worked"
-    Old drafts and third-party posts sometimes show a dialect that Sluice has
-    never accepted. If you see any of the following, the file will not load:
+```bash
+--8<-- "examples/multi-tenant/steps/01-acme.sh"
+```
 
-    ```yaml
-    # BROKEN — wrong apiVersion, predicate directly under spec, lowercase op
-    apiVersion: sluice.bino-bi.github.io/v1
-    kind: RowFilterPolicy
-    metadata: { name: filter-tenant }
-    spec:
-      selector: { groups: ['analytics'] }
-      tables: ['orders', 'customers']
-      predicate:
-        column: tenant_id
-        op: equals
-        value: "{{ subject.tenantId }}"
-    ```
+```json
+--8<-- "examples/multi-tenant/expected/01-acme.txt"
+```
 
-    The only accepted form is `apiVersion: sluice.bino.bi/v1alpha1` with
-    `spec.match.any[]` selectors and the predicate nested under
-    `spec.filter.predicate` with a PascalCase `op:` (`Equals`), as shown above.
-    `sluice policy validate policies.d` rejects the block immediately with
-    `unknown kind sluice.bino-bi.github.io/v1/RowFilterPolicy`; fixing only
-    the apiVersion surfaces the next error,
-    `spec.match: either any or all must be non-empty` (because `selector:`
-    is not `match:`).
+The beta key sends the same SQL.
+
+```bash
+--8<-- "examples/multi-tenant/steps/02-beta.sh"
+```
+
+```json
+--8<-- "examples/multi-tenant/expected/02-beta.txt"
+```
+
+**What happened:** Sluice put the filter around the table and bound the claim value as parameter `$1`. The data also holds a tenant `gamma`. No binding has that claim, so no client reads those rows.
+
+This suite case shows the rewritten SQL. `sluice policy test policies.d --tests tests` runs the suite without a server.
+
+```yaml
+--8<-- "examples/multi-tenant/tests/isolation.yaml:rewritten"
+```
+
+## More examples
+
+A join filters both tables.
+
+```bash
+--8<-- "examples/multi-tenant/steps/04-acme-join.sh"
+```
+
+```json
+--8<-- "examples/multi-tenant/expected/04-acme-join.txt"
+```
+
+A subquery is filtered too. The table holds five orders. The acme key counts two.
+
+```bash
+--8<-- "examples/multi-tenant/steps/05-acme-subquery.sh"
+```
+
+```json
+--8<-- "examples/multi-tenant/expected/05-acme-subquery.txt"
+```
+
+A `WHERE` clause cannot widen the filter. The acme key asks for beta rows and gets none.
+
+```bash
+--8<-- "examples/multi-tenant/steps/03-acme-asks-for-beta.sh"
+```
+
+```json
+--8<-- "examples/multi-tenant/expected/03-acme-asks-for-beta.txt"
+```
+
+## Limits
+
+- A subject without the `tenantId` claim gets `ERR_INTERNAL` and no rows.
 
 ## See also
 
-- [Row filters](../policies/row-filters.md) — predicate tree, CEL expressions, `combine`.
-- [Subjects, keys & budgets](../policies/subjects.md) — bindings and API-key hashing.
-- [Testing policies](../policies/testing.md) — the full test-suite schema.
+- [Row filters](../policies/row-filters.md)
+- [Subjects](../policies/subjects.md): API keys and claims
+- [Testing policies](../policies/testing.md)

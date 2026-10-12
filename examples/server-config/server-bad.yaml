@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Invalid on purpose: keyFile is missing and the pepper is not a secret reference.
+rest:
+  tls:
+    certFile: "/etc/sluice/tls/server.crt"
+
+identity:
+  apiKeyPepper: "my-pepper-in-plain-text"

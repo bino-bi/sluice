@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-own-orders
+  priority: 80
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["sales"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  filter:
+    predicate:
+      column: owner
+      op: Equals
+      value: "{{ subject.sub }}"

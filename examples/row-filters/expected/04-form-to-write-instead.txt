@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "whole_euros"],
+  "rows": [
+    [1, 1900],
+    [2, 4500]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

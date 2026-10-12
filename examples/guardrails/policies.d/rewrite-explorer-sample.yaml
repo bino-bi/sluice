@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRewritePolicy
+metadata:
+  name: explorer-sample
+  priority: 100
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["explorers"]
+  # --8<-- [start:rewrite]
+  rewrite:
+    sample:
+      rate: 0.1
+      method: bernoulli
+  # --8<-- [end:rewrite]

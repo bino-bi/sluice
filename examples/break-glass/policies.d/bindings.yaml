@@ -11,6 +11,7 @@ spec:
       hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"
       groups: ["analytics"]
 ---
+# --8<-- [start:sre]
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SubjectBinding
 metadata:
@@ -23,3 +24,4 @@ spec:
       hashRef: "secret://env/SLUICE_APIKEY_SRE_HASH"
       # The sre group lifts the email mask.
       groups: ["analytics", "sre"]
+# --8<-- [end:sre]

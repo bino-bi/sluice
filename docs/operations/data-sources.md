@@ -2,236 +2,114 @@
 
 # Data sources
 
-Each `DataSource` manifest attaches one backend as a DuckDB catalog named
-after `metadata.name`. Queries and policy selectors address tables with
-the fully qualified `catalog.schema.table` form — a source named `shop`
-exposing SQLite's `main` schema yields `shop.main.customers`.
+A `DataSource` object attaches one database or file store as a catalog. The files live in the policy directory.
 
-Manifests are plain YAML objects. The shipped examples keep them next to
-the policies in `policies.d`; the server config also offers a dedicated
-`datasources.directory` (default `./datasources.d`). Changing a
-`DataSource` requires a restart — see
-[Configuration reload](hot-reload.md).
+## Example
 
-## Drivers
-
-### postgres
+Goal: attach a SQLite file and a DuckDB file, then join them in one query.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: pg
-spec:
-  type: postgres
-  connection: "postgres://sluice@postgres:5432/orders?sslmode=require"
-  credentialsRef: "secret://env/SLUICE_PG_PASSWORD"
-  readonly: true
-  schemas: ["public"]
-```
-
-### mysql
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: crm
-spec:
-  type: mysql
-  connection: "mysql://sluice@mysql.internal:3306/crm"   # or mariadb://
-  credentialsRef: "secret://env/SLUICE_MYSQL_PASSWORD"
-  readonly: true
-  schemas: ["crm"]
-```
-
-### sqlite
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: shop
-spec:
-  type: sqlite
-  path: /data/shop.db
-  readonly: true
-  schemas: ["main"]
-```
-
-### duckdb_file
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: metrics
-spec:
-  type: duckdb_file
-  path: /data/metrics.duckdb
-  readonly: true
-```
-
-### s3
-
-Exposes Parquet, CSV, JSON, and Excel (`.xlsx`) files on S3-compatible
-object storage as read-only views — one view per `allowedPaths` entry.
-The format is inferred per path from the file extension
-(`.parquet`, `.csv`, `.json`/`.ndjson`/`.jsonl`, `.xlsx`); paths without
-a recognizable extension (e.g. `raw/**`) require an explicit
-`format:`, which then applies to every path in the manifest. Globs are
-fine for parquet/csv/json but not for xlsx (`read_xlsx` opens a single
-workbook).
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: ref
-spec:
-  type: s3
-  bucket: "ref-data"
-  region: "us-east-1"
-  endpoint: "http://minio:9000"          # optional, for S3-compatible stores
-  allowedPaths:                          # driver-level allow-list
-    - "s3://ref-data/countries.csv"      # → view ref.main.countries_csv
-    - "s3://ref-data/facts/*.parquet"    # → view ref.main.facts___parquet
-    - "s3://ref-data/plan.xlsx"          # → view ref.main.plan_xlsx
-  credentialsRef: "secret://env/SLUICE_S3_CREDS"
-  readonly: true
-  schemas: ["main"]
+--8<-- "examples/cross-source-join/policies.d/datasource-shop.yaml:2"
 ```
 
 ```yaml
-# Extension-less paths need the format pinned explicitly:
-spec:
-  type: s3
-  bucket: "lake"
-  region: "eu-central-1"
-  format: parquet                        # applies to all allowedPaths
-  allowedPaths:
-    - "s3://lake/raw/**"
+--8<-- "examples/cross-source-join/policies.d/datasource-ref.yaml:2"
 ```
-
-> Renamed from `s3_parquet`. Old manifests fail validation with a
-> pointer at the rename; `type: s3` with the same fields (plus
-> `format: parquet` for extension-less paths) is a drop-in replacement.
-
-### http
-
-Exposes remote files served over HTTP(S) as read-only views — one view
-per URL. The `urls` list is the allow-list: no globs, every file is one
-explicit URL, and nothing else on those hosts becomes readable. Format
-inference works as for `s3` (query strings, e.g. pre-signed URLs, do
-not defeat it); `format:` pins it when the URL has no telling extension.
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: web
-spec:
-  type: http
-  urls:
-    - "https://data.example.com/exports/countries.csv"
-    - "https://data.example.com/exports/facts.parquet"
-    - "https://api.example.com/v1/report.json"
-  headersRef: "secret://env/SLUICE_HTTP_HEADERS"   # optional, for authenticated endpoints
-  readonly: true
-```
-
-`headersRef` resolves to a JSON object of header name → value (e.g.
-`{"Authorization": "Bearer …"}`). The headers are installed as one
-DuckDB HTTP secret per URL origin, scoped to that origin — they are
-never sent to other hosts.
-
-### motherduck
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: warehouse
-spec:
-  type: motherduck
-  database: analytics
-  tokenRef: "secret://env/SLUICE_MOTHERDUCK_TOKEN"
-  readonly: true
-```
-
-## Common fields
-
-| Field | Meaning |
-| ----- | ------- |
-| `readonly` | Declares the source read-only. Catalogs are attached `READ_ONLY` regardless. |
-| `schemas` / `tables` | Restrict which schemas/tables the catalog exposes. |
-| `attachMode` | `readonly` (current behavior) or `readwrite` — the latter is declared for a future release; every attach is read-only today. |
-| `healthCheck` | `{query, interval}` — per-source liveness probe. The health loop ticks every 30 s by default; `-1` disables it. |
-
-Credentials resolve through [`secret://` references](server-config.md) into
-DuckDB secrets — they never appear in logs or audit records.
-
-### Extension provisioning
-
-Builds made with `make build-static`, the repository `Dockerfile`, and the
-released linux/amd64 binary and `-amd64` container image have DuckDB's
-`httpfs`, `excel`, and `sqlite_scanner` extensions **compiled into the
-binary**. Three extensions cannot be embedded: `motherduck`
-(closed-source), `mysql_scanner` (upstream duckdb-mysql supports loading
-only, not static linking), and `postgres_scanner` (its vendored libpq
-collides with the pg_query parser Sluice links).
-
-**Container images pre-seed those three as loadable files** under
-`/home/nonroot/.duckdb/extensions` (all six for the `-arm64` image, which
-uses the prebuilt bindings without the compiled-in trio), so every
-datasource type attaches without touching `extensions.duckdb.org` —
-air-gap ready as shipped. Drivers load pre-seeded files via a bare
-`LOAD`, and DuckDB verifies the extension signature at load time.
-
-Host builds (`make build`/`build-static` outside a container, the
-released darwin/windows/linux-arm64 binaries) still install
-non-embedded extensions on first attach, downloading unless already
-cached in `~/.duckdb`. Air-gapped hosts can pre-seed the same way:
-`scripts/fetch-duckdb-extensions.sh <platform> ~/.duckdb/extensions
-<extension>...` on a connected machine, then copy the directory over.
-
-## The read-only guarantee
-
-Sluice enforces a statement allowlist (`SELECT`, `EXPLAIN`, `SET`, `SHOW`,
-`PRAGMA`) *before* any query reaches a source: `INSERT`/`UPDATE`/`DELETE`
-return `ACL_REJECTED`, and `COPY`, DDL, `ATTACH`, `LOAD`, and `INSTALL`
-return `ERR_UNSUPPORTED_SYNTAX` — regardless of what the database grants
-allow. Still provision read-only database credentials for every
-`connection`: defense in depth costs nothing.
-
-## Checking sources
 
 ```bash
-sluice datasource check --dir ./policies.d        # alias: sluice ds check
+--8<-- "examples/cross-source-join/steps/01-join.sh"
 ```
 
-`check` is the spec-level CI gate: it loads the manifests and verifies each
-`spec.type` has a registered driver and the document is structurally valid
-(exit `2` when any source fails). It does **not** open connections — live
-attach and the periodic health probe happen in `sluice serve`, and
-`GET /v1/ready` reports per-source health.
+```json
+--8<-- "examples/cross-source-join/expected/01-join.txt"
+```
 
-Readiness is fail-closed: every source starts unhealthy, one sweep fires
-immediately at boot, then every `healthCheck.interval` (default 30 s). A
-source that dies mid-run flips unhealthy within one interval, `/v1/ready`
-turns `503`, and queries touching it return `ERR_DATASOURCE_UNAVAILABLE`
-instead of `ERR_INTERNAL`.
+What happened: `metadata.name` became the catalog name, so the tables are `shop.main.orders` and `ref.main.countries`. Sluice attached both files at start.
 
-For editor and CI schema validation of the manifests themselves:
+## Types
+
+| `type` | Reads | Fields | Credentials |
+|---|---|---|---|
+| `sqlite` | A SQLite file | `path` | None |
+| `duckdb_file` | A DuckDB file | `path` | None |
+| `postgres` | A PostgreSQL database | `connection` | `credentialsRef`: the password |
+| `mysql` | A MySQL or MariaDB database | `connection` | `credentialsRef`: the password |
+| `s3` | Files in an S3 bucket | `bucket`, `region`, `allowedPaths`, `endpoint`, `format` | `credentialsRef`: JSON with `key_id`, `secret`, `session_token` |
+| `http` | Files behind HTTP URLs | `urls`, `format` | `headersRef`: JSON object of headers |
+| `motherduck` | A MotherDuck database | `database` | `tokenRef`: the token |
+
+Fields that end in `Ref` take a [secret reference](server-config.md). The checks validate the files below but connect to no service.
+
+=== "postgres"
+
+    ```yaml
+    --8<-- "examples/data-sources/policies.d/datasource-postgres.yaml:2"
+    ```
+
+=== "mysql"
+
+    ```yaml
+    --8<-- "examples/data-sources/policies.d/datasource-mysql.yaml:2"
+    ```
+
+=== "s3"
+
+    ```yaml
+    --8<-- "examples/data-sources/policies.d/datasource-s3.yaml:2"
+    ```
+
+=== "http"
+
+    ```yaml
+    --8<-- "examples/data-sources/policies.d/datasource-http.yaml:2"
+    ```
+
+=== "motherduck"
+
+    ```yaml
+    --8<-- "examples/data-sources/policies.d/datasource-motherduck.yaml:2"
+    ```
+
+- `postgres`, `mysql`: the URL needs a user and a database. The default ports are 5432 and 3306. `mysql` also accepts `mariadb://`.
+- `s3`, `http`: each path or URL becomes one view in the schema `main`. Sluice reads nothing else.
+- `s3`, `http`: the file extension selects the format. Without one, set `format` to `parquet`, `csv`, `json` or `xlsx`.
+- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every folder below. `endpoint` names an S3-compatible store.
+- `http`: no wildcards. Sluice sends the headers only to the hosts of `urls`.
+
+## Always true
+
+- Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
+- Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
+- A source that Sluice cannot attach stops the start. `datasources.failFast: false` only skips a source with a missing file or a bad URL.
+- One query can join tables of several catalogs. See [Cross-source joins](../cookbook/cross-source-joins.md).
+- `limits.disableCrossCatalog: true` rejects such a query with `ACL_REJECTED`.
+
+## Check the files
 
 ```bash
-sluice schema export --kind DataSource > datasource.schema.json
+--8<-- "examples/data-sources/steps/02-check.sh"
 ```
 
-## Cross-catalog joins
+```text
+--8<-- "examples/data-sources/expected/02-check.txt"
+```
 
-Because every source is a catalog in the same DuckDB instance, one `SELECT`
-can join PostgreSQL against files on S3. Set
-`limits.disableCrossCatalog: true` to forbid multi-catalog queries. See the
-[cross-source joins cookbook](../cookbook/cross-source-joins.md) for a
-worked example.
+The command only reads the files. An invalid file ends it with status 1:
+
+```text
+--8<-- "examples/data-sources/expected/03-check-invalid.txt"
+```
+
+A running server tests every source at start and then every 30 seconds. `GET /v1/ready` shows the result. See [Deployment](deployment.md).
+
+## Limits
+
+- `datasource check` and `config validate` miss some errors. An `s3` source without `region` or a `motherduck` source without `tokenRef` stops `sluice serve`.
+- A `sqlite` or `duckdb_file` file must exist at start.
+- The health test does not see a file that you remove later. Queries then fail with `ERR_INTERNAL`.
+
+## See also
+
+- [Server config & secrets](server-config.md)
+- [Configuration reload](hot-reload.md)
+- [Policy schema](../reference/policy-schema.md)

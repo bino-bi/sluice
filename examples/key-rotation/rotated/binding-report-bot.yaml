@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: report-bot
+spec:
+  apiKeys:
+    - id: "report-bot-2026b"
+      hashRef: "secret://env/REPORT_BOT_2026B_HASH"
+      groups: ["agents"]

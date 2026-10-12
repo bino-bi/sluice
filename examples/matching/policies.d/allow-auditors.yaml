@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-auditors
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          roles: ["auditor"]
+          jwtClaims:
+            - claim: org.country
+              op: In
+              values: ["DE", "AT"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["audit_notes"]

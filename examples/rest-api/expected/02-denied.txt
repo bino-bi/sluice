@@ -1,0 +1,6 @@
+{
+  "code": "ACL_DENIED",
+  "message": "access denied",
+  "query_id": "<query-id>",
+  "policy": "deny-salaries"
+}

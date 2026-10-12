@@ -1,0 +1,3 @@
+[
+  {"user": "user:alice", "relation": "viewer", "object": "table:shop.main.orders"}
+]

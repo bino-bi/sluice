@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "name", "phone", "birth_date", "address", "ssn", "card", "salary", "notes", "email"],
+  "rows": [
+    [1, "Wren Jensen", "*******0101", "1988-01-01", "REDACTED", null, "6450-0314-1819-8257", 75868, "Prefers ca...", "17e8e1c5ed55183c9d382d4f35c5e7733975be4e06c656cac8d6be2c54cb968e"],
+    [2, "Alex Vega", "*******0102", "1975-01-01", "REDACTED", null, "8747-8067-1365-4115", 55975, "On leave", "9a2ef719edfa3b9aaa89d6ab7d2c9188fc672e0ad1de4456f86efa3823439760"]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

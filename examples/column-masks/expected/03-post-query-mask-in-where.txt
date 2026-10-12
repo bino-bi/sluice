@@ -1,0 +1,5 @@
+{
+  "code": "ERR_MASK_UNSUPPORTED_CONTEXT",
+  "message": "a post-query masked column is used outside a bare select item",
+  "query_id": "<query-id>"
+}

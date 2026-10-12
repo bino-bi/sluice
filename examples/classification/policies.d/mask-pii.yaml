@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-pii
+spec:
+  match:
+    any:
+      - resources:
+          tags: ["pii"]
+  mask:
+    type: partial
+    args:
+      showFirst: 1
+      showLast: 0

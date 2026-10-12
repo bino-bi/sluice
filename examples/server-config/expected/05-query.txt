@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "customer"],
+  "rows": [
+    [1, "acme"],
+    [2, "beta"]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

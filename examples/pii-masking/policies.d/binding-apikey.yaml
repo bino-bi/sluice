@@ -6,7 +6,6 @@ metadata:
 spec:
   claims:
     subjectId: "pii-analyst"
-    groups: "groups"
   apiKeys:
     - id: "sl_demo_analyst"
       hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"

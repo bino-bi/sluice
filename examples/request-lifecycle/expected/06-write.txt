@@ -1,0 +1,5 @@
+{
+  "code": "ACL_REJECTED",
+  "message": "write operations are not permitted",
+  "query_id": "<query-id>"
+}

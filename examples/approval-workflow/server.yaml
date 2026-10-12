@@ -14,6 +14,7 @@ audit:
 identity:
   apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"
 
+# --8<-- [start:approval]
 approval:
   # The accept and reject links in the webhook start with this URL.
   publicBaseUrl: "http://localhost:8080"
@@ -25,3 +26,4 @@ approval:
   grantTtl: 5m
   webhooks:
     - url: "http://localhost:8090/"
+# --8<-- [end:approval]

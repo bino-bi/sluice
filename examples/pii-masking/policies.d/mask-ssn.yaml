@@ -12,7 +12,9 @@ spec:
           schemas: ["main"]
           tables: ["customers"]
           columns: ["ssn"]
+  # --8<-- [start:mask]
   mask:
     type: "constant"
     args:
       value: "REDACTED"
+  # --8<-- [end:mask]

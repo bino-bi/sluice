@@ -12,16 +12,14 @@ Taken at commit 6f7b99f, before any rewrite. Every diagram listed here must stil
 
 The original blocks are kept byte for byte in `docs-audit/diagrams/`. The final check compares each block in `docs/` with its copy there.
 
-## Label changes
+## Changes
 
-None applied yet.
+The maintainer approved these three changes to diagram 2 (component map) on 2026-10-12. The copy in `diagrams/architecture-index.mmd` holds the new version.
 
-Found by the audit, waiting for a decision:
-
-| Diagram | Finding | Evidence |
+| Change | Reason | Evidence |
 |---|---|---|
-| 2, component map | Node label `S3 Parquet`: the type is `s3` and reads parquet, csv, json and xlsx | `pkg/apitypes/datasource.go:58-73` |
-| 2, component map | Edge `Admin --> identity`: the admin listener checks a static bearer token and does not use the identity layer. This is an edge, not a label | `internal/transport/admin/auth.go:16-31` |
-| 2, component map | The `http` datasource type has no node. This is a missing node, not a label | `pkg/apitypes/datasource.go:62` |
+| Node label `S3 Parquet` is now `S3` | The type is `s3`. It reads parquet, csv, json and xlsx | `pkg/apitypes/datasource.go:58-73` |
+| New node `HTTP` | The `http` data source type had no node | `pkg/apitypes/datasource.go:62` |
+| Edge `Admin --> identity` removed | The admin listener checks a static bearer token. It does not use the identity layer | `internal/transport/admin/auth.go:16-31` |
 
-Diagrams 1, 3, 4 and 5: no label is proven wrong.
+Diagrams 1, 3, 4 and 5 are unchanged. No label in them is proven wrong.

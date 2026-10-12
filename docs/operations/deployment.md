@@ -2,172 +2,125 @@
 
 # Deployment
 
-Sluice compiles to a single binary, but not a fully static one: the
-PostgreSQL parser (`pg_query`) and embedded DuckDB are cgo libraries, so
-the binary links against glibc. Build on (or target) a glibc-based Linux
-and keep `CGO_ENABLED=1`; plain `GOOS=linux CGO_ENABLED=0` cross-builds do
-not work.
+Run Sluice as a container or as a system service.
 
-!!! warning "Alpha — pin an exact version"
-    The current release is `v0.1.0-rc.2`. Container images and binaries are
-    published, but the API surface and policy schema may still change before
-    `v0.1.0`, and pre-releases are deliberately never tagged `latest`. Pin an
-    exact tag. There is still **no Helm chart**.
+## Example
 
-## Container image
-
-```bash
-docker pull ghcr.io/bino-bi/sluice:0.1.0-rc.2
-docker run --rm ghcr.io/bino-bi/sluice:0.1.0-rc.2 version
-```
-
-| Tag | Contents |
-| --- | -------- |
-| `ghcr.io/bino-bi/sluice:<version>` | Multi-arch manifest — resolves to `amd64` or `arm64` automatically. Use this one. |
-| `ghcr.io/bino-bi/sluice:<version>-amd64` | linux/amd64 only. |
-| `ghcr.io/bino-bi/sluice:<version>-arm64` | linux/arm64 only. |
-| `ghcr.io/bino-bi/sluice:latest` | Most recent **stable** release. Never points at a pre-release, and does not exist until the first stable tag ships. |
-
-The version tag omits the leading `v`: the tag for release `v0.1.0-rc.2` is
-`0.1.0-rc.2`.
-
-Image manifests are signed with keyless cosign — verify before deploying:
-
-```bash
-cosign verify ghcr.io/bino-bi/sluice:0.1.0-rc.2 \
-  --certificate-identity-regexp 'https://github.com/bino-bi/sluice/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
-
-The runtime is `gcr.io/distroless/cc-debian13:nonroot` (glibc + libstdc++,
-uid/gid 65532, no shell). Working directory is `/var/lib/sluice`;
-pre-seeded DuckDB extensions live under `/home/nonroot/.duckdb/extensions`,
-so no datasource type needs outbound access to `extensions.duckdb.org` at
-runtime. The two architectures differ only in how those extensions are
-delivered: `-amd64` compiles `httpfs`/`excel`/`sqlite_scanner` into the
-binary and pre-seeds the rest; `-arm64` uses the prebuilt DuckDB bindings
-and pre-seeds all six.
-
-The image declares `EXPOSE 8080 8081 9090`; `EXPOSE` is metadata only, so
-publish the ports you actually configure — `8080` (data) and `9091`
-(admin) with the defaults.
-
-## Building the image yourself
-
-The repository `Dockerfile` is a multi-stage build: a `libduckdb` stage
-compiles DuckDB with the `httpfs`/`excel`/`sqlite_scanner` extensions
-statically linked (cached until `scripts/DUCKDB_VERSION` changes, ~30 min
-cold), an `extensions` stage pre-seeds the non-embeddable
-`postgres_scanner`/`mysql_scanner`/`motherduck` loadable extensions,
-`golang:1.26-bookworm` compiles the binary against the bundle, and the
-runtime stage is `gcr.io/distroless/cc-debian12:nonroot` (glibc +
-libstdc++, uid/gid 65532, no shell). The image needs no outbound access
-to `extensions.duckdb.org` at runtime for any datasource type. Working
-directory is `/var/lib/sluice`; pre-seeded extensions live under
-`/home/nonroot/.duckdb/extensions`.
-
-```bash
-docker build -t sluice:dev .
-```
-
-The DuckDB compile stage caps parallelism at 4 jobs so it fits Docker
-Desktop's default ~8 GB VM; raise it with `--build-arg LIBDUCKDB_JOBS=N`
-when the daemon has more memory.
-
-Every example compose file accepts a `SLUICE_IMAGE` override, so a local
-build drops straight into them:
-
-```bash
-SLUICE_IMAGE=sluice:dev docker compose up
-```
-
-## Compose
-
-The `hello-sluice` compose service shows the full pattern:
+Goal: start Sluice with TLS on the admin listener and check that it is ready.
 
 ```yaml
-# fragment — docker-compose service, adapted from examples/hello-sluice
-services:
-  sluice:
-    image: ghcr.io/bino-bi/sluice:0.1.0-rc.2
-    ports:
-      - "8080:8080"   # REST data plane
-      - "9091:9091"   # admin plane (reload, explain, /metrics)
-    environment:
-      SLUICE_ADMIN__TOKEN: "${SLUICE_ADMIN_TOKEN}"
-      SLUICE_AUDIT_GENESIS: "${SLUICE_AUDIT_GENESIS}"   # secret://env/... target
-    volumes:
-      - ./server.yaml:/etc/sluice/server.yaml:ro
-      - ./policies.d:/etc/sluice/policies.d:ro
-      - sluice-audit:/var/lib/sluice/audit
-    command: ["serve", "--config=/etc/sluice/server.yaml",
-              "--policies-dir=/etc/sluice/policies.d"]
-    healthcheck:   # distroless has no shell or curl — run the binary
-      test: ["CMD", "/usr/local/bin/sluice", "version"]
-      interval: 10s
+--8<-- "examples/deployment/server.yaml:admin"
 ```
 
-The `SLUICE_ADMIN__TOKEN` override only binds when the mounted
-`server.yaml` contains the `admin.token` key — keep `admin: {token: ""}`
-in the file, or the admin plane silently runs token-less in dev mode (see
-[Server config & secrets](server-config.md)).
+Check readiness:
+
+```bash
+--8<-- "examples/deployment/steps/02-ready.sh"
+```
+
+```json
+--8<-- "examples/deployment/expected/02-ready.txt"
+```
+
+Call the admin API:
+
+```bash
+--8<-- "examples/deployment/steps/04-admin-healthz.sh"
+```
+
+```json
+--8<-- "examples/deployment/expected/04-admin-healthz.txt"
+```
+
+What happened: the data source is healthy. The admin API answers only over TLS and with the token.
+
+## Ports and health endpoints
+
+| Port | Key | Serves |
+|---|---|---|
+| `8080` | `rest.listen` | Queries, health endpoints, approval links. |
+| `9091` | `admin.listen` | The [Admin API](../reference/admin-api.md) and `/metrics`, with `admin.enabled: true`. |
+| None | `mcp.listen` | [MCP](../reference/mcp.md) over HTTP. Set it for `mcp.transport: streamable_http`. |
+
+Keep the admin port off the public network.
+
+| Endpoint | Listener | Answer |
+|---|---|---|
+| `GET /v1/health` | REST | `200` while the process runs. |
+| `GET /v1/ready` | REST | `200`, or `503` with status `degraded` while a data source is unhealthy. |
+| `GET /v1/version` | REST | The build. |
+| `GET /admin/healthz` | Admin | The same status, plus `config_version`. Needs the token. |
+
+The REST endpoints need no login.
+
+```json
+--8<-- "examples/deployment/expected/01-health.txt"
+```
+
+```json
+--8<-- "examples/deployment/expected/03-version.txt"
+```
+
+## TLS
+
+`rest.tls` and `admin.tls` take the same keys. The lowest version is TLS 1.2.
+
+| Key | Meaning |
+|---|---|
+| `certFile`, `keyFile` | Certificate and key as PEM files. Both are required. Sluice does not start if it cannot read them. |
+| `clientCA` | A CA file for mutual TLS. Clients must then present a certificate that this CA signed. |
+
+Without a `tls` block, a listener serves plain HTTP and logs a warning. The example creates a test certificate:
+
+```bash
+--8<-- "examples/deployment/serve.sh:cert"
+```
+
+## Container
+
+| Tag | Content |
+|---|---|
+| `ghcr.io/bino-bi/sluice:<version>` | `linux/amd64` and `linux/arm64`. Use this tag. |
+| `<version>-amd64`, `<version>-arm64` | One architecture. |
+| `latest` | The newest stable release. Never a pre-release. |
+
+- The tag has no leading `v`: release `v0.1.0-rc.2` is tag `0.1.0-rc.2`.
+- The images are signed with cosign. See [Install](../getting-started/install.md).
+- The image has no shell and runs as user `65532` in `/var/lib/sluice`. This user must be able to read the mounted files.
+- The image declares `8080`, `8081` and `9090`. Publish the ports that you configured.
+- `docker build -t sluice:dev .` builds your own image. `SLUICE_IMAGE=sluice:dev` makes the example compose files use it.
+- `--build-arg LIBDUCKDB_JOBS=8` raises the 4 jobs of its DuckDB compile.
+
+```yaml
+--8<-- "examples/deployment/manual/docker-compose.yaml:2"
+```
 
 ## systemd
 
 ```ini
-# fragment — /etc/systemd/system/sluice.service
-[Unit]
-Description=Sluice SQL gateway
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=sluice
-Group=sluice
-WorkingDirectory=/var/lib/sluice
-EnvironmentFile=/etc/sluice/sluice.env
-ExecStart=/usr/local/bin/sluice serve --config /etc/sluice/server.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/sluice
-
-[Install]
-WantedBy=multi-user.target
+--8<-- "examples/deployment/manual/sluice.service:2"
 ```
 
-`ExecReload` sends `SIGHUP`, which triggers a validate-then-swap policy
-reload without dropping connections — see
-[Configuration reload](hot-reload.md). Keep `SLUICE_ADMIN__TOKEN` and other
-secret env vars in `/etc/sluice/sluice.env` (mode `0600`).
+| Signal | Effect |
+|---|---|
+| `SIGTERM`, `SIGINT` | Sluice stops. REST requests get 10 seconds to finish, admin requests 5. |
+| `SIGHUP` | Sluice [reloads](hot-reload.md) the policy directory. |
 
-## File layout and permissions
+Exit status 1 means a start error, 2 a listener error.
 
-| Path | Suggested mode | Purpose |
-| ---- | -------------- | ------- |
-| `/etc/sluice/server.yaml` | `0640 root:sluice` | Server config. No secret literals — use `secret://` refs. |
-| `/etc/sluice/policies.d/` | dir `0750`, files `0640` | Policy, binding, and data source manifests. Deployed read-only. |
-| `/etc/sluice/secrets/` | files `0600 sluice` | Targets of `secret://file//...` refs. Group/world-writable secret files are refused. |
-| `/var/lib/sluice/audit/` | `0750 sluice:sluice` | Hash-chained JSONL audit files (Sluice creates the directory `0750`). |
-| `/var/lib/sluice/state/` | `0750 sluice:sluice` | Budget SQLite state (`budget.stateDir`), when budgets are enabled. |
+## DuckDB extensions
 
-## Health endpoints for probes
+Most data source types need a DuckDB extension. Some builds download it to `~/.duckdb/extensions` at first use.
 
-| Endpoint | Listener | Use as |
-| -------- | -------- | ------ |
-| `GET /v1/health` | data (`:8080`) | Liveness — process is up. |
-| `GET /v1/ready` | data (`:8080`) | Readiness — returns `503` and lists data sources while unhealthy. |
-| `GET /admin/healthz` | admin (`:9091`) | Admin-plane health (requires the admin bearer token). |
+| Build | Included | Downloads for |
+|---|---|---|
+| Container images | All extensions | Nothing |
+| `linux_amd64` release, `make build-static` | `httpfs`, `excel`, `sqlite_scanner` | `postgres`, `mysql`, `motherduck` |
+| `linux_arm64` and `darwin` releases, `make build` | Nothing | Every type except `duckdb_file` |
 
-## Ports
+`make build-static` first runs `make libduckdb`, a slow compile. `scripts/fetch-duckdb-extensions.sh` fills the folder ahead of time.
 
-| Port | Config key | Purpose |
-| ---- | ---------- | ------- |
-| `8080` | `rest.listen` | Data plane: `POST /v1/query`, health, version, approval accept/reject links. |
-| `9091` | `admin.listen` | Admin plane: `/admin/*` and `GET /metrics`. Only served when `admin.enabled: true`. |
-| — | `mcp.listen` | Streamable-HTTP MCP transport; unset by default (`mcp.enabled: false`, stdio transport). |
+## See also
 
-Keep `:9091` off the public network — it carries reload, policy
-introspection, and audit tail. Front `:8080` with TLS (`rest.tls`) or a
-terminating proxy.
+- [Server config & secrets](server-config.md)
+- [Hardening](../security/hardening.md)

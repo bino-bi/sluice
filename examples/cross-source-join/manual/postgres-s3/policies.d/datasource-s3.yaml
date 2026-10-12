@@ -14,5 +14,3 @@ spec:
   allowedPaths:
     - "s3://ref-data/countries.parquet"
   credentialsRef: "secret://env/SLUICE_S3_CREDS"
-  readonly: true
-  schemas: ["main"]

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: EXPLAIN of a SELECT runs
+    identity: { subject: ana, groups: [analytics] }
+    sql: "EXPLAIN SELECT id FROM shop.main.customers"
+    expect:
+      outcome: allow
+
+  - name: SHOW names no table, so allow-customers does not match
+    identity: { subject: ana, groups: [analytics] }
+    sql: "SHOW tables"
+    expect:
+      outcome: deny

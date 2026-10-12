@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: CC-BY-4.0
+schema:
+  shop.crm.customers: [id, email]
+  shop.crm.leads: [id, email]
+  shop.billing.accounts: [id, iban]
+
+cases:
+  # --8<-- [start:masks]
+  - name: at equal priority the more exact selector wins
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT email FROM shop.crm.customers"
+    expect:
+      outcome: allow
+      masks: ["shop.crm.customers.email=null"]
+
+  - name: other tables get the wider mask
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT email FROM shop.crm.leads"
+    expect:
+      outcome: allow
+      masks: ["shop.crm.leads.email=hash"]
+  # --8<-- [end:masks]
+
+  - name: a higher priority wins over a more exact selector
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT iban FROM shop.billing.accounts"
+    expect:
+      outcome: allow
+      masks: ["shop.billing.accounts.iban=hash"]

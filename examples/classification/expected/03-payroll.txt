@@ -1,0 +1,6 @@
+{
+  "code": "ACL_DENIED",
+  "message": "restricted data needs the auditors group",
+  "query_id": "<query-id>",
+  "policy": "deny-restricted"
+}

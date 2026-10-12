@@ -1,0 +1,15 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "status"],
+  "rows": [
+    [1, "paid"],
+    [2, "open"],
+    [3, "paid"]
+  ],
+  "row_count": 3,
+  "truncated": true,
+  "warning": {
+    "code": "ERR_RESULT_TRUNCATED",
+    "message": "result truncated"
+  }
+}

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The wider mask has the higher priority, so it wins on every table.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-iban
+  priority: 60
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["billing"]
+          columns: ["iban"]
+  mask:
+    type: hash
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-iban-accounts
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["billing"]
+          tables: ["accounts"]
+          columns: ["iban"]
+  mask:
+    type: "null"

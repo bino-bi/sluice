@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: report-bot
+spec:
+  # rateLimit and budget apply only with claims.subjectId or issuer.
+  claims:
+    subjectId: "report-bot"
+  apiKeys:
+    - id: "sl_demo_report_bot"
+      hashRef: "secret://env/SLUICE_APIKEY_REPORT_BOT_HASH"
+      groups: ["agents"]
+  rateLimit:
+    rps: 5
+    burst: 10
+  budget:
+    cpuSecondsPerDay: 600
+    rowsPerDay: 2

@@ -12,7 +12,9 @@ spec:
           schemas: ["main"]
           tables: ["customers"]
           columns: ["phone"]
+  # --8<-- [start:mask]
   mask:
     type: "constant"
     args:
       value: "+1-555-REDACTED"
+  # --8<-- [end:mask]

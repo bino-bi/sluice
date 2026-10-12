@@ -1,0 +1,12 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "owner", "status", "amount_cents"],
+  "rows": [
+    [2, "ana", "open", 4599],
+    [3, "ben", "paid", 7800],
+    [4, "ben", "cancelled", 250],
+    [5, "cleo", "open", 32000]
+  ],
+  "row_count": 4,
+  "truncated": false
+}

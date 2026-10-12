@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: CC-BY-4.0
+tracing:
+  enabled: true
+  endpoint: "otel-collector.internal:4317"
+  protocol: "grpc"
+  sampleRatio: 0.1

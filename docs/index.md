@@ -2,73 +2,48 @@
 
 # Sluice
 
-Sluice is a policy-enforcing SQL gateway that sits between AI agents, BI tools, and your databases. Every statement is parsed with the real PostgreSQL grammar (pg_query), checked against declarative default-deny YAML policies, rewritten in flight — row filters, column masks, LIMIT and sampling clamps — and executed read-only through embedded DuckDB against attached catalogs. Each request, allowed or denied, lands in a hash-chained audit log you can verify offline.
+Sluice is a SQL gateway that enforces policies between your clients and your databases. Clients such as AI agents and BI tools send SQL over REST or MCP. Sluice parses each statement with the PostgreSQL grammar and denies it unless your YAML policies allow it. It adds row filters and column masks, runs the statement read-only in DuckDB and writes an audit record.
 
 ```
 client (REST / MCP) ─▶ identify ─▶ parse ─▶ policy ─▶ rewrite ─▶ execute (DuckDB, read-only) ─▶ audit ─▶ rows
 ```
 
-## One policy, applied on the wire
+## Example
 
-A `RowFilterPolicy` scopes every matching query to the caller's tenant:
+This row filter limits each subject to the rows of its tenant.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: RowFilterPolicy
-metadata:
-  name: filter-tenant
-  priority: 80
-spec:
-  match:
-    any:
-      - resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers", "orders"]
-  combine: restrictive
-  filter:
-    predicate:
-      column: tenant_id
-      op: Equals
-      value: "{{ subject.tenantId }}"
+--8<-- "examples/hello-sluice/policies.d/filter-tenant.yaml:2"
 ```
 
-The client sends:
+This API key belongs to tenant `acme`.
 
-```sql
-SELECT id, email FROM shop.main.customers
+```bash
+--8<-- "examples/hello-sluice/steps/05-tenant-rows.sh"
 ```
 
-Sluice executes:
+The table holds five customers. Sluice returns only the two `acme` rows.
 
-```sql
-SELECT id, email FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers
+```json
+--8<-- "examples/hello-sluice/expected/05-tenant-rows.txt"
 ```
 
-with `$1` bound to the caller's `tenantId` claim — a positional parameter, never string concatenation.
+## What you can do
 
-## Features
-
-- **11 policy kinds** — `SqlAccessPolicy`, `RowFilterPolicy`, `ColumnMaskPolicy`, `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy`, `DataSource`, `SubjectBinding`, `AuditSink`, `DataClassification`, `RelationshipPolicy`.
-- **Mask catalog** — SQL-stage `null`, `constant`, `partial`, `hash`, `regex`, `truncate`; post-query HMAC hashing, format-preserving encryption (FF1), `jitter`, deterministic `fake` data.
-- **CEL** — policy conditions, reject rules, and a safe row-filter expression subset.
-- **Approval workflow** — park sensitive queries for a human decision, delivered via webhooks; approvals mint single-use grants.
-- **Pluggable engines** — embedded OPA (Rego) and OpenFGA-backed ReBAC compose with the YAML engine.
-- **Rate limits and budgets** — per-subject token buckets plus daily CPU-seconds/rows quotas.
-- **Hot reload** — file watcher, SIGHUP, or `POST /admin/reload`; invalid snapshots never replace a good one.
-- **Policy test harness** — `sluice policy test` runs fixture suites in CI.
-- **Tamper-evident audit** — hash-chained JSONL, verified with `sluice audit verify`.
-- **MCP server** — 9 tools for agents, over stdio or Streamable HTTP.
-- **6 datasource drivers** — Postgres, MySQL, SQLite, S3 Parquet, DuckDB file, MotherDuck.
+- [Allow or deny tables](policies/access-control.md) per subject.
+- [Filter rows](policies/row-filters.md) and [mask columns](policies/column-masks.md).
+- [Reject or rewrite](policies/guardrails.md) a statement, or [hold it for approval](policies/approvals.md).
+- Decide with [CEL conditions](policies/conditions.md), [OPA](policies/opa.md) or [OpenFGA](policies/rebac.md).
+- Set [rate limits and budgets](policies/subjects.md).
+- [Test](policies/testing.md) and [reload](operations/hot-reload.md) policies.
+- [Verify the audit log](security/audit.md).
+- Give AI agents [MCP tools](reference/mcp.md).
+- Attach [data sources](operations/data-sources.md) such as Postgres, SQLite and S3.
 
 ## Where to start
 
-| You are | Start here |
-| --- | --- |
-| An operator standing up a gateway | [Getting started](getting-started/index.md) |
-| A policy author | [Policies](policies/index.md) |
-| An agent builder wiring up MCP | [MCP tools reference](reference/mcp.md) |
-| A security reviewer | [Security model](architecture/security-model.md) |
-
-!!! warning "Project status: alpha"
-    The current release is `v0.1.0-rc.2` — a release candidate. The full query path works end to end, and binaries plus multi-arch container images are published on [GitHub Releases](https://github.com/bino-bi/sluice/releases) and [`ghcr.io/bino-bi/sluice`](https://github.com/bino-bi/sluice/pkgs/container/sluice). Interfaces may still change before `v0.1.0`, so pin an exact version rather than tracking `latest`. See [Install](getting-started/install.md).
+- [Quickstart](getting-started/index.md): run this example.
+- [Install](getting-started/install.md): image, archive or source build.
+- [Policies](policies/index.md): write your own.
+- [Cookbook](cookbook/index.md): complete setups.
+- [Security](security/index.md): defaults and threat model.

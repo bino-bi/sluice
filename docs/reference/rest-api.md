@@ -2,161 +2,125 @@
 
 # REST API
 
-The REST data plane listens on `rest.listen` (default `:8080`). Every request
-passes through request-ID tagging (`X-Request-Id`), a body cap
-(`rest.maxBodyBytes`, default 1 MiB), a request timeout
-(`rest.requestTimeout`, default 30 s), and panic recovery.
+Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `rest.listen`.
 
-## POST /v1/query
+## Routes
 
-Executes one SQL statement through the full pipeline — parse, policy
-evaluation, rewrite, DuckDB execution, audit — and streams the result.
+| Method | Path | Auth | What it does |
+|---|---|---|---|
+| `POST` | `/v1/query` | API key or JWT | Runs one SQL statement. |
+| `GET` | `/v1/approvals/{id}` | API key or JWT | Returns the state of an approval to its owner. |
+| `GET`, `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. |
+| `GET`, `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. |
+| `GET` | `/v1/health` | none | Returns 200 while the server runs. |
+| `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
+| `GET` | `/v1/version` | none | Returns the version of the build. |
 
-**Authentication** (one of):
+Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
 
-| Scheme | Header |
-|---|---|
-| JWT bearer | `Authorization: Bearer <jwt>` |
-| API key | `X-Api-Key: <id>.<material>` |
-| API key (alt) | `Authorization: ApiKey <id>.<material>` |
+## Example
 
-A missing or invalid credential yields `401` with
-`{"code":"ERR_UNAUTHORIZED", ...}` and a `WWW-Authenticate: Bearer` header.
+A query with `max_rows`:
 
-**Request body** (unknown fields are rejected):
+```bash
+--8<-- "examples/rest-api/steps/01-query.sh"
+```
+
+```json
+--8<-- "examples/rest-api/expected/01-query.txt"
+```
+
+The table has 4 rows, so `truncated` is `true`.
+
+## Request fields
 
 | Field | Type | Meaning |
 |---|---|---|
-| `sql` | string | The statement to execute (required) |
-| `params` | array | Not supported. A statement with a `$n` parameter is refused with `ERR_UNSUPPORTED_SYNTAX` |
-| `max_rows` | int | Row cap for this query (default `limits.maxRows`, clamped to `limits.maxRowsCeiling`) |
-| `timeout_ms` | int | Query timeout in milliseconds (clamped to `limits.maxQueryTimeout`) |
-| `format` | string | `json` (default), `csv`, or `arrow` (rejected — see below) |
-| `meta` | object | String map recorded on the audit access record as `client_meta` (capped: 16 keys, 64-byte keys, 256-byte values) |
+| `sql` | string | The SQL statement. |
+| `max_rows` | int | Row limit. Default `limits.maxRows`, at most `limits.maxRowsCeiling`. |
+| `timeout_ms` | int | Query timeout. Default `limits.queryTimeout`, at most `limits.maxQueryTimeout`. |
+| `format` | string | `json` (default) or `csv`. Without it the `Accept` header decides. |
+| `meta` | object | String pairs for the audit record (`client_meta`). At most 16 pairs, 64-byte keys, 256-byte values. |
 
-When `format` is absent, the `Accept` header is consulted:
-`application/json` (or `*/*`) selects JSON, `text/csv` selects CSV.
+## Response fields
 
-**JSON response** — streamed as a single object, rows emitted one at a time:
+| Field | Type | Meaning |
+|---|---|---|
+| `query_id` | string | Query id, also in the audit record. |
+| `columns` | array | Column names. |
+| `rows` | array | One array per row. |
+| `row_count` | int | Number of returned rows. |
+| `truncated` | bool | `true` when the row limit cut the result. |
+| `warning` | object | Set when truncated, with `code` `ERR_RESULT_TRUNCATED`. |
 
-```json
-{
-  "query_id": "01H…",
-  "columns": ["id", "name"],
-  "rows": [[1, "a"], [2, "b"]],
-  "row_count": 2,
-  "truncated": false
-}
+With `format: csv` the body is CSV:
+
+```bash
+--8<-- "examples/rest-api/steps/03-csv.sh"
 ```
 
-When a row cap stopped the stream, the trailer additionally carries a
-warning object alongside `"truncated": true`:
-
-```json
-  "warning": {"code": "ERR_RESULT_TRUNCATED", "message": "result truncated"}
+```text
+--8<-- "examples/rest-api/expected/03-csv.txt"
 ```
 
-**CSV variant** — `Content-Type: text/csv` with a header row. Row count and
-truncation ride on the `X-Sluice-Row-Count` and `X-Sluice-Truncated` **HTTP
-trailers** (the body has no place for them, and buffering to count first
-would break streaming); a truncated result also sets the `X-Sluice-Warning`
-trailer to `ERR_RESULT_TRUNCATED`. The trailers are declared in the
-`Trailer` response header and sent after the last row.
+## Response headers
 
-!!! note "Trailers need a trailer-aware client"
-    Trailers require HTTP/1.1 chunked transfer encoding or HTTP/2, and a
-    client that reads them after draining the body (Go:
-    `http.Response.Trailer`; curl: shown with `--raw`). Buffering proxies
-    may drop them. Use `format: json` when the metadata is critical — it is
-    part of the body there.
-
-**Response headers**: `X-Query-Id` always carries the query ID (also present
-on errors that have one); `X-Sluice-Applied-Policies` lists the names of
-applied policies, comma-separated, when any policy applied.
-
-!!! warning "Not yet implemented: Arrow output"
-    `format: arrow` (and `Accept: application/vnd.apache.arrow.stream`) is
-    declared in the API but rejected at runtime with
-    `ERR_UNSUPPORTED_SYNTAX` ("arrow output not yet supported").
-
-```console
-$ curl -s http://localhost:8080/v1/query \
-    -H "X-Api-Key: ci-bot.$KEY" -H "Content-Type: application/json" \
-    -d '{"sql": "SELECT id, name FROM shop.main.customers", "max_rows": 100}'
-```
-
-## Approval endpoints
-
-Registered only when the approval workflow is configured — see
-[Approvals](../policies/approvals.md).
-
-### GET|POST /v1/approvals/{id}/accept and /reject
-
-Capability endpoints for human approvers. The token — `?token=` query
-parameter or `X-Approval-Token` header — is the sole authorization; no other
-authentication applies.
-
-- Unknown ID and bad token return an **identical 404**, so the endpoint
-  cannot be used as an existence or token oracle.
-- Repeating the same verb is idempotent (`200` with `"note": "already
-  decided"`); a conflicting verb after a decision returns `409`.
-- **Prefetch-safe**: `HEAD` requests and requests carrying
-  `Purpose`/`Sec-Purpose`/`X-Moz: prefetch|preview` headers get `204` and
-  never mutate state, so chat clients unfurling the link cannot decide an
-  approval.
-
-```console
-$ curl -s -X POST "http://localhost:8080/v1/approvals/$ID/accept?token=$TOKEN"
-{"approval_id":"…","state":"approved","note":"recorded"}
-```
-
-### GET /v1/approvals/{id}
-
-Authenticated status poll for the **requesting subject only** — any other
-subject (or an unknown ID) gets `404`. Returns
-`{"approval_id": "…", "state": "pending", "expires_at": "…"}`.
-
-## Meta endpoints
-
-| Endpoint | Behavior |
+| Header | Set when |
 |---|---|
-| `GET /v1/health` | Liveness: always `200` with `{"status":"ok","version":"…"}` |
-| `GET /v1/ready` | Readiness: `200` when every datasource is healthy; `503` with `"status":"degraded"` otherwise. Lists each datasource as `{name, type, healthy, error}`. Fail-closed at boot: sources report unhealthy until the first health sweep (which runs immediately) has probed them |
-| `GET /v1/version` | Build identity: `{version, commit, build_time, go, parser_version}` |
-| `GET /openapi.json` | OpenAPI document (see below) |
+| `X-Request-Id` | Always. Your value, or a new one. |
+| `X-Query-Id` | The request got a query id. |
+| `X-Sluice-Applied-Policies` | A policy applied. Names, separated by commas. |
+| `WWW-Authenticate` | The credential is missing or wrong: 401 `ERR_UNAUTHORIZED`. |
+| `X-Sluice-Row-Count`, `X-Sluice-Truncated` | CSV only. HTTP trailers, sent after the body. |
+| `X-Sluice-Warning` | The same, when the result is truncated. |
 
-!!! warning "OpenAPI document is a stub"
-    `/openapi.json` currently returns a minimal OpenAPI 3.1 skeleton that
-    lists the paths with no schemas. It exists so clients can
-    feature-detect; a generated spec is planned.
+## Errors
 
-## Error envelope
+An error is a JSON object. [Error codes](error-codes.md) lists every code with its HTTP status.
 
-Every 4xx/5xx response from the query and meta endpoints is a JSON
-`APIError` (the approval capability endpoints use the simpler shapes shown
-above):
-
-```json
-{
-  "code": "ACL_DENIED",
-  "message": "access denied",
-  "query_id": "01H…",
-  "policy": "deny-finance",
-  "details": {}
-}
+```bash
+--8<-- "examples/rest-api/steps/02-denied.sh"
 ```
 
-`query_id`, `policy`, and `details` are optional. HTTP status is derived
-from the code — highlights:
+```json
+--8<-- "examples/rest-api/expected/02-denied.txt"
+```
 
-| Status | Codes |
+| Field | Meaning |
 |---|---|
-| 202 | `ERR_APPROVAL_PENDING` (query parked, awaiting a human decision) |
-| 401 | `ERR_UNAUTHORIZED` |
-| 403 | `ACL_DENIED`, `ACL_REJECTED`, `ERR_APPROVAL_REJECTED` |
-| 410 | `ERR_APPROVAL_EXPIRED` |
-| 413 | `ERR_PAYLOAD_TOO_LARGE` |
-| 429 | `ERR_RATE_LIMITED`, `ERR_BUDGET_EXCEEDED` |
+| `code` | Error code. |
+| `message` | Text for people. |
+| `query_id` | Query id, if the request got one. |
+| `policy` | Policy that refused the query, if one did. |
+| `details` | Extra data, for example `approval_id`. |
 
-The full 23-code catalogue with canonical messages lives in
-[Error codes](error-codes.md).
+## Approval routes
+
+The routes exist when the server config sets `approval.publicBaseUrl`. Send the token as `?token=` or as an `X-Approval-Token` header. See [Approvals](../policies/approvals.md).
+
+| Request | Answer |
+|---|---|
+| Right token | 200, `note: recorded` |
+| Same decision again | 200, `note: already decided` |
+| Other decision later | 409 |
+| Unknown id or wrong token | 404 |
+| `HEAD`, or a header `Purpose: prefetch` | 204, no change |
+
+`GET /v1/approvals/{id}` returns:
+
+```json
+--8<-- "examples/approval-workflow/expected/07-status.txt"
+```
+
+## Limits
+
+- An unknown body field, `format` or `Accept` value gives 400 `ERR_SYNTAX`.
+- A body over `rest.maxBodyBytes` gives 413 `ERR_PAYLOAD_TOO_LARGE`.
+- A request longer than `rest.requestTimeout` gives 504 `ERR_TIMEOUT`.
+- `limits.globalRps` and `limits.perIpRps` limit `/v1/query` before authentication: 429 `ERR_RATE_LIMITED`.
+- A 404 or 405 answer is plain text, not JSON.
+
+## See also
+
+- [Request lifecycle](../architecture/request-lifecycle.md)
+- [Deployment](../operations/deployment.md)

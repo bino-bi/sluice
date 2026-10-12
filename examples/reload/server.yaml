@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+admin:
+  enabled: true
+  listen: ":9091"
+  # Demo value. Use your own token.
+  token: "demo-admin-token-change-me"
+
+# --8<-- [start:policies]
+policies:
+  # serve.sh copies policies.d to this folder, so the steps can change files.
+  directory: "./data/policies"
+  reload: true
+# --8<-- [end:policies]
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

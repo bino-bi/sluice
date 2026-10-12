@@ -1,0 +1,5 @@
+{
+  "code": "ERR_SYNTAX",
+  "message": "SQL parse error",
+  "query_id": "<query-id>"
+}

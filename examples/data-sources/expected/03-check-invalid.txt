@@ -1,0 +1,2 @@
+invalid/datasource-postgres.yaml: DataSource/pg: spec.connection: required for postgres/mysql
+[exit status 1]

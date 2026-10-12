@@ -18,8 +18,10 @@ cases:
       outcome: allow
       masks: []
 
+  # --8<-- [start:sre-alone]
   - name: the sre group alone gives no access
     identity: { subject: on-call-sre, groups: [sre] }
     sql: "SELECT id, email FROM shop.main.customers"
     expect:
       outcome: deny
+  # --8<-- [end:sre-alone]

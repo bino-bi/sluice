@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+# --8<-- [start:policies]
+policies:
+  # Data sources and subject bindings still come from this folder.
+  directory: "./policies.d"
+  engine: opa
+  opa:
+    moduleDir: "./rego"
+    query: "data.sluice.main"
+# --8<-- [end:policies]
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

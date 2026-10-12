@@ -2,189 +2,73 @@
 
 # PII masking
 
-**Goal:** analysts query the `customers` table freely but never see plaintext
-`email`, `phone`, or `ssn`; `birth_date` stays visible. Runnable version:
-`examples/pii-masking/`.
+Analysts query a customer table, but they never see the real `email`, `phone` or `ssn`.
 
-## Ingredients
+## Example
 
-- One `SqlAccessPolicy` allowing the `analytics` group to read `customers`.
-- Three `ColumnMaskPolicy` objects — one per PII column. Masks require an
-  explicit `resources.columns` list; a mask without one matches nothing.
-
-## The policies
-
-The allow gate comes first — without it, default-deny blocks the query before
-any mask applies. The example then neutralises each column with the two
-simplest providers, `null` and `constant`:
+Start the server with `examples/pii-masking/serve.sh`. Each column has its own column mask. This one returns `NULL` for `email`.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata: { name: allow-analytics, priority: 100 }
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects:
-          groups: ["analytics"]
-        resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: mask-email, priority: 90 }
-spec:
-  match:
-    any:
-      - resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers"]
-          columns: ["email"]
-  mask:
-    type: "null"
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: mask-phone, priority: 80 }
-spec:
-  match:
-    any:
-      - resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers"]
-          columns: ["phone"]
-  mask:
-    type: "constant"
-    args:
-      value: "+1-555-REDACTED"
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: mask-ssn, priority: 100 }
-spec:
-  match:
-    any:
-      - resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["customers"]
-          columns: ["ssn"]
-  mask:
-    type: "constant"
-    args:
-      value: "REDACTED"
+--8<-- "examples/pii-masking/policies.d/mask-email.yaml:2"
 ```
 
-Priorities only matter when two masks collide on the same column — the
-highest priority wins the column.
-
-## Before and after
-
-`SELECT id, email, phone, ssn, birth_date FROM shop.main.customers ORDER BY id`
-returns:
-
-| column | raw value | analyst sees |
-|---|---|---|
-| `email` | `alice@example.com` | `null` |
-| `phone` | `+1-555-0101` | `+1-555-REDACTED` |
-| `ssn` | `111-22-3333` | `REDACTED` |
-| `birth_date` | `1988-03-14` | `1988-03-14` (no mask matches it) |
-
-The rewritten SQL reads the table through a subquery that lists its columns and applies the
-masks there:
-
-```sql
-SELECT id, email, phone, ssn, birth_date
-FROM (SELECT sluice_src.id, sluice_src.tenant_id, NULL AS email, '+1-555-REDACTED' AS phone,
-             'REDACTED' AS ssn, sluice_src.birth_date, sluice_src.created_at
-      FROM shop.main.customers sluice_src) customers
-ORDER BY id
-```
-
-The rest of the query only reads the subquery, so `WHERE email LIKE '%acme%'`, a `GROUP BY` or a
-join on a masked column sees the masked value too. The subquery lists the columns from the
-schema cache, so a masked table needs an entry there; on the server the cache reads them from
-the data source.
-
-## Upgrade: structure-preserving providers
-
-Swap the mask blocks above for providers that keep the data useful. `partial`
-rewrites the SQL; `hash` with `hmac_sha256` and `fake` run **post-query**, on
-result rows, after execution:
+The masks on `phone` and `ssn` select their column in the same way. Both return a constant.
 
 ```yaml
-# fragment — mask block for mask-email
-mask:                       # keep the first 2 characters, star the rest
-  type: partial
-  args: { showFirst: 2, showLast: 0 }
+--8<-- "examples/pii-masking/policies.d/mask-phone.yaml:mask"
 ```
 
 ```yaml
-# fragment — mask block for mask-ssn
-mask:                       # keyed HMAC hex: joinable, not reversible
-  type: hash
-  args:
-    algorithm: hmac_sha256
-    saltRef: "secret://env/SLUICE_MASK_SALT"
+--8<-- "examples/pii-masking/policies.d/mask-ssn.yaml:mask"
 ```
+
+The analyst key reads the table.
+
+```bash
+--8<-- "examples/pii-masking/steps/01-masked.sh"
+```
+
+```json
+--8<-- "examples/pii-masking/expected/01-masked.txt"
+```
+
+**What happened:** Sluice replaced the table with a subquery that returns the masked values. `birth_date` has no mask, so it comes back unchanged.
+
+This suite shows the rewritten SQL.
 
 ```yaml
-# fragment — mask block for mask-phone
-mask:                       # deterministic fake phone number
-  type: fake
-  args: { fakeType: phone }
+--8<-- "examples/pii-masking/tests/masks.yaml:2"
 ```
 
-`fake` supports `fakeType`: `name`, `first_name`, `last_name`, `email`,
-`phone`, `company`, `city`, `country`, `uuid` — the same pattern covers a
-`name` column when your schema has one.
+## More examples
 
-## Test it without a server
+A filter on a masked column sees the masked value. This search for `alice` finds nothing.
 
-Save as `policies.d/tests/masks.yaml` and run `sluice policy test policies.d`:
-
-```yaml
-# The runner has no live datasource. A masked table is read through a
-# wrapper that lists its columns, so the suite declares them.
-schema:
-  shop.main.customers: [id, tenant_id, email, phone, ssn, birth_date, created_at]
-
-cases:
-  - name: email, phone and ssn are masked; birth_date is untouched
-    identity: { subject: pii-analyst, groups: [analytics] }
-    sql: "SELECT id, email, phone, ssn, birth_date FROM shop.main.customers"
-    expect:
-      outcome: allow
-      masks:
-        - "shop.main.customers.email=null"
-        - "shop.main.customers.phone=constant"
-        - "shop.main.customers.ssn=constant"
+```bash
+--8<-- "examples/pii-masking/steps/02-filter-on-masked-column.sh"
 ```
 
-Without the `schema:` block the case fails with a rewrite error that asks for it.
-With the upgraded providers, `expect.masks` lists all winners
-(`email=partial`, `phone=fake`, `ssn=hash`) and `expect.postMasks`
-additionally asserts the two post-query ones:
-`["shop.main.customers.phone=fake", "shop.main.customers.ssn=hash"]`.
+```json
+--8<-- "examples/pii-masking/expected/02-filter-on-masked-column.txt"
+```
 
-## Pitfall: `sha256` vs `hmac_sha256`
+`GROUP BY` on a masked column groups the masked value.
 
-`hash` with `algorithm: sha256` (the default) is rewritten into the SQL and is
-**unkeyed**: anyone who can guess candidate values (SSNs, phone numbers) can
-confirm them by hashing offline. For low-entropy PII always use
-`algorithm: hmac_sha256`, which requires a `saltRef` secret and is applied
-post-query. Manage the salt like a credential: store it via
-`secret://env/...` or `secret://file/...`, never in the policy file, and plan
-rotations — rotating the salt changes every masked output, which breaks joins
-against previously exported data.
+```bash
+--8<-- "examples/pii-masking/steps/03-group-by-masked-column.sh"
+```
+
+```json
+--8<-- "examples/pii-masking/expected/03-group-by-masked-column.txt"
+```
+
+## Limits
+
+- A mask without `resources.columns` masks nothing. Sluice gives no warning.
+- Some mask types, for example `fake`, run after the query. A filter, join or `GROUP BY` on such a column fails with `ERR_MASK_UNSUPPORTED_CONTEXT`. See [the refused forms](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
 
 ## See also
 
-- [Column masks](../policies/column-masks.md) — the full provider catalog and argument reference.
-- [Testing policies](../policies/testing.md) — `expect.masks` and `expect.postMasks`.
-- [Break-glass access](break-glass.md) — letting one group bypass these masks, audited.
+- [Column masks](../policies/column-masks.md)
+- [Testing policies](../policies/testing.md#schema-fixtures-for-masked-tables): the `schema:` block for masked tables
+- [Break-glass access](break-glass.md)

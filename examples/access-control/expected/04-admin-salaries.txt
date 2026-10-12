@@ -1,0 +1,6 @@
+{
+  "code": "ACL_DENIED",
+  "message": "salaries are not available through Sluice",
+  "query_id": "<query-id>",
+  "policy": "deny-salaries"
+}

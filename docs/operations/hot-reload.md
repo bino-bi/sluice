@@ -2,107 +2,97 @@
 
 # Configuration reload
 
-Sluice reloads the policy directory without a restart. Queries in flight
-finish against the snapshot they started with; new queries see the new
-snapshot atomically.
+Sluice loads the policy directory again without a restart. A running query finishes with the old policies.
+
+## Example
+
+Goal: allow a second table while the server runs. No policy allows `customers` yet:
+
+```bash
+--8<-- "examples/reload/steps/01-denied.sh"
+```
+
+```json
+--8<-- "examples/reload/expected/01-denied.txt"
+```
+
+Copy this file into the policy directory:
+
+```yaml
+--8<-- "examples/reload/changes/allow-customers.yaml:2"
+```
+
+```bash
+--8<-- "examples/reload/steps/02-add-policy.sh:cmd"
+```
+
+The same query now returns rows:
+
+```json
+--8<-- "examples/reload/expected/03-allowed.txt"
+```
+
+What happened: Sluice saw the new file and reloaded the directory 250 ms later.
 
 ## Triggers
 
-| Trigger | When to use |
-| ------- | ----------- |
-| fsnotify watcher | Default (`policies.reload: true`). GitOps deploys that write into the policy directory. |
-| `SIGHUP` | `systemctl reload sluice`, or a one-off `kill -HUP` after copying files. |
-| `POST /admin/reload` | Automation and operator tooling, via the admin listener. |
+| Trigger | Use |
+|---|---|
+| A file changes | Automatic. `policies.reload: false` turns it off. |
+| `SIGHUP` | `systemctl reload sluice` or `kill -HUP`. |
+| `POST /admin/reload` | From a script. See [Admin API](../reference/admin-api.md). |
 
-`policies.reload` (default `true`) gates only the fsnotify watcher.
-`SIGHUP` and `POST /admin/reload` always work under `sluice serve` —
-disabling filesystem watching does not take manual reload with it.
+The last two always work and reload at once.
 
 ```bash
-curl -X POST \
-  -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
-  http://localhost:9091/admin/reload
+--8<-- "examples/reload/steps/10-reload.sh"
 ```
 
-A successful call returns `{"ok": true, "digest": "..."}`; a failed one
-returns `ERR_CONFIG_INVALID` (load/decode failure) or
-`ERR_POLICY_INVALID` (policy compile failure) and leaves the running
-snapshot untouched. A snapshot that fails compilation is rejected
-*before* it is published, on every reload path — no component sees a
-half-applied state.
+```json
+--8<-- "examples/reload/expected/10-reload.txt"
+```
 
-The watcher covers the policy directory tree recursively, reacts only to
-`.yaml`/`.yml` files (dotfiles and editor swap files are ignored), and
-debounces bursts of writes into a single reload after 250 ms of quiet.
-`SIGHUP` and the admin endpoint reload immediately, without debounce.
+## What a reload applies
 
-## Validate, then swap
+- Every policy, also the OPA modules.
+- Subject bindings: API keys, JWT issuers, HMAC secrets, rate limits and budgets.
+- Secrets of policy objects. Sluice reads each reference again.
+- Table columns. Reload after a column changes at a data source.
 
-Every reload re-reads the whole directory and validates it as a unit. Only
-a fully valid set of manifests is published; any error rejects the reload
-and the prior snapshot keeps serving. A bad file can therefore never take
-policies down — but it also means your fix isn't live until the *entire*
-directory validates again.
+These need a restart: the server config and every `DataSource` change.
 
-The log line of a rejected reload lists the errors of all manifests. Like
-every logged error text it is cut after `logging.maxErrorBytes` bytes (default
-4096, see [Observability](observability.md)). For the full list run
-`sluice config validate`.
+## An invalid file
 
-A successful swap updates, atomically:
+One invalid file stops the whole reload, and the old policies stay active. `POST /admin/reload` then returns:
 
-- the compiled policy set (all kinds, including OPA modules, which are
-  recompiled from `policies.opa.moduleDir`),
-- API-key bindings — rebuilt, with the secret cache invalidated first so
-  rotated `hashRef` values are re-read,
-- JWT subject bindings — issuer set, audience, claim mappings, clock skew,
-  and per-issuer HMAC secrets (the secret cache invalidation also re-reads
-  rotated `hmacSecretRef` values; RS/ES keys refresh via each binding's
-  JWKS cache TTL). A snapshot with duplicate issuers is rejected and the
-  previous binding set stays live,
-- rate-limit and budget specs from `SubjectBinding` manifests,
-- the rewrite cache (purged — no decision outlives its snapshot),
-- the schema cache (emptied; each catalog is loaded again on the next
-  lookup). A reload is not the only refresh: any lookup that misses a table
-  of a catalog loads that catalog again (a table not cached yet, a name that
-  does not exist, an evicted entry). There is no timer. A table with a
-  column mask is read through a subquery that lists the cached columns, so
-  until the next such load a column added at the source is not returned, and
-  a column dropped at the source makes every query on that table fail. With
-  `cache.rewrite.enabled`, a repeated query keeps the old column list for up
-  to `cache.rewrite.ttl` after that load.
+```json
+--8<-- "examples/reload/expected/06-reload-fails.txt"
+```
 
-`ApprovalPolicy` objects hot-reload like every other policy kind. The
-broker that serves them exists whenever `approval.publicBaseUrl` is set —
-configure it even before the first ApprovalPolicy lands so a reload can
-introduce one without a restart. Reload-added ApprovalPolicies without a
-configured base URL log an error and matching queries pend until expiry.
+The other code is `ERR_POLICY_INVALID`. After a file change, the log names the file. So does `sluice policy validate`:
 
-## What does not hot-reload
+```text
+--8<-- "examples/reload/expected/07-validate.txt"
+```
 
-`sluice.yaml` is read once at boot. Listener addresses (`rest.listen`,
-`mcp.listen`, `admin.listen`), the policy engine selection
-(`policies.engine`), limits (including the transport-level `globalRps` /
-`perIpRps` buckets and `defaultSubjectRps`), `approval.publicBaseUrl`,
-DuckDB pool settings, and audit configuration all require a restart. `DataSource` attachments are also built at boot —
-the reload path does not re-attach catalogs, so restart after changing a
-`DataSource` manifest.
+## Confirm a reload
 
-## Safe rollout
+`GET /admin/healthz` counts the reloads in `config_version`. The log shows `config watch: reload applied`.
 
-1. **Validate and test in CI**: `sluice config validate ./policies.d
-   --strict` plus [`sluice policy test`](../policies/testing.md).
-2. **Deploy the files** into the policy directory.
-3. **Reload** — or let the fsnotify watcher pick the change up.
-4. **Spot-check** the live decision: `sluice policy explain --user <id>
-   --table <catalog.schema.table>` locally, or
-   `GET /admin/subjects/explain` against the running server, and confirm
-   the `config watch: reload applied` log line.
+```json
+--8<-- "examples/reload/expected/04-healthz.txt"
+```
 
-## Observing reloads
+## Limits
 
-Each applied reload logs at `INFO` (`config watch: reload applied`) with
-the object count and snapshot digest, and `POST /admin/reload` returns the
-new digest in its `{"ok": true, "digest": "..."}` response. There is
-currently no dedicated Prometheus counter for reloads — watch the log line
-(see [Observability](observability.md)).
+- The watcher reacts only to `.yaml` and `.yml` files that are not hidden.
+- The watcher misses folders created after the start.
+- A reload resets every rate limit bucket.
+- A duplicate JWT issuer or a broken OPA module does not stop the reload. Sluice warns and keeps the old state of that part.
+- An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`.
+
+## See also
+
+- [Testing policies](../policies/testing.md)
+- [Data sources](data-sources.md)
+- [Observability](observability.md)

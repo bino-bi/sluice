@@ -1,208 +1,120 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Audit trail
+# Audit log
 
-Every terminal outcome appends at least one record to a hash-chained JSONL
-log: deny, reject, and error each write one; an allowed query writes a
-fail-closed access record (`query`) before the first row and a `query-result`
-completion record with `row_count` / `truncated` when the stream closes. The
-chain makes tampering detectable, and the default fail-closed gate makes the
-log a precondition for serving data, not an afterthought.
+Sluice writes an audit record for every query decision. `sluice audit verify` checks the hash chain of the records.
 
-## What a record contains
+## Example
+
+Goal: read an audit record and verify the log.
+
+```yaml
+--8<-- "examples/audit-log/server.yaml:audit"
+```
+
+This query is allowed. A second query is denied.
+
+```bash
+--8<-- "examples/audit-log/steps/01-query.sh"
+```
+
+Find the record by its `meta` value, then verify:
+
+```bash
+--8<-- "examples/audit-log/steps/03-record.sh"
+```
+
+```json
+--8<-- "examples/audit-log/expected/03-record.txt"
+```
+
+```bash
+--8<-- "examples/audit-log/steps/04-verify.sh"
+```
+
+```text
+--8<-- "examples/audit-log/expected/04-verify.txt"
+```
+
+Change one record in a copy:
+
+```bash
+--8<-- "examples/audit-log/steps/05-copy.sh"
+--8<-- "examples/audit-log/steps/06-edit.sh"
+--8<-- "examples/audit-log/steps/07-verify-copy.sh"
+```
+
+```text
+--8<-- "examples/audit-log/expected/07-verify-copy.txt"
+```
+
+What happened: the changed record in line 4 no longer matches its hash.
+
+## Record fields
 
 | Field | Meaning |
 |---|---|
-| `timestamp`, `event_type`, `query_id` | When, what kind of event, and the id echoed to the client as `X-Query-Id` |
-| `subject` | `id`, `method` (jwt / api_key / admin_token / none), `issuer`, `email`, `groups`, `remote_ip` |
-| `origin` | Transport that carried the request: `rest`, `mcp`, or `admin` |
-| `sql_fingerprint`, `rewritten_fingerprint`, `sql_sample` | Fingerprints of the inbound and rewritten SQL, plus a bounded sample (`audit.sqlSampleBytes`, default 2048; `0` disables). The rewritten SQL lists the columns of each masked table, so `rewritten_fingerprint` changes when those columns change at the source and the schema cache is reloaded |
-| `tables`, `catalogs` | Resources the statement touched |
-| `policies_applied`, `decision`, `error_code` | Which policies fired, the outcome (`allow`, `deny`, `reject`, `error`), and the error code if any |
-| `row_count`, `truncated`, `duration_ms` | Result metadata, only on the `query-result` record written when the stream closes |
-| `client_meta` | The caller's `meta` request pairs, capped server-side (16 keys, 64-byte keys, 256-byte values). Recorded verbatim inside the operator trust domain, like `sql_sample` — clients should not put secrets in `meta` |
-| `sluice_version`, `duckdb_version`, `parser_version` | Build provenance |
-| `prior_hash`, `hash` | The chain links (see below) |
+| `timestamp`, `event_type`, `query_id` | Time, event, and the `X-Query-Id` response header |
+| `subject` | `id`, `method` (`api_key` or `jwt`), `issuer`, `email`, `groups`, `remote_ip` |
+| `origin`, `remote_ip` | `rest`, `mcp` or `admin`, and the client address |
+| `sql_sample` | The SQL as sent, up to `audit.sqlSampleBytes`. 0 turns it off |
+| `sql_fingerprint`, `rewritten_fingerprint` | Hashes of the sent and the rewritten SQL |
+| `tables`, `catalogs` | What the query reads |
+| `policies_applied` | The policies behind the decision |
+| `decision`, `error_code`, `message` | `allow`, `deny`, `reject` or `error`, with code and text |
+| `row_count`, `truncated` | Result size, on `query-result` only |
+| `duration_ms` | Time since the request started |
+| `client_meta` | The `meta` pairs of the request |
+| `extras` | Other data, for example `approval_id` |
+| `sluice_version` | The build |
+| `prior_hash`, `hash` | The hash chain |
 
-Event types: `query`, `query-result`, `policy-decision`, `config-reload`,
-`auth-event`, `admin-action`, `datasource-connect`, `genesis`, and the
-approval lifecycle events `approval-requested` / `approval-approved` /
-`approval-rejected` / `approval-expired`.
+## Event types
 
-## The hash chain
+| `event_type` | Written when |
+|---|---|
+| `genesis` | The audit directory is new |
+| `query` | Sluice decides on a query |
+| `query-result` | An allowed query ends |
+| `admin-action` | `GET /admin/subjects/explain` or the MCP tool `explain_access` runs |
+| `approval-requested`, `approval-approved`, `approval-rejected`, `approval-expired` | An approval changes state |
 
-Each record's hash is `sha256(prior_hash + "\n" + canonical JSON of the
-record without its hash field)`; that hash becomes the next record's
-`prior_hash`. The first record is anchored on `sha256(seed)`, where the seed
-comes from the `audit.file.genesis` `secret://` reference in `sluice.yaml`.
-Changing any field of any record breaks every hash after it. (Verification
-canonicalizes each line before hashing, so pure formatting changes — key
-order, whitespace — are tolerated by design.)
+## Hash chain
 
-```yaml
-# sluice.yaml
-audit:
-  failClosed: true
-  file:
-    path: /var/lib/sluice/audit
-    rotateDaily: true
-    rotateSizeMB: 256
-    genesis: secret://file//etc/sluice/audit-genesis
-```
+Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the record before it. The first `prior_hash` is the SHA-256 of the genesis in `audit.file.genesis`. Pass it to verify as `--anchor`.
 
-!!! warning "Pin the genesis seed"
-    Without `audit.file.genesis`, Sluice derives the seed from the hostname
-    and build commit. That fallback changes when the host or binary changes,
-    so anchored verification breaks across redeploys. Always configure a
-    stable seed (for example `openssl rand -hex 32` stored as a secret).
+## Sinks
 
-## The file sink
+| Sink | Keys | Notes |
+|---|---|---|
+| File | `audit.file`: `path`, `rotateDaily`, `rotateSizeMB`, `genesis` | Holds the hash chain. A new `audit-YYYY-MM-DD.jsonl` starts each UTC day and at `rotateSizeMB` |
+| Syslog | `audit.syslog`: `network`, `address`, `facility`, `tag` | RFC 5424, no TLS. UDP can lose messages. `tcp` and `unix` must connect when Sluice starts |
+| S3 | `audit.s3`: `endpoint`, `bucket`, `prefix`, `region`, `credentialsRef`, `objectLock`, `retentionDays`, `uploadInterval`, `uploadBytes`, `maxBufferBytes`, `insecure`, `forcePathStyle` | Uploads batches of JSON lines. `objectLock` needs `retentionDays` and a bucket with Object Lock |
 
-Records are appended to `audit-YYYY-MM-DD.jsonl` in the configured directory
-(created `0750`, files `0640`), rotating at midnight UTC and additionally at
-`rotateSizeMB` (`audit-YYYY-MM-DD-1.jsonl`, `-2`, ...). On restart, Sluice
-reads the tail of the newest file and continues the chain where it stopped.
+Syslog and S3 get copies. Their failures never stop a query. See [Configuration](../reference/configuration.md).
 
-!!! warning "No sink configured means a temp directory"
-    If `audit.file.path` is unset, Sluice still boots but writes to
-    `$TMPDIR/sluice-audit` with a loud warning. Temp directories get cleaned;
-    set a persistent path in production.
+- File: a restart continues the same hash chain.
+- File: Sluice creates the directory with mode `0750` and the files with mode `0640`.
+- S3: objects are named `<prefix>/YYYY/MM/DD/audit-<id>.jsonl`.
+- S3: an upload starts when the batch reaches `uploadBytes` or is older than `uploadInterval`. Sluice tries a failed upload again.
+- S3: without `credentialsRef`, Sluice takes the credentials from the environment, the AWS credentials file or the IAM role.
+- S3: when the buffer reaches `maxBufferBytes`, Sluice drops new records for this sink.
+- Syslog: Sluice drops a record that it cannot send.
+- `sluice_audit_dropped_total` counts the dropped records per `sink`.
 
-## Fail-closed serving
+## Fail closed
 
-With `audit.failClosed: true` (the default), the query pipeline refuses to
-stream the first row until the access record has been durably enqueued. If
-the audit dispatcher cannot accept it, the client gets `ERR_AUDIT_UNAVAILABLE`
-and no data.
+`audit.failClosed: true` checks one thing: the queue in memory takes the `query` record within 200 ms. If not, the query fails with `ERR_AUDIT_UNAVAILABLE`. With `false`, the query runs and `sluice_audit_dropped_total` counts the record.
 
-!!! danger "Do not turn this off casually"
-    `failClosed: false` trades integrity for availability: queries keep
-    flowing while records drop (counted in `sluice_audit_dropped_total`).
-    For a gateway whose purpose is provable access control, an unaudited
-    query is usually worse than a failed one.
+## Limits
 
-The dispatcher is bounded: a 10,000-record queue and a 200 ms enqueue
-deadline, so a stuck disk degrades into fast, visible failures rather than
-unbounded memory growth. Shutdown drains the queue for up to 10 seconds.
-Alert on `sluice_audit_queue_depth`, `sluice_audit_dropped_total`, and
-`sluice_audit_write_errors_total` — see [Observability](../operations/observability.md).
+- No record for a failed login, a reload, other admin calls, or a request over `limits.globalRps`, `limits.perIpRps` or `limits.maxConcurrent`.
+- Verify does not detect that the newest records are missing.
+- A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
+- Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
+- On shutdown, Sluice waits up to 10 seconds to write queued records.
 
-## Verifying the chain
+## See also
 
-```console
-$ sluice audit verify /var/lib/sluice/audit --anchor "$(printf '%s' "$SEED" | shasum -a 256 | cut -d' ' -f1)"
-chain OK (3 file(s), 41287 record(s), last_hash=9f31c2ab54e0d871…)
-```
-
-`verify` walks every `.jsonl` file in date order, recomputes each hash, and
-carries the prior hash across file boundaries. `--anchor` pins the first
-record's `prior_hash` to `sha256(seed)` so an attacker cannot splice in a
-chain from a different installation. Exit codes: `0` intact, `1` I/O error,
-`4` chain broken (with the offending file and line).
-
-If verification fails: treat it as an incident, not a glitch. Preserve the
-directory read-only, identify the first broken line from the error, compare
-against your offsite copy, and review who had filesystem access. Records
-*before* the break are still trustworthy; everything after it is not.
-
-## Reading the log
-
-Tail recent records through the admin API:
-
-```bash
-curl -s -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
-  "http://127.0.0.1:9091/admin/audit/tail?n=50"
-```
-
-Who touched a specific table, straight from the files:
-
-```bash
-jq -r 'select((.tables // []) | index("shop.main.customers"))
-       | [.timestamp, .subject.id, .decision, .error_code // ""] | @tsv' \
-  /var/lib/sluice/audit/audit-*.jsonl
-```
-
-## Declaring sinks in YAML
-
-An `AuditSink` resource can live alongside your policies to record sink
-intent; it parses and validates like any other kind:
-
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: AuditSink
-metadata:
-  name: audit-file
-spec:
-  type: file
-  path: /var/lib/sluice/audit
-  rotateDaily: true
-  rotateSizeMB: 256
-```
-
-!!! warning "Manifests declare the file sink only"
-    The running sinks are wired from the `audit.*` block in `sluice.yaml`,
-    not from manifests. AuditSink manifests declaring `s3` or `syslog`
-    **fail validation** with a pointer to the server-config keys below;
-    `postgres` and `otlp` remain unimplemented and fail validation too
-    (`sluice config validate` exits 3, `sluice serve` refuses to start).
-
-## Secondary sinks: syslog and S3
-
-Beyond the file sink, two network sinks fan out every record:
-
-```yaml
-audit:
-  file:
-    path: /var/lib/sluice/audit        # the durable, hash-chained record
-  syslog:
-    network: tcp                       # udp (default) | tcp | unix | unixgram
-    address: siem.internal:6514
-    facility: local0
-    tag: sluice
-  s3:
-    endpoint: s3.amazonaws.com         # or a MinIO endpoint
-    bucket: acme-sluice-audit
-    prefix: audit/
-    region: eu-central-1
-    objectLock: compliance             # "" | governance | compliance
-    retentionDays: 365
-    credentialsRef: secret://env/SLUICE_S3_CREDS   # JSON {accessKeyId, secretAccessKey}
-    uploadInterval: 30s
-    uploadBytes: 1048576
-```
-
-Their delivery semantics are deliberately **best-effort**:
-
-- The **file sink stays the durable record** and carries the hash chain;
-  `audit.failClosed` gates queries on it alone. A syslog daemon outage or
-  an unreachable bucket never blocks a query and never breaks the chain.
-- **syslog** forwards each record as an RFC 5424 message (octet-counted
-  framing on stream transports) — fire-and-forget with one reconnect
-  attempt; failures count `sluice_audit_dropped_total{sink="syslog"}`.
-  UDP is silently lossy by nature, and TCP syslog carries no TLS — put
-  the collector on a trusted network. An unreachable daemon fails boot
-  (visible misconfiguration).
-- **s3** batches records into newline-delimited JSON objects
-  (`<prefix>/YYYY/MM/DD/audit-<ulid>.jsonl`), uploading on a size or
-  interval trigger. Failed uploads are retried from an in-memory buffer;
-  past `maxBufferBytes` new records are dropped for this sink with
-  `sluice_audit_dropped_total{sink="s3",reason="buffer_full"}` counting
-  the loss. A process crash loses at most one un-uploaded batch — the
-  file sink still has every record.
-- **Object Lock**: the bucket must be *created* with Object Lock enabled
-  (`aws s3api create-bucket --object-lock-enabled-for-bucket`); the sink
-  sets per-object mode and retention but cannot enable locking on an
-  existing bucket. With `credentialsRef` unset, credentials come from the
-  standard env / shared-config / IAM chain (IRSA and instance profiles
-  work with zero config).
-
-## Retention without breaking the chain
-
-- Prune **whole files only**, oldest first, in `(date, sequence)` order —
-  never edit or truncate a file in place.
-- Before pruning, run `audit verify` and archive the pruned files together
-  with the genesis seed; the archived segment stays verifiable forever.
-- Record the `hash` of the last pruned record: it equals the `prior_hash` of
-  the first remaining record, so the live directory still verifies (without
-  `--anchor`) and you can prove the two segments join.
-- Ship copies offsite (ideally WORM storage) before local rotation removes them.
+- [Admin API](../reference/admin-api.md): `GET /admin/audit/tail` returns the newest records.
+- [`sluice audit verify`](../reference/cli.md)

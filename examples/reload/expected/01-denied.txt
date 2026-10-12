@@ -1,0 +1,5 @@
+{
+  "code": "ACL_DENIED",
+  "message": "no SqlAccessPolicy matched (default-deny)",
+  "query_id": "<query-id>"
+}

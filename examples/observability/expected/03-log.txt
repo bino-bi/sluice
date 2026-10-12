@@ -1,0 +1,1 @@
+time=<time> level=WARN msg="query rejected by duckdb" query_id=<id> error="executor: query execution failed: executor: statement rejected by duckdb: Conversion Error: Could not convert string 'Alice' to INT32 when casting from source column name\n\nLINE 1: SELECT CAST(name AS INTEGER) FROM shop.main.customers WHERE id = 1\n               ^"

@@ -1,214 +1,148 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Matching and precedence
+# Matching
 
-Every policy carries a `spec.match` selector deciding when it applies. A selector holds clauses
-under `any` (OR — one matching clause suffices) or `all` (AND — every clause must hold). Each
-clause pairs an optional `subjects` block with an optional `resources` block; within a clause,
-both must hold. An empty selector matches **nothing** — a policy without clauses is inert.
+`spec.match` says which subjects and tables a policy covers. `spec.exclude` takes some of them out again.
 
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata: { name: allow-reporting, priority: 100 }
-spec:
-  effect: allow
-  match:
-    any:
-      # Clause 1: analysts may read the reporting schema ...
-      - subjects: { groups: ["analysts"] }
-        resources: { catalogs: ["shop"], schemas: ["reporting"] }
-      # Clause 2: ... OR the export bot may read one table in it.
-      - subjects: { apiKeys: ["export-bot"] }
-        resources: { catalogs: ["shop"], schemas: ["reporting"], tables: ["exports"] }
-```
+## Example
 
-With `all`, every clause must hold — useful to AND independent subject checks:
+Analysts read `orders`. Support agents read `tickets`.
 
 ```yaml
-# fragment — selector only, not a standalone policy
-match:
-  all:
-    - subjects: { groups: ["finance"] }        # must be in finance ...
-    - subjects: { ipRanges: ["10.0.0.0/8"] }   # ... AND on the internal network
+--8<-- "examples/matching/policies.d/allow-reporting.yaml:2"
 ```
 
-## Subject fields
+```yaml
+--8<-- "examples/matching/tests/any-all.yaml:any"
+```
 
-All populated fields inside one `subjects` block must hold (AND); an empty `subjects` block
-matches every subject, including anonymous ones.
+Under `any`, one matching clause is enough. In a clause, `subjects` and `resources` must both match.
+
+## Fields
+
+| Field | Meaning |
+|---|---|
+| `any` | Clauses. One must match. |
+| `all` | Clauses. All must match. |
+| `subjects` | In a clause. If missing, every subject matches. |
+| `resources` | In a clause. If missing, every table matches. |
+
+With both `any` and `all`, one `any` clause or all `all` clauses must match.
+
+A selector works per table or per query:
+
+| Kind | `match` | `exclude` |
+|---|---|---|
+| `SqlAccessPolicy`, `RowFilterPolicy`, `ColumnMaskPolicy` | Covers each table that matches. | Removes single tables. |
+| `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy` | One matching table is enough. | One excluded table switches the policy off. |
+
+### Subjects
+
+Every field that you set must match.
 
 | Field | Matches when |
-| ----- | ------------ |
-| `groups` | The subject has at least one listed group |
-| `apiKeys` | The subject authenticated with an API key whose id is listed |
-| `roles` | The `roles` claim contains a listed role (falls back to groups if the claim is absent) |
-| `ipRanges` | The request's remote IP is inside one of the CIDR ranges |
-| `jwtClaims` | Every listed claim check passes |
+|---|---|
+| `groups` | The subject is in one of the groups. |
+| `roles` | The `roles` claim holds one of the roles. Without the claim, the groups count. |
+| `apiKeys` | The subject used an API key and its [subject id](subjects.md) is listed. |
+| `jwtClaims` | Every claim check passes. |
 
-Each `jwtClaims` entry names a claim (dotted paths descend into nested claims), an `op`, and a
-comparison value:
+A check has `claim`, `op` and a value. A dot in `claim` steps into a nested claim.
 
-| `op` | Uses | Meaning |
-| ---- | ---- | ------- |
-| `Equals` | `value` | Claim exists and equals the value |
-| `NotEquals` | `value` | Claim is absent or differs |
-| `In` | `values` | Claim equals one of the values |
-| `NotIn` | `values` | Claim is absent or equals none of the values |
-| `Exists` | — | Claim is present, whatever its value |
-| `Matches` | `pattern` | Claim is a string matching the regular expression |
+| `op` | Passes when |
+|---|---|
+| `Equals` | The claim equals `value`. |
+| `NotEquals` | The claim is missing or differs from `value`. |
+| `In` | The claim equals one of `values`. |
+| `NotIn` | The claim is missing or equals none of `values`. |
+| `Exists` | The claim is present. |
+| `Matches` | The claim is text that matches the regular expression `pattern`. |
 
-!!! note "Claim comparison is type-strict"
-    A numeric claim never equals a string policy value: `1` does not match `value: "1"`, and
-    `true` does not match `value: "true"`. Write the YAML value in the claim's actual type.
+Types must agree: the number `3` does not equal the text `"3"`.
 
-## Resource fields
+### Resources
 
-Tables are identified by their three-part path `catalog.schema.table` — that dotted key is what
-you see in audit records and test assertions. The selector matches each segment with its own
-field:
+| Field | Matches |
+|---|---|
+| `catalogs`, `schemas`, `tables` | One part each of `catalog.schema.table`. Case does not matter. |
+| `columns` | Column names. Only [column masks](column-masks.md) use it. |
+| `tags` | Tables and columns with a [tag](classification.md). |
+| `actions` | The statement type. See [Access control](access-control.md). |
 
-| Field | Matches against |
-| ----- | --------------- |
-| `catalogs` | The catalog segment |
-| `schemas` | The schema segment |
-| `tables` | The bare table name |
-| `columns` | Column names (required for column masks; does not constrain table matching) |
-| `tags` | Tables/columns tagged by a [DataClassification](classification.md) |
-| `actions` | The statement verb: `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+A pattern must match the whole name.
 
-!!! warning "One segment per field"
-    A dotted pattern such as `tables: ["shop.main.orders"]` could never match, since it is
-    compared with the bare table name, so loading one is an error. Write `catalogs: ["shop"],
-    schemas: ["main"], tables: ["orders"]`. A name that really contains a dot is written with an
-    escaped dot: `tables: ['sales\.2024']`. An unqualified query (`FROM orders`) has empty
-    catalog and schema segments, which only `*`/`**` patterns match.
+| Pattern | Meaning |
+|---|---|
+| `*` | Any text without a dot. |
+| `**` | Any text. |
+| `\*`, `\.` | A literal `*` or dot. |
 
-A clause matches a query when **at least one** referenced table satisfies its `resources` block.
-Where a policy acts per table — an allow covering a table, a row filter, a mask — each table is
-checked on its own: under `all`, a table is covered only if it alone satisfies every clause. An
-allow admits only the tables it covers; see [access control](access-control.md).
+## More examples
 
-## Wildcards
+### All clauses must match
 
-Patterns are anchored — they must match the whole segment.
-
-| Pattern | Meaning | Example |
-| ------- | ------- | ------- |
-| `*` | Any characters within one dotted segment | `analytics_*` matches `analytics_daily`, not `analytics.daily` |
-| `**` | Any characters across segments | `**` in `tables` matches every table name |
-| `\*` | A literal asterisk | `total\*` matches only `total*` |
-
-## Priority and specificity
-
-When several policies of the same kind claim the same target, resolution is deterministic:
-**priority descending, then selector specificity descending, then name ascending.** Specificity
-counts the non-wildcard resource patterns in a clause. Two overlapping column masks:
+A subject needs both groups.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: hash-email-everywhere, priority: 50 }
-spec:
-  match:
-    any:
-      - resources: { tables: ["*"], columns: ["email"] }   # specificity 1
-  mask: { type: hash }
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: null-email-customers, priority: 50 }
-spec:
-  match:
-    any:
-      - resources: { tables: ["customers"], columns: ["email"] }  # specificity 2
-  mask: { type: "null" }
+--8<-- "examples/matching/policies.d/allow-invoices.yaml:2"
 ```
-
-Equal priority, so specificity decides: `customers.email` is nulled while every other `email`
-column is hashed. Raise `hash-email-everywhere` to `priority: 60` and it takes the column
-outright — priority always beats specificity.
-
-## Exclude
-
-`spec.exclude` is a second selector that carves matches back out. Its scope depends on the kind:
-
-- **Whole-query kinds** (`QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy`): if
-  `exclude` matches, the policy is dropped for the entire query.
-- **`SqlAccessPolicy`**: `exclude` carves tables out one by one. The policy is dropped only when
-  `exclude` matches every referenced table (a subject carve-out does). Otherwise an allow still
-  covers the tables it names that are not excluded, and a deny still fires if its selector
-  matches the tables that are left, so joining a carved-out table never lifts a deny from the
-  others.
-- **Per-table kinds** (`RowFilterPolicy`, `ColumnMaskPolicy`): `exclude` is applied per table, so
-  carving out one table never lifts protection from the other tables in a join.
-
-## Combining row filters
-
-When several `RowFilterPolicy` objects hit the same table, their predicates fold according to
-`spec.combine`: `restrictive` ANDs them (the default), `permissive` ORs them. Values always bind
-as `$N` parameters — never spliced into the SQL text. A tenant and a region filter on `orders`:
-
-```sql
--- before
-SELECT id FROM orders
--- after, both filters restrictive
-SELECT id FROM (SELECT * FROM orders sluice_src WHERE sluice_src.tenant_id = $1 AND sluice_src.region = $2) orders
--- after, second filter permissive
-SELECT id FROM (SELECT * FROM orders sluice_src WHERE sluice_src.tenant_id = $1 OR sluice_src.region = $2) orders
-```
-
-## Recipes
-
-**Match everyone except a group** — mask a column, but let `sre` through (break-glass):
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: mask-email-except-sre, priority: 50 }
-spec:
-  match:
-    any:
-      - resources: { tables: ["customers"], columns: ["email"] }
-  exclude:
-    any:
-      - subjects: { groups: ["sre"] }
-  mask: { type: "null" }
+--8<-- "examples/matching/tests/any-all.yaml:all"
 ```
 
-**Match a whole catalog** — clients must qualify tables (`shop.main.orders`) for the catalog
-segment to be present:
+### Roles and claims
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata: { name: allow-whole-catalog, priority: 50 }
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects: { groups: ["analysts"] }
-        resources: { catalogs: ["shop"] }
+--8<-- "examples/matching/policies.d/allow-auditors.yaml:2"
 ```
-
-**Match by tag** — classify once, select the tag everywhere. An unknown tag is a compile error,
-so a typo cannot silently protect nothing:
 
 ```yaml
-apiVersion: sluice.bino.bi/v1beta1
-kind: DataClassification
-metadata: { name: pii-map }
-spec:
-  rules:
-    - resources: { tables: ["customers"], columns: ["email", "phone"] }
-      tags: ["pii"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: hash-all-pii, priority: 40 }
-spec:
-  match:
-    any:
-      - resources: { tags: ["pii"] }
-  mask: { type: hash }
+--8<-- "examples/matching/tests/subjects.yaml:auditors"
 ```
+
+### Wildcards
+
+```yaml
+--8<-- "examples/matching/policies.d/allow-lake.yaml:2"
+```
+
+```yaml
+--8<-- "examples/matching/tests/resources.yaml:wildcards"
+```
+
+### Exclude a group
+
+```yaml
+--8<-- "examples/matching/policies.d/mask-email.yaml:2"
+```
+
+```yaml
+--8<-- "examples/matching/tests/exclude.yaml:group"
+```
+
+### Which policy wins
+
+Sluice orders policies by `metadata.priority`, highest first, then by name. One mask applies per column. At equal priority, the mask with more names without a wildcard wins. Other kinds have no such rule. This mask has the priority of `mask-email`:
+
+```yaml
+--8<-- "examples/matching/policies.d/mask-email-customers.yaml:2"
+```
+
+```yaml
+--8<-- "examples/matching/tests/priority.yaml:masks"
+```
+
+## Limits
+
+- These are load errors: an empty `spec.match`, an unknown tag, a dot in a `catalogs`, `schemas` or `tables` pattern.
+- An unknown `op` or `actions` value loads, but it never matches.
+- In SQL, a table without catalog matches only `*` and `**` in `catalogs` and `schemas`.
+- A claim name that holds a dot cannot be checked.
+- An `exclude` with `all` on a `SqlAccessPolicy` works per query, not per table.
+
+## See also
+
+- [Access control](access-control.md)
+- [Conditions](conditions.md)
+- [Break-glass access](../cookbook/break-glass.md)

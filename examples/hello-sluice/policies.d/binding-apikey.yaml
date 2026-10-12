@@ -7,7 +7,6 @@ spec:
   claims:
     subjectId: "hello"
     tenantId: "acme"
-    groups: "groups"
   # The client sends "X-Api-Key: sl_demo_hello.world": key id, a dot, then the secret.
   apiKeys:
     - id: "sl_demo_hello"

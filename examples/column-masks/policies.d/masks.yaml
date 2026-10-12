@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-name }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["name"] } }] }
+  mask: { type: fake, args: { fakeType: name, seed: "secret://env/SLUICE_MASK_SEED" } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-birth-date }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["birth_date"] } }] }
+  # Keep the year only.
+  mask: { type: regex, args: { pattern: '-\d\d-\d\d$', replacement: "-01-01" } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-address }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["address"] } }] }
+  mask: { type: constant, args: { value: "REDACTED" } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-ssn }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["ssn"] } }] }
+  mask: { type: "null" }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-card }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["card"] } }] }
+  mask: { type: fpe, args: { keyRef: "secret://env/SLUICE_MASK_FPE_KEY" } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-salary }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["salary"] } }] }
+  mask: { type: jitter, args: { range: 0.1, seed: "secret://env/SLUICE_MASK_SEED" } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-notes }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["notes"] } }] }
+  mask: { type: truncate, args: { length: 10, suffix: "..." } }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata: { name: mask-email }
+spec:
+  match: { any: [{ resources: { tables: ["employees"], columns: ["email"] } }] }
+  mask: { type: hash, args: { algorithm: hmac_sha256, saltRef: "secret://env/SLUICE_MASK_HMAC_KEY" } }

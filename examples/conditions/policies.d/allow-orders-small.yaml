@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-orders-small
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["interns"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  conditions:
+    - name: small-result
+      expression: "query.has_limit == true && query.limit <= 100"

@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: an analyst reads the allowed table
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+
+  - name: an analyst is denied on a table that no allow names
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM shop.main.customers"
+    expect:
+      outcome: deny
+
+  # --8<-- [start:every-table]
+  - name: a join needs an allow for every table
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT o.id, c.email FROM shop.main.orders o JOIN shop.main.customers c ON c.name = o.customer"
+    expect:
+      outcome: deny
+
+  - name: an admin is allowed on both tables
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT o.id, c.email FROM shop.main.orders o JOIN shop.main.customers c ON c.name = o.customer"
+    expect:
+      outcome: allow
+  # --8<-- [end:every-table]
+
+  # --8<-- [start:deny]
+  - name: the deny wins over the allow for admins
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT employee FROM shop.main.salaries"
+    expect:
+      outcome: deny
+      denyPolicy: deny-salaries
+
+  - name: a deny on one table denies the whole query
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT o.id, s.amount_cents FROM shop.main.orders o JOIN shop.main.salaries s ON s.employee = o.customer"
+    expect:
+      outcome: deny
+      denyPolicy: deny-salaries
+  # --8<-- [end:deny]
+
+  # --8<-- [start:actions]
+  - name: the admin allow covers a SELECT
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT id FROM shop.main.customers"
+    expect:
+      outcome: allow
+
+  - name: the admin allow does not cover a DELETE
+    identity: { subject: ada, groups: [admins] }
+    sql: "DELETE FROM shop.main.customers"
+    expect:
+      outcome: deny
+
+  - name: an allow without actions covers a DELETE, then Sluice rejects the write
+    identity: { subject: alice, groups: [analysts] }
+    sql: "DELETE FROM shop.main.orders"
+    expect:
+      outcome: allow
+      errorCode: ACL_REJECTED
+  # --8<-- [end:actions]
+
+  - name: EXPLAIN SELECT counts as a SELECT
+    identity: { subject: ada, groups: [admins] }
+    sql: "EXPLAIN SELECT id FROM shop.main.customers"
+    expect:
+      outcome: allow
+
+  # --8<-- [start:order]
+  - name: the reject rule fires on an allowed table
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT * FROM shop.main.orders"
+    expect:
+      outcome: reject
+      rejections: ["reject-select-star/no-select-star"]
+
+  - name: a deny comes before a reject
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT * FROM shop.main.salaries"
+    expect:
+      outcome: deny
+      denyPolicy: deny-salaries
+  # --8<-- [end:order]
+
+  - name: a statement without a table needs an allow that names no table
+    identity: { subject: ada, groups: [admins] }
+    sql: "SELECT 1"
+    expect:
+      outcome: allow
+
+  - name: an allow that names a table does not cover a statement without a table
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT 1"
+    expect:
+      outcome: deny

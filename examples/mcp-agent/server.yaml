@@ -6,6 +6,7 @@ rest:
   maxBodyBytes: 1048576
   requestTimeout: 30s
 
+# --8<-- [start:mcp]
 # MCP over HTTP on its own port. Every request must carry the agent's API key.
 # `sluice mcp` also reads this file, but takes the transport from its own flag.
 mcp:
@@ -13,6 +14,7 @@ mcp:
   transport: "streamable_http"
   listen: ":8081"
   sessionIdleMax: 30m
+# --8<-- [end:mcp]
 
 admin:
   enabled: false

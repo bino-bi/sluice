@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+# --8<-- [start:admin]
+admin:
+  enabled: true
+  listen: ":9091"
+  # Demo value. Use your own token.
+  token: "demo-admin-token-change-me"
+# --8<-- [end:admin]
+
+# --8<-- [start:logging]
+logging:
+  level: "info"
+  # The default is "json". The text format is easier to read in a terminal.
+  format: "text"
+# --8<-- [end:logging]
+
+policies:
+  directory: "./policies.d"
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

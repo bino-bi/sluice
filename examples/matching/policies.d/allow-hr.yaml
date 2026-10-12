@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-hr
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["hr"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["hr"]
+  exclude:
+    any:
+      - resources:
+          tables: ["salaries"]

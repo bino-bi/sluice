@@ -7,5 +7,3 @@ spec:
   type: postgres
   connection: "postgres://sluice@postgres:5432/orders?sslmode=disable"
   credentialsRef: "secret://env/SLUICE_PG_PASSWORD"
-  readonly: true
-  schemas: ["public"]

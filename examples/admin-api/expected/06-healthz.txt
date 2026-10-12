@@ -1,0 +1,6 @@
+{
+  "status": "ok",
+  "version": "<version>",
+  "config_digest": "<digest>",
+  "config_version": 2
+}

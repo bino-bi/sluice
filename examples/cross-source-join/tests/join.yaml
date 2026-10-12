@@ -4,6 +4,7 @@ schema:
   shop.main.orders: [id, customer_id, country_code, amount_cents]
 
 cases:
+  # --8<-- [start:masked-join]
   - name: analyst joins both catalogs, the mask stays on the orders side
     identity: { subject: analyst, groups: [analytics] }
     sql: >-
@@ -18,6 +19,7 @@ cases:
         FROM (SELECT sluice_src.id, NULL AS customer_id, sluice_src.country_code, sluice_src.amount_cents
               FROM shop.main.orders sluice_src) o
         JOIN ref.main.countries c ON c.code = o.country_code
+  # --8<-- [end:masked-join]
 
   - name: intern is denied the same join, orders is not allowed
     identity: { subject: intern, groups: [reference] }

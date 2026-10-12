@@ -30,6 +30,28 @@ Do not use these words and phrases:
 
 > seamless, robust, powerful, leverage, ensure, comprehensive, effortless, out of the box, under the hood, on the wire, in flight, first-class, battle-tested, simply, just, easily, delve, crucial, moreover, "it's worth noting", "note that", "it is important to", "in summary"
 
+### Terms
+
+Use the term on the left. The [glossary](docs/reference/glossary.md) explains each one.
+
+| Say | Do not say |
+|---|---|
+| Sluice, the server | the gateway, the proxy, the service |
+| client | caller, consumer, requester |
+| subject | principal, identity, user (for the thing policies match) |
+| policy | manifest, resource, rule (a "rule" is an entry in `QueryRejectPolicy.rules`) |
+| policy kind | policy type, object type |
+| policy directory | policies dir, policy folder |
+| data source | datasource (except in code and commands), upstream, backend |
+| column mask, mask type | masking rule, mask provider, mask function |
+| row filter | row-level security, RLS |
+| audit log, audit record | audit trail, audit entry, audit event |
+| reload | hot reload, live reload |
+| rewritten SQL | final SQL, rewritten statement |
+| server config | config file, `sluice.yaml` |
+| deny (`ACL_DENIED`), reject (`ACL_REJECTED`) | block, forbid (as a synonym for either) |
+| approval, grant | sign-off, permit |
+
 ## 3. Examples
 
 - Every feature page starts with a working example.

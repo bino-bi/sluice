@@ -1,0 +1,5 @@
+{
+  "code": "ACL_DENIED",
+  "message": "customers and payments must not be read together",
+  "query_id": "<query-id>"
+}

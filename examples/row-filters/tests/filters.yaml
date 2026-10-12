@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  # --8<-- [start:own]
+  - name: a sales rep reads only their own orders
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, owner, status, amount_cents FROM shop.main.orders ORDER BY id"
+    expect:
+      outcome: allow
+      filters: ["shop.main.orders"]
+      rewrittenSql: >-
+        SELECT id, owner, status, amount_cents
+        FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.owner = $1) orders
+        ORDER BY id
+  # --8<-- [end:own]
+
+  # --8<-- [start:nested]
+  - name: all, any and not become AND, OR and NOT
+    identity: { subject: sam, groups: [support] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE sluice_src.status IN ($1, $2)
+        AND (sluice_src.region = $3 OR sluice_src.amount_cents > $4)
+        AND NOT starts_with(sluice_src.owner, $5)) orders
+  # --8<-- [end:nested]
+
+  # --8<-- [start:cel]
+  - name: a CEL filter becomes the same SQL as a predicate
+    identity: { subject: rita, groups: [regional], claims: { region: eu } }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE sluice_src.region = $1 AND sluice_src.status <> $2) orders
+  # --8<-- [end:cel]
+
+  # --8<-- [start:permissive]
+  - name: a permissive filter is joined with OR
+    identity: { subject: ben, groups: [sales, leads] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE sluice_src.owner = $1 OR sluice_src.status = $2) orders
+  # --8<-- [end:permissive]
+
+  - name: a restrictive filter is joined with AND
+    identity: { subject: rita, groups: [sales, regional], claims: { region: eu } }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE sluice_src.owner = $1 AND (sluice_src.region = $2 AND sluice_src.status <> $3)) orders
+
+  - name: filters are joined in order of priority
+    identity: { subject: rita, groups: [sales, leads, regional], claims: { region: eu } }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE (sluice_src.owner = $1 OR sluice_src.status = $2)
+        AND (sluice_src.region = $3 AND sluice_src.status <> $4)) orders
+
+  - name: a join filters both reads of the table
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT a.id FROM shop.main.orders a JOIN shop.main.orders b ON b.id = a.id"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT a.id
+        FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.owner = $1) a
+        JOIN (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.owner = $2) b ON b.id = a.id
+
+  - name: a subject without a matching filter reads every row
+    identity: { subject: guest, groups: [guests] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      filters: []
+      rewrittenSql: "SELECT id FROM shop.main.orders"

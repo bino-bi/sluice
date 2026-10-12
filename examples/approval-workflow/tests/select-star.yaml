@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# columnsAccessed sees only column names written in the query.
+cases:
+  - name: SELECT * returns ssn without approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT * FROM shop.main.people"
+    expect:
+      outcome: allow
+      applied: ["SqlAccessPolicy/allow-analysts"]

@@ -9,6 +9,7 @@ spec:
       - subjects: { groups: [analysts] }
         resources: { tables: ["*"] }
 ---
+# --8<-- [start:approval]
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ApprovalPolicy
 metadata: { name: approve-pii-reads, priority: 100 }
@@ -21,3 +22,4 @@ spec:
     predicates:
       - { column: "country", op: "=", value: "de" }
   reason: "PII columns on people require a data-steward sign-off"
+# --8<-- [end:approval]

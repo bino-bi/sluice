@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-invoices
+  priority: 100
+spec:
+  effect: allow
+  match:
+    all:
+      - subjects:
+          groups: ["finance"]
+      - subjects:
+          groups: ["managers"]
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["invoices"]

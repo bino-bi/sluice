@@ -2,182 +2,104 @@
 
 # Server config & secrets
 
-`sluice serve --config sluice.yaml` reads one YAML file for the process
-runtime; policies live in their own directory. This page shows every
-top-level block with its default values — the generated
-[configuration reference](../reference/configuration.md) is the
-authoritative field table.
+The server config is the YAML file for `sluice serve --config`. Secrets stay out of it: the file holds references. [Configuration](../reference/configuration.md) lists every key.
 
-## Annotated sluice.yaml
+## Example
+
+Goal: keep the admin token and all secrets out of the file.
 
 ```yaml
-# fragment — server config (not a policy manifest); values shown are defaults
-# except the audit.file and identity blocks, which are illustrative
-rest:
-  listen: ":8080"
-  maxBodyBytes: 1048576        # request body cap in bytes
-  requestTimeout: 30s
-  # tls: {certFile: ..., keyFile: ...}   # unset = plaintext
-
-mcp:
-  enabled: false
-  transport: stdio             # stdio | streamable_http
-  listen: ""                   # required for streamable_http
-  sessionIdleMax: 30m
-
-admin:
-  enabled: false               # true in production: reload, explain, /metrics
-  listen: ":9091"
-  token: ""                    # empty = dev mode; inject via SLUICE_ADMIN__TOKEN
-
-duckdb:
-  memoryLimit: 4GB
-  threads: 0                   # 0 = DuckDB default
-  tempDir: ""
-  maxOpen: 4
-  maxIdle: 2
-  connMaxIdle: 5m
-
-datasources:
-  directory: ./datasources.d   # examples keep DataSource manifests in policies.d
-  failFast: true               # abort boot when a source fails to attach
-  reload: false                # setting true is rejected at load; DataSource changes need a restart
-
-policies:
-  directory: ./policies.d      # empty directory = valid = deny everything
-  reload: true                 # fsnotify hot reload
-  engine: yaml                 # yaml | opa | composite
-  composite: {members: [yaml]} # may add "opa", "rebac"
-  opa: {moduleDir: "", query: data.sluice.main}
-  rebac: {cacheTtl: 10s, cacheSize: 10000}
-
-audit:
-  failClosed: true             # refuse to serve unaudited queries
-  sqlSampleBytes: 2048         # sql_sample cap per record; 0 disables
-  file:                        # unset = $TMPDIR/sluice-audit + loud warning
-    path: /var/lib/sluice/audit
-    rotateDaily: true
-    rotateSizeMB: 64
-    genesis: secret://env/SLUICE_AUDIT_GENESIS   # chain anchor seed
-
-logging:
-  level: info                  # debug | info | warn | error
-  format: json                 # json | text
-  maxErrorBytes: 4096          # cut of a logged error text, 0 = no cut
-
-identity:
-  apiKeyPepper: secret://env/SLUICE_APIKEY_PEPPER   # HMAC pepper for API keys
-
-limits:
-  maxRows: 100000
-  maxRowsCeiling: 100000
-  maxSqlBytes: 1048576
-  queryTimeout: 30s
-  maxQueryTimeout: 30s
-  maxConcurrent: 100
-  disableCrossCatalog: false   # true rejects multi-catalog queries (ACL_REJECTED)
-  globalRps: 500               # token bucket over all /v1/query traffic, before auth; 0 disables
-  globalBurst: 1000
-  perIpRps: 0                  # per-remote-IP bucket on /v1/query; keep 0 behind a load balancer
-  perIpBurst: 0
-  perIpMaxBuckets: 10000       # LRU bound on the per-IP bucket map
-  defaultSubjectRps: 0         # fallback per-subject rate when a binding has no rateLimit; 0 disables
-  defaultSubjectBurst: 0
-
-cache:
-  rewrite: {enabled: false, size: 4096, ttl: 60s}
-
-approval:
-  publicBaseUrl: ""            # required once an ApprovalPolicy loads
-  webhooks: []                 # [{url, headersRef, timeout}]
-  syncWait: 20s
-  requestTtl: 15m
-  grantTtl: 5m
-  maxPending: 1000
-  sqlSampleBytes: 2048         # SQL text cap in webhook payloads; 0 disables
-
-budget:
-  enabled: false
-  stateDir: ./state
-  flushInterval: 5s
-  failClosed: true
-  retentionDays: 35
+--8<-- "examples/server-config/server.yaml:admin"
 ```
 
-## Precedence
+```yaml
+--8<-- "examples/server-config/server.yaml:secrets"
+```
 
-Later layers win: **defaults → config file → `SLUICE_*` environment
-variables → command-line flags**. A missing config file is fine — defaults
-plus env and flags still produce a working server. A malformed file is
-always fatal.
-
-## Environment overrides
-
-Fields are overridden with the `SLUICE_` prefix; dots in the YAML path
-become double underscores:
+The start script sets them:
 
 ```bash
-export SLUICE_REST__LISTEN=":8443"        # rest.listen
-export SLUICE_LOGGING__LEVEL="debug"      # logging.level
-export SLUICE_LIMITS__MAXROWS="50000"     # limits.maxRows
+--8<-- "examples/server-config/serve.sh:env"
 ```
 
-Overrides work for fields that have built-in defaults or appear in your
-config file. Fields without built-in defaults — notably `admin.token`,
-`mcp.listen`, `identity.apiKeyPepper`, and the `audit.file.*` block — must
-be present in `sluice.yaml` (an empty value is fine) for their `SLUICE_*`
-override to take effect; otherwise the variable is silently ignored. For
-example, keep `admin: {token: ""}` in the file so `SLUICE_ADMIN__TOKEN`
-binds.
-
-## secret:// references
-
-Fields that carry sensitive material take a `secret://` URI instead of a
-literal. Two providers work today:
-
-- `secret://env/VAR_NAME` — process environment variable (case-sensitive).
-- `secret://file//etc/sluice/secrets/pepper` — file contents. Note the
-  double slash: it keeps the path absolute. Group- or world-writable secret
-  files are refused; world-readable files log a warning. Trailing
-  whitespace is trimmed for string secrets.
-
-A `#fragment` suffix parses as a subfield selector for JSON-encoded
-secrets (e.g. `secret://vault/secret/data/pii#value`); the `env` and
-`file` providers return the whole value.
-
-!!! warning "Not yet implemented — rejected at parse"
-    `secret://vault/...`, `secret://aws-sm/...`, and `secret://gcp-sm/...`
-    are **rejected** wherever a reference is parsed — `sluice config
-    validate` exits 3 for server-config fields, and boot/reload fails for
-    manifest refs. Only `env` and `file` resolve in this build.
-
-Where references are accepted:
-
-| Field | Object |
-| ----- | ------ |
-| `identity.apiKeyPepper` | server config |
-| `audit.file.genesis` | server config (audit chain anchor) |
-| `approval.webhooks[].headersRef` | server config (JSON map of header → value) |
-| `spec.jwt.hmacSecretRef` | `SubjectBinding` |
-| `spec.apiKeys[].hashRef` | `SubjectBinding` |
-| `spec.credentialsRef` | `DataSource` (postgres, mysql, s3) |
-| `spec.headersRef` | `DataSource` (http; JSON map of header → value) |
-| `spec.backend.tokenRef` | `RelationshipPolicy`; also `spec.tokenRef` on the motherduck `DataSource` |
-| `spec.mask.args.saltRef` / `keyRef` / `seed` | `ColumnMaskPolicy` (`hash` hmac_sha256, `fpe`, `jitter`) |
-
-Resolved values are cached for 10 minutes. When API-key auth is configured
-(`identity.apiKeyPepper` set), the cache is also invalidated on every
-policy reload, so rotating a secret plus touching the policy directory
-takes effect immediately; otherwise rotated secrets are picked up within
-the 10-minute TTL.
-
-## Pre-deploy gate
+A call without the token:
 
 ```bash
-sluice config validate ./policies.d --config sluice.yaml --strict
+--8<-- "examples/server-config/steps/03-admin-without-token.sh"
 ```
 
-Validates the server file and every manifest in the directory; `--strict`
-additionally rejects unknown YAML fields (catches typos). Exit codes:
-`0` success, `1` I/O error, `3` validation failure. Run it in CI together
-with [`sluice policy test`](../policies/testing.md).
+```json
+--8<-- "examples/server-config/expected/03-admin-without-token.txt"
+```
+
+What happened: `SLUICE_ADMIN__TOKEN` set `admin.token`, so the admin API refuses the call. The pepper comes from a file.
+
+## How Sluice loads the config
+
+Later steps win:
+
+1. The built-in defaults.
+2. The file from `--config`.
+3. Environment variables. `rest.listen` becomes `SLUICE_REST__LISTEN`: prefix `SLUICE_`, upper case, `__` for each dot.
+4. The flag `--policies-dir`, which replaces `policies.directory`.
+
+A missing or empty policy directory is no error. Sluice starts and refuses every query.
+
+!!! warning "A variable needs its key"
+    Sluice reads a variable only if its key has a default or is in the file. `SLUICE_ADMIN__TOKEN` alone does not set the token: without `token: ""` in the file, the admin API accepts every call. No default: `admin.token`, `mcp.listen`, `identity.apiKeyPepper`, `duckdb.tempDir`, and the keys under `audit.file`, `audit.syslog`, `audit.s3`, `rest.tls`, `admin.tls`.
+
+## Secret references
+
+| Reference | Sluice reads |
+|---|---|
+| `secret://env/NAME` | The environment variable `NAME`. |
+| `secret://file//etc/sluice/key` | The file `/etc/sluice/key`. The path must be absolute. |
+
+There are no other providers. Sluice refuses a secret file that group or others can write.
+
+| Where | Keys that take a reference |
+|---|---|
+| Server config | `identity.apiKeyPepper`, `audit.file.genesis`, `audit.s3.credentialsRef`, `approval.webhooks[].headersRef`, `mcp.tokenRef`, `mcp.apiKeyRef` |
+| `SubjectBinding` | `apiKeys[].hashRef`, `hmacSecretRef` |
+| `DataSource` | `credentialsRef`, `headersRef`, `tokenRef` |
+| `RelationshipPolicy` | `backend.tokenRef` |
+| Column mask arguments | `saltRef`, `keyRef`, `seed` |
+
+`admin.token` holds the token itself. Sluice caches a secret for 10 minutes or until a reload.
+
+## Validate before you start
+
+```bash
+--8<-- "examples/server-config/steps/01-validate.sh"
+```
+
+```text
+--8<-- "examples/server-config/expected/01-validate.txt"
+```
+
+An invalid file ends the command with status 3:
+
+```yaml
+--8<-- "examples/server-config/server-bad.yaml:2"
+```
+
+```bash
+--8<-- "examples/server-config/steps/02-validate-bad.sh"
+```
+
+```text
+--8<-- "examples/server-config/expected/02-validate-bad.txt"
+```
+
+## Limits
+
+- A wrong `--config` path is no error. Sluice then uses the defaults.
+- `--strict` checks only policy files for unknown fields.
+- `config validate` does not read secrets. A missing secret of the server config stops `sluice serve`.
+- Sluice keeps a final newline of a pepper or genesis file. Write these files without one.
+- `budget.failClosed` matters only at start. If the budget store does not open, `true` stops Sluice and `false` turns budgets off.
+
+## See also
+
+- [Subjects, keys & budgets](../policies/subjects.md)
+- [Key rotation](../security/key-rotation.md)

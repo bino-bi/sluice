@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  # --8<-- [start:wildcards]
+  - name: the star matches the rest of the table name
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM lake.raw.events_2026"
+    expect:
+      outcome: allow
+
+  - name: another table name does not match
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM lake.raw.sessions"
+    expect:
+      outcome: deny
+
+  - name: names match without regard to case
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM LAKE.Raw.Events_2026"
+    expect:
+      outcome: allow
+
+  - name: a table without catalog and schema does not match
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM events_2026"
+    expect:
+      outcome: deny
+  # --8<-- [end:wildcards]
+
+  - name: an escaped dot matches a dot in the table name
+    identity: { subject: alice, groups: [analysts] }
+    sql: 'SELECT id FROM lake.raw."sales.2024"'
+    expect:
+      outcome: allow
+
+  - name: a pattern matches the whole name
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM lake.raw.all_events_2026"
+    expect:
+      outcome: deny
+
+  - name: one star does not match a dot
+    identity: { subject: alice, groups: [analysts] }
+    sql: 'SELECT id FROM lake.raw."events_2026.old"'
+    expect:
+      outcome: deny
+
+  - name: two stars match a dot
+    identity: { subject: alice, groups: [analysts] }
+    sql: 'SELECT id FROM lake.raw."export.v1"'
+    expect:
+      outcome: allow

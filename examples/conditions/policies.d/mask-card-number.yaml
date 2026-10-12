@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-card-number
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["payments"]
+          columns: ["card_number"]
+  conditions:
+    # No guard: this lookup fails for a subject without the claim.
+    - name: no-high-clearance
+      expression: "subject.claims.clearance != 'high'"
+  mask:
+    type: "null"

@@ -2,34 +2,7 @@
 
 # Threat model
 
-The full STRIDE analysis — per component, with the attack-surface inventory —
-lives in
-[`THREAT_MODEL.md`](https://github.com/bino-bi/sluice/blob/main/THREAT_MODEL.md)
-at the repository root; it is amended by pull request, and material changes go
-through an RFC. This page summarizes what Sluice protects, against whom, and
-with which concrete mechanisms.
-
-## Assets
-
-| Asset | Why it matters |
-|---|---|
-| Query results | May contain PII, financial data — anything in the attached databases |
-| Policy snapshot | Defines who sees what; tampering equals bypass |
-| Identity material | JWT signing keys, API-key pepper, HMAC secrets |
-| Driver credentials | Database passwords, S3 keys, MotherDuck tokens |
-| Audit log + genesis seed | Evidence of every query; the seed anchors the hash chain |
-| Admin token | Grants policy introspection and reload |
-
-## Adversaries
-
-- **The over-privileged agent** — an AI agent wired to a broad database role
-  it should never have had. Sluice narrows it to exactly the tables, rows,
-  and columns its policies allow.
-- **The prompt-injected agent** — an agent whose instructions were hijacked
-  mid-conversation and now tries writes, bulk dumps, or off-limits tables.
-- **The curious analyst** — a legitimate user probing beyond their remit:
-  other tenants' rows, unmasked PII, aggregate fishing.
-- **The stolen API key** — a leaked credential replayed from outside.
+This page lists the threats that Sluice covers. Each row shows what Sluice does and what you must do.
 
 ## Trust boundaries
 
@@ -55,60 +28,91 @@ flowchart LR
     ADM -.-> P
 ```
 
-## Scenario → mechanism
+Both listeners serve plain HTTP until you set `tls`.
 
-| Scenario | Mechanism | Outcome |
+## Threats
+
+| Threat | What Sluice does | What you must do |
 |---|---|---|
-| Agent queries a table nobody allowed | Default-deny + `SqlAccessPolicy` | `ACL_DENIED` |
-| Injected agent attempts `INSERT`/`UPDATE`/`DELETE` | Statement allowlist (SELECT-only execution) | `ACL_REJECTED` |
-| Injected agent attempts DDL, `COPY`, `ATTACH` | Statement allowlist | `ERR_UNSUPPORTED_SYNTAX` |
-| Reading around policy through a function (`query_table`, `read_csv`, `duckdb_settings`, `current_setting`) | Function allowlist (default-deny, before the rewrite cache) | `ACL_REJECTED` |
-| Cross-tenant row access | `RowFilterPolicy` — predicates injected as bound `$N` parameters | Rows filtered |
-| Reading PII columns | `ColumnMaskPolicy` (partial, hash, fpe, fake, ...) | Values masked |
-| Reading the policy SQL, salts or row counts through `EXPLAIN` | `EXPLAIN` refused when a row filter or mask applies | `ERR_UNSUPPORTED_SYNTAX` |
-| A name longer than 63 bytes that pg_query cuts and DuckDB does not | Parser refuses identifiers over 63 bytes | `ERR_UNSUPPORTED_SYNTAX` |
-| Reading the values the policy binds (a hash salt, a filter value) through `$n` | Statements with `$n` parameters are refused | `ERR_UNSUPPORTED_SYNTAX` |
-| Rewritten SQL that DuckDB reads in another way than the caller's text | Normalization plus a DuckDB parse check of both texts before any policy SQL is added | `ERR_UNSUPPORTED_SYNTAX` (`ERR_SYNTAX` when DuckDB cannot parse the caller's text) |
-| Bulk exfiltration in one query | `QueryRewritePolicy` LIMIT clamp + sampling | Result bounded |
-| Bulk exfiltration over many queries | Per-subject daily budgets (`rowsPerDay`, `cpuSecondsPerDay`) | `ERR_BUDGET_EXCEEDED` |
-| Runaway agent loop | Per-subject rate limits (token bucket) | `ERR_RATE_LIMITED` |
-| Risky SQL shapes (`SELECT *`, missing `WHERE`) | `QueryRejectPolicy` CEL rules | `ACL_REJECTED` |
-| Sensitive query needs a human decision | `ApprovalPolicy` + single-use capability URLs (unknown id or bad token returns a uniform 404) | Parked until approved |
-| Stolen API key | Peppered HMAC hashes (no key material at rest), rate limits and budgets bound the blast radius, the audit chain shows exactly what the key did | Contained + attributable |
-| Audit log tampering | Hash chain + `sluice audit verify --anchor` | Detected at the exact line |
+| A client reads a table that no policy allows, also in a join, subquery or `UNION` | Denies the query: `ACL_DENIED` | Allow only the tables that clients may read |
+| A client writes with `INSERT`, `UPDATE`, `DELETE` or `MERGE` | Rejects the statement: `ACL_REJECTED`. Attaches databases `READ_ONLY` | Give Sluice a read-only database user |
+| A client sends DDL, `COPY`, `BEGIN`, `ATTACH`, `INSTALL` or `LOAD` | Refuses the statement: `ERR_UNSUPPORTED_SYNTAX`, or `ERR_SYNTAX` for the last three | Nothing |
+| A client sends two statements in one request | Refuses the request: `ERR_MULTIPLE_STATEMENTS` | Nothing |
+| A client calls a function that reads files or settings, such as `read_csv` or `duckdb_settings` | Runs only functions on its allow list. Others: `ACL_REJECTED` | Nothing |
+| A client reads rows of another tenant | A `RowFilterPolicy` filters every read of the table. The filter value is a bound parameter | Write a filter for every tenant table. Keep the filter column in every matched table |
+| A client reads a PII column | A `ColumnMaskPolicy` replaces the values of the column | Pick the mask type. `partial` shows a prefix. Unsalted `sha256` values can be guessed |
+| A client reads policy SQL or bound values with `EXPLAIN` | Refuses `EXPLAIN` on a table with a row filter or column mask: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
+| A client reads bound values with `$n` parameters | Refuses the statement: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
+| SQL that DuckDB reads in another way than the parser, for example a name over 63 bytes | Before a rewrite, checks that DuckDB reads the SQL the same way. Refuses long names: `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX` | Nothing |
+| A two-part table name such as `shop.customers` | Rejects the statement: `ACL_REJECTED` | Write `catalog.schema.table` |
+| A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRows` caps every result | Add a `QueryRewritePolicy` on `tables: ["**"]` |
+| A client dumps a table over many queries | Daily budget per subject: `ERR_BUDGET_EXCEEDED` | Set `budget.enabled: true` and `budget` on the subject binding |
+| A client floods Sluice with requests | Global and per-IP rate limits before login, one per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding. `limits.perIpRps` is off by default |
+| A client sends a risky query form | A `QueryRejectPolicy` rule rejects it: `ACL_REJECTED` | Write the rules |
+| A read that a person must accept first | An `ApprovalPolicy` holds the query: `ERR_APPROVAL_PENDING`. A grant runs the same query once | Set `approval.publicBaseUrl` and a webhook. Keep the webhook channel private. Run one instance |
+| A stolen API key | Stores only an HMAC of each key with a pepper. Rate limit and budget cap its use | Keep the pepper secret. Use one key id per client. [Rotate keys](key-rotation.md) |
+| A forged JWT | Checks signature, algorithm and issuer, and the audience when set. Refuses `alg: none` | Set `issuer`, `audience` and `jwksUrl` |
+| A changed audit log | Hash chain. `sluice audit verify` exits with status 4 and names file and line | Run verify with `--anchor` on a schedule. Keep a copy and the last hash on another host |
+| A query without an audit record | `audit.failClosed`: `ERR_AUDIT_UNAVAILABLE` when the audit queue does not take the record | Keep it `true`. Alert on `sluice_audit_write_errors_total` |
+| An open admin API | Own listener, off by default, bearer token | Set `admin.token` in the server config. Bind `admin.listen` to a private interface |
+| Traffic read on the network | TLS and client certificates on both listeners, TLS 1.2 or newer | Set `rest.tls` and `admin.tls`, or use a TLS proxy |
+| A secret file open to other users | Refuses a file that group or others can write. Warns when others can read it | `chmod 0600` |
+| DuckDB reads local files or other URLs | Turns off external access and extension install, locks the settings. Only the configured S3 bucket and HTTP URLs stay readable | List only the URLs you need |
+| A user with database credentials | Nothing. This user does not pass through Sluice | Give database credentials only to Sluice |
 
-Rate limiting is enforced at two levels: transport-level global and per-IP token buckets ahead
-of authentication (`limits.globalRps`, `limits.perIpRps`), and per-subject buckets from
-`SubjectBinding.spec.rateLimit` with an optional `limits.defaultSubjectRps` fallback. Budgets
-are enforced per `SubjectBinding` — see [Subjects, keys & budgets](../policies/subjects.md).
+Notes:
 
-## Residual risks
+- For writes, DDL and two statements, policies run first. When no allow policy matches, the answer is `ACL_DENIED`.
+- Rate limit and budget on a subject binding need `claims.subjectId` or `issuer`. See [Hardening](hardening.md).
+- Sluice checks the budget before a query. The query that crosses the budget is still served.
+- A table without the filter column cannot be read: `ERR_QUERY_FAILED`.
+- Accept and reject URLs of an approval carry a token. An unknown id and a wrong token return the same 404.
+- A failed disk write of an audit record does not stop queries.
 
-- **What a mask output shows.** A query only sees the output of a SQL mask,
-  so `WHERE email = 'victim@example.com'` under a `'***'` mask matches
-  nothing. The output itself can still tell something: a `partial` mask
-  shows its prefix, an unsalted `sha256` hash can be checked against guessed
-  values, and equal hashes show equal inputs. See
-  [Column masks](../policies/column-masks.md).
-- **A filter column the table does not have.** Sluice does not check that a
-  row filter column exists in each table the filter matches. When it does
-  not, a crafted query can make the filter test a value it builds itself, and
-  the rows are served unfiltered. Keep the filter column in every matched
-  table, also under wildcard table patterns.
-- **Jailbreak of the agent itself.** Sluice bounds *what data an agent can
-  obtain*, not what the agent does with data it is legitimately allowed to
-  read. A hijacked agent can still exfiltrate its permitted slice through its
-  own output channel.
-- **Aggregate inference.** Repeated aggregates over filtered or masked data
-  can narrow down individual values. Budgets, rejects, and audit review
-  reduce the bandwidth of this channel but do not close it.
+## Example
 
-## Non-goals
+One policy allows the table `customers`. A column mask covers `customers.email`. The client asks for a table that no policy allows:
 
-Sluice does not replace: hardening of the upstream databases (users who hold
-direct credentials bypass Sluice entirely), network and host security of the
-machine it runs on, a write-path gateway (execution is read-only), or the
-security of the secret store backing `secret://` references.
+```bash
+--8<-- "examples/threat-model/steps/01-table-not-allowed.sh"
+```
 
-Found something not covered here? Report it via
-[`SECURITY.md`](https://github.com/bino-bi/sluice/blob/main/SECURITY.md).
+```json
+--8<-- "examples/threat-model/expected/01-table-not-allowed.txt"
+```
+
+The client sends a write:
+
+```bash
+--8<-- "examples/threat-model/steps/02-write.sh"
+```
+
+```json
+--8<-- "examples/threat-model/expected/02-write.txt"
+```
+
+The client sends `EXPLAIN` on the masked table:
+
+```bash
+--8<-- "examples/threat-model/steps/04-explain.sh"
+```
+
+```json
+--8<-- "examples/threat-model/expected/04-explain.txt"
+```
+
+What happened: Sluice refused each statement before it reached DuckDB.
+
+## Limits
+
+- Sluice limits what a subject can read. It does not control what a client does with these rows.
+- Counts and sums over allowed rows can show facts about single rows.
+- `EXPLAIN` on a table without a row filter or column mask is served. The plan can show the file path of a data source.
+- `sluice audit verify` does not detect when the newest records are removed.
+
+## See also
+
+- [Hardening](hardening.md)
+- [Audit log](audit.md)
+- [SQL forms refused on filtered or masked tables](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables)
+- [Error codes](../reference/error-codes.md)

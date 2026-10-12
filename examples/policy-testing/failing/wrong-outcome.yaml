@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: an analyst reads orders
+    identity: { subject: alice, groups: [analysts], claims: { tenantId: acme } }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+
+  # This case is wrong on purpose: no policy allows the guests group.
+  - name: a guest reads orders
+    identity: { subject: gus, groups: [guests] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow

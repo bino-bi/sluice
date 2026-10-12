@@ -1,0 +1,3 @@
+data/policies/broken.yaml: SqlAccessPolicy/broken: spec.effect: must be "allow" or "deny"
+1 validation error(s)
+[exit status 3]

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-support
+  priority: 60
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["support"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  filter:
+    # --8<-- [start:predicate]
+    predicate:
+      all:
+        - column: status
+          op: In
+          values: ["open", "paid"]
+        - any:
+            - column: region
+              op: Equals
+              value: "eu"
+            - column: amount_cents
+              op: GreaterThan
+              value: 10000
+        - not:
+            column: owner
+            op: StartsWith
+            value: "test-"
+    # --8<-- [end:predicate]

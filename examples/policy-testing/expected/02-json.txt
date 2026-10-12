@@ -1,0 +1,17 @@
+{
+  "total": 2,
+  "passed": 1,
+  "failed": 1,
+  "cases": [
+    {
+      "name": "an analyst reads orders",
+      "passed": true
+    },
+    {
+      "name": "a guest reads orders",
+      "passed": false,
+      "failures": ["outcome: want \"allow\" got \"deny\""]
+    }
+  ]
+}
+[exit status 3]

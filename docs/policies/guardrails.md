@@ -1,157 +1,108 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Query guardrails
+# Rejects and rewrites
 
-Two kinds shape *queries* rather than data: `QueryRejectPolicy` vetoes statements whose shape you
-never want to run, and `QueryRewritePolicy` bounds the cost of the ones that do run. Both only act
-on requests that passed [access control](access-control.md) — precedence is deny > reject >
-approval.
+A `QueryRejectPolicy` rejects a query because of its form. A `QueryRewritePolicy` limits the rows and the run time of a query. Sluice applies both after [access control](access-control.md).
 
-## Rejecting queries by shape
+## Example
 
-`spec.reject.rules[]` is a list of named vetoes:
+### Reject a query
 
-| Field | Meaning |
-| ----- | ------- |
-| `name` | recommended; identifies the rule in the error and the audit record (not enforced by validation — an unnamed rule still loads) |
-| `expression` | CEL over `query.*`, `subject.*`, `request.*`; **empty = fires whenever the selector matches** |
-| `message` | client-visible explanation |
-| `code` | error code returned to the client, default `ACL_REJECTED` |
+Goal: agents must name the columns they read.
 
-The `query` variable exposes the parsed statement's shape:
+```yaml
+--8<-- "examples/guardrails/policies.d/reject-agent-shapes.yaml:2"
+```
 
-| Variable | Type |
-| -------- | ---- |
-| `query.has_select_star`, `query.is_aggregate` | bool |
-| `query.has_cte`, `query.is_recursive_cte`, `query.has_union` | bool |
-| `query.has_limit`, `query.limit` | bool, int |
-| `query.has_order_by`, `query.has_where` | bool |
-| `query.where_columns`, `query.group_by_columns` | list of strings |
+```bash
+--8<-- "examples/guardrails/steps/01-select-star.sh"
+```
+
+```json
+--8<-- "examples/guardrails/expected/01-select-star.txt"
+```
+
+**What happened:** the rule `no-select-star` was true. Sluice rejected the query with HTTP 403 and the rule's `message`.
+
+### Limit a query
+
+Goal: an agent gets at most three rows and five seconds.
+
+```yaml
+--8<-- "examples/guardrails/policies.d/rewrite-agent-limits.yaml:2"
+```
+
+```bash
+--8<-- "examples/guardrails/steps/02-limit.sh"
+```
+
+```json
+--8<-- "examples/guardrails/expected/02-limit.txt"
+```
+
+```yaml
+--8<-- "examples/guardrails/tests/guardrails.yaml:limit"
+```
+
+**What happened:** Sluice added `LIMIT 3` to the SQL. The result reached the limit, so the response says `truncated: true`.
+
+## Fields
+
+`spec.reject.rules` needs at least one entry. All fields are text.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `name` | | Optional name. |
+| `expression` | | CEL that returns a boolean. When empty, the rule fires for every matched query. An error at run time denies the query with `ACL_DENIED`. |
+| `message` | | Text for the client. |
+| `code` | `ACL_REJECTED` | Error code for the client. The HTTP status stays 403. |
+
+An expression reads `subject.*`, as in [conditions](conditions.md), and these values:
+
+| Value | Type |
+|---|---|
+| `query.has_select_star`, `query.is_aggregate`, `query.has_where`, `query.has_order_by` | boolean |
+| `query.has_cte`, `query.is_recursive_cte`, `query.has_union`, `query.has_limit` | boolean |
+| `query.limit` | int. 0 when the `LIMIT` is not a constant |
 | `query.joins` | int |
-| `query.catalogs`, `query.tables` | list of strings (`tables` as `catalog.schema.table`) |
+| `query.where_columns`, `query.group_by_columns`, `query.catalogs` | list of text |
+| `query.tables` | list of text, lower case, `catalog.schema.table` |
 
-There is deliberately no `now` variable — decisions must be reproducible for the rewrite cache. A
-rule whose expression errors at runtime denies the request (fail-closed).
+`spec.rewrite` needs at least one of these fields. `limit` and `sample` change `SELECT` statements only.
 
-!!! tip "Expressions must type-check as bool"
-    `query` is a dynamic map, so a bare field like `query.has_select_star` does not compile on
-    its own — compare explicitly: `query.has_select_star == true`. Compound expressions
-    (`query.has_select_star && query.joins > 0`) already return bool and need no change.
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `limit.max` | int | | Row limit, 1 to 2147483647. Sluice adds a `LIMIT` or lowers a larger one. A smaller `LIMIT` stays. |
+| `sample.rate` | number | | Share of rows to return, above 0 and at most 1. |
+| `sample.method` | string | `reservoir` | `reservoir`, `bernoulli` or `system`. |
+| `timeout` | duration | | Longest run time, `"10s"` or seconds as a number. Then the client gets `ERR_TIMEOUT`. |
 
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRejectPolicy
-metadata: { name: shape-guardrails, priority: 200 }
-spec:
-  match: { any: [{ resources: { catalogs: ["shop"] } }] }
-  reject:
-    rules:
-      - name: no-star-joins
-        expression: "query.has_select_star && query.joins > 0"
-        message: "select explicit columns when joining"
-      - name: no-recursive-cte
-        expression: "query.is_recursive_cte == true"
-        message: "recursive CTEs are not allowed through the gateway"
-      - name: no-cross-catalog
-        expression: "size(query.catalogs) > 1"
-        message: "queries must stay within one catalog"
-```
+A policy `timeout` can only shorten the timeout of the request and the server. When several rewrite policies match, Sluice uses the lowest limit, the shortest timeout and the first sample in priority order. A `QueryRewritePolicy` with an empty `spec.match` loads and matches no query.
 
-A rule with no expression turns the policy into a selector-driven veto — useful when the selector
-alone (a group, an IP range, a table pattern) says enough and you want a friendlier message than a
-plain deny.
+## More examples
 
-## Bounding queries
-
-`spec.rewrite` must set **at least one** of `limit`, `sample`, or `timeout`.
-
-!!! warning "Hints are rejected"
-    The `hint` field parses but is rejected at compile time ("hints are not supported") — nothing
-    consumes hints yet, and silently accepting an inert instruction would misrepresent the
-    enforced posture. A policy carrying one fails `sluice policy validate`.
-
-### limit
-
-`limit.max` (integer, 1 to 2147483647) is an inject-or-clamp cap: a SELECT without a `LIMIT` gets
-one injected; a constant `LIMIT` above the cap is clamped; a constant at or below it is left
-alone; a parameter or expression limit is replaced by the cap. Non-SELECT statements (`EXPLAIN`,
-`SET`, `SHOW`, `PRAGMA`) are skipped. An `EXPLAIN` is served when no row filter or column mask
-applies, and a matching limit is not applied to it. An `EXPLAIN` on a table with a row filter or
-column mask is refused with `ERR_UNSUPPORTED_SYNTAX`, because the plan would show the policy SQL
-with its bound values.
-
-```sql
--- client sends (policy: limit.max = 1000)
-SELECT id, total FROM shop.main.orders
--- sluice executes
-SELECT id, total FROM shop.main.orders LIMIT 1000
-```
-
-### sample
-
-`sample.rate` is a float in `(0, 1]`; `sample.method` is `reservoir` (default), `bernoulli`, or
-`system` (lowercase). The deparsed SELECT is wrapped in DuckDB's `USING SAMPLE`:
-
-```sql
-SELECT * FROM (SELECT id, total FROM shop.main.orders) AS sluice_sample USING SAMPLE 10% (reservoir)
-```
-
-Sampling applies to SELECT statements only; anything else skips the wrap. Every token in the
-clause is compile-validated — no user-controlled text enters it.
-
-### timeout
-
-`timeout` is a duration (`"10s"`). It is enforced by the query service canceling execution — it
-never appears in the SQL. It can only *shorten* the effective deadline: the client's requested
-`timeout_ms` and the server-wide `limits.queryTimeout`/`limits.maxQueryTimeout` caps still apply,
-and the earliest deadline wins. On expiry the client receives `ERR_TIMEOUT`.
-
-### Folding across policies
-
-When several `QueryRewritePolicy` objects match one query, they fold in the restrictive
-direction: the **minimum** `limit.max`, the **minimum** `timeout`, and the **first** `sample`
-instruction in policy order (priority descending, then name ascending). You can therefore layer a
-tenant-wide ceiling under a stricter per-group cap without coordination.
-
-## Recipes
-
-**The AI-agent guardrail** — anything in the `agents` group gets at most 1000 rows and 10
-seconds, no matter what it asks for:
+### Sample
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRewritePolicy
-metadata: { name: agent-guardrail, priority: 300 }
-spec:
-  match: { any: [{ subjects: { groups: ["agents"] } }] }
-  rewrite:
-    limit: { max: 1000 }
-    timeout: "10s"
+--8<-- "examples/guardrails/policies.d/rewrite-explorer-sample.yaml:rewrite"
 ```
-
-**Keep agents away from unbounded scans** — pair the cap with a shape veto:
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRejectPolicy
-metadata: { name: agent-no-star, priority: 300 }
-spec:
-  match: { any: [{ subjects: { groups: ["agents"] } }] }
-  reject:
-    rules:
-      - name: no-select-star
-        expression: "query.has_select_star == true"
-        message: "list the columns you need instead of SELECT *"
+--8<-- "examples/guardrails/tests/guardrails.yaml:sample"
 ```
 
-**Exploration catalog runs on samples** — ad-hoc analysis against the lake sees 10% of rows:
+With a limit and a sample, Sluice samples the limited rows.
 
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRewritePolicy
-metadata: { name: lake-sample, priority: 100 }
-spec:
-  match: { any: [{ resources: { catalogs: ["lake"] } }] }
-  rewrite:
-    sample: { rate: 0.1, method: reservoir }
-```
+## Limits
+
+- The client error and the audit record name the policy, not the rule.
+- Except for `tables` and `catalogs`, the `query.*` values ignore subqueries and the second part of a `UNION`.
+- Sluice refuses a `LIMIT $1` parameter with `ERR_UNSUPPORTED_SYNTAX`.
+- `request.*` values are always empty.
+- A limit or a sample makes Sluice refuse [some SQL forms](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
+
+## See also
+
+- [CEL conditions](conditions.md)
+- [Testing policies](testing.md)
+- [MCP agents](../cookbook/mcp-agents.md)

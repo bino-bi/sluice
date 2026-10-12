@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //go:build ignore
 
-// gen-config-docs walks internal/config.ServerConfig via reflection and
-// renders docs/reference/configuration.md. The table gives each field's
-// YAML path, Go type, default (from DefaultServerConfig), and the env-var
-// form SLUICE_X__Y that the viper loader recognises. Run via `make
-// docs-generate`; `make docs-check` fails the CI drift gate.
+// gen-config-docs renders docs/reference/configuration.md from
+// internal/config. Keys come from reflection on ServerConfig, defaults
+// from DefaultServerConfig(). The keys that an environment
+// variable cannot set alone are found by calling LoadServer. The meaning
+// of each key is written by hand below: a key without one fails the run.
+// Run via `make docs-generate`; `make docs-check` fails when the page
+// differs.
 package main
 
 import (
@@ -15,63 +17,168 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
 )
 
+// skip lists keys that the code declares but never uses. walk sets an
+// entry to false when it meets the key.
+var skip = map[string]bool{
+	"datasources.directory": true, // no reader: DataSource objects load from policies.directory
+	"datasources.reload":    true, // Validate rejects true
+}
+
+// blockDefault holds the value the code uses when a key of an optional
+// block is empty (internal/audit/syslog_sink.go, s3_sink.go,
+// cmd/sluice/auditwire.go, internal/approval/webhook.go). The blocks are
+// nil in DefaultServerConfig.
+var blockDefault = map[string]string{
+	"audit.syslog.network":        "udp",
+	"audit.syslog.facility":       "local0",
+	"audit.syslog.tag":            "sluice",
+	"audit.s3.endpoint":           "s3.amazonaws.com",
+	"audit.s3.prefix":             "audit/",
+	"audit.s3.uploadInterval":     "30s",
+	"audit.s3.uploadBytes":        "1048576",
+	"audit.s3.maxBufferBytes":     "8388608",
+	"approval.webhooks[].timeout": "10s",
+}
+
+// meaning holds one short description per key.
+var meaning = map[string]string{
+	"rest.listen":         "REST API address.",
+	"rest.tls.certFile":   "Certificate file. Needs `keyFile`.",
+	"rest.tls.keyFile":    "Key file. Needs `certFile`.",
+	"rest.tls.clientCA":   "CA file. Clients must send a certificate.",
+	"rest.tls.clientAuth": "Only `require_and_verify`. Needs `clientCA`.",
+	"rest.maxBodyBytes":   "Largest request body.",
+	"rest.requestTimeout": "Time limit of a request.",
+
+	"mcp.enabled":        "Start MCP in `sluice serve`.",
+	"mcp.transport":      "`stdio` or `streamable_http`.",
+	"mcp.listen":         "Address for `streamable_http`. Empty means `:80`.",
+	"mcp.sessionIdleMax": "HTTP idle timeout.",
+	"mcp.tokenRef":       "Secret reference: JWT for `stdio`.",
+	"mcp.apiKeyRef":      "Secret reference: API key for `stdio`.",
+	"mcp.allowAnonymous": "Accept clients without a credential.",
+
+	"admin.enabled":        "Start the admin API.",
+	"admin.listen":         "Admin API address.",
+	"admin.token":          "Bearer token, plain text. Empty means no check.",
+	"admin.tls.certFile":   "Certificate file. Needs `keyFile`.",
+	"admin.tls.keyFile":    "Key file. Needs `certFile`.",
+	"admin.tls.clientCA":   "CA file. Clients must send a certificate.",
+	"admin.tls.clientAuth": "Only `require_and_verify`. Needs `clientCA`.",
+
+	"duckdb.memoryLimit": "DuckDB `memory_limit`.",
+	"duckdb.threads":     "DuckDB `threads`. `0` means the DuckDB default.",
+	"duckdb.tempDir":     "DuckDB `temp_directory`.",
+	"duckdb.maxOpen":     "Maximum open connections.",
+	"duckdb.maxIdle":     "Maximum idle connections.",
+	"duckdb.connMaxIdle": "Idle time before a connection closes.",
+
+	"datasources.failFast": "Stop at start when a data source fails.",
+
+	"policies.directory":         "The policy directory.",
+	"policies.reload":            "Reload when a file changes.",
+	"policies.engine":            "`yaml`, `opa` or `composite`.",
+	"policies.composite.members": "`yaml`, `opa`, `rebac`.",
+	"policies.opa.moduleDir":     "Directory of the `.rego` files.",
+	"policies.opa.query":         "Rego query for the decision.",
+	"policies.rebac.cacheTtl":    "Lifetime of a cached check.",
+	"policies.rebac.cacheSize":   "Maximum cached checks.",
+
+	"audit.file.path":         "Audit log directory. Empty means `sluice-audit` in the temp directory.",
+	"audit.file.rotateDaily":  "New file each UTC day. Always on when `rotateSizeMB` is `0`.",
+	"audit.file.rotateSizeMB": "New file after this size.",
+	"audit.file.genesis":      "Secret reference: genesis.",
+	"audit.syslog.network":    "`udp`, `tcp`, `unix` or `unixgram`.",
+	"audit.syslog.address":    "Required. `host:port` or socket path.",
+	"audit.syslog.facility":   "`kern`, `user`, `daemon`, `auth`, `syslog`, `local0` to `local7`.",
+	"audit.syslog.tag":        "Syslog app name.",
+	"audit.s3.endpoint":       "S3 host.",
+	"audit.s3.bucket":         "Required.",
+	"audit.s3.prefix":         "Object key prefix.",
+	"audit.s3.region":         "S3 region.",
+	"audit.s3.insecure":       "Use HTTP, not HTTPS.",
+	"audit.s3.forcePathStyle": "Path-style URLs.",
+	"audit.s3.objectLock":     "`governance` or `compliance`. Needs `retentionDays`.",
+	"audit.s3.retentionDays":  "Lock time in days.",
+	"audit.s3.credentialsRef": "Secret reference: JSON with `accessKeyId`, `secretAccessKey`.",
+	"audit.s3.uploadInterval": "Longest time between uploads.",
+	"audit.s3.uploadBytes":    "Batch size that starts an upload.",
+	"audit.s3.maxBufferBytes": "Buffer size. More records are dropped.",
+	"audit.failClosed":        "Refuse queries when the audit log fails.",
+	"audit.sqlSampleBytes":    "SQL bytes in an audit record.",
+
+	"logging.level":         "`debug`, `info`, `warn` or `error`.",
+	"logging.format":        "`json` or `text`.",
+	"logging.maxErrorBytes": "Cut logged errors at this size. `0` means no cut.",
+
+	"tracing.enabled":     "Send OpenTelemetry traces.",
+	"tracing.endpoint":    "OTLP `host:port`. Required when enabled.",
+	"tracing.protocol":    "`grpc` or `http`.",
+	"tracing.insecure":    "Send without TLS.",
+	"tracing.sampleRatio": "Share of traces sent, 0 to 1.",
+
+	"identity.apiKeyPepper": "Secret reference: pepper for API key hashes.",
+
+	"limits.maxRows":             "Row limit when the request sets none.",
+	"limits.maxRowsCeiling":      "Highest row limit a request can set.",
+	"limits.maxSqlBytes":         "Largest SQL text.",
+	"limits.queryTimeout":        "Timeout when the request sets none.",
+	"limits.maxQueryTimeout":     "Longest timeout a request can set.",
+	"limits.maxConcurrent":       "Queries running at one time.",
+	"limits.disableCrossCatalog": "Reject queries that read several catalogs.",
+	"limits.globalRps":           "Requests per second, all clients. `0` means no limit.",
+	"limits.globalBurst":         "Burst for `globalRps`.",
+	"limits.perIpRps":            "Requests per second per client IP. `0` means no limit.",
+	"limits.perIpBurst":          "Burst for `perIpRps`.",
+	"limits.perIpMaxBuckets":     "Maximum client IPs tracked.",
+	"limits.defaultSubjectRps":   "Requests per second per subject without `rateLimit`. `0` means no limit.",
+	"limits.defaultSubjectBurst": "Burst for `defaultSubjectRps`.",
+
+	"cache.rewrite.enabled": "Cache decisions and rewritten SQL.",
+	"cache.rewrite.size":    "Maximum cached entries.",
+	"cache.rewrite.ttl":     "Lifetime of an entry.",
+
+	"approval.publicBaseUrl":         "Base URL of the accept and reject links.",
+	"approval.webhooks[].url":        "Receiver of approval requests.",
+	"approval.webhooks[].headersRef": "Secret reference: JSON object of headers.",
+	"approval.webhooks[].timeout":    "Timeout of one delivery.",
+	"approval.syncWait":              "Wait for a decision before `ERR_APPROVAL_PENDING`. At most `rest.requestTimeout` minus 2 s.",
+	"approval.requestTtl":            "Lifetime of a pending approval.",
+	"approval.grantTtl":              "Lifetime of a grant.",
+	"approval.maxPending":            "Maximum pending approvals.",
+	"approval.sqlSampleBytes":        "SQL bytes in the webhook.",
+	"approval.persist":               "Keep approvals over a restart.",
+	"approval.stateDir":              "Directory of the approval store.",
+
+	"budget.enabled":       "Turn on budgets.",
+	"budget.stateDir":      "Directory of the budget store.",
+	"budget.flushInterval": "Time between writes to the store.",
+	"budget.failClosed":    "Stop at start when the store cannot open.",
+	"budget.retentionDays": "Days of usage kept.",
+}
+
 const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->
-<!-- Generated by scripts/gen-config-docs.go — do not edit by hand. -->
+<!-- Generated by scripts/gen-config-docs.go. Do not edit by hand. -->
 
 # Configuration
 
-Sluice reads a single ` + "`server.yaml`" + ` at boot plus any number of policy
-YAML files under a policies directory. Environment variables prefixed
-` + "`SLUICE_`" + ` override individual fields; ` + "`.`" + ` in the YAML path maps to
-` + "`__`" + ` in the env name.
+` + "`sluice serve --config <file>`" + ` reads the server config, a YAML file.
 
-` + "```bash" + `
-# rest.listen: ':8443' via env override
-export SLUICE_REST__LISTEN=:8443
-` + "```" + `
-
-## Field reference
-
-The table below is generated from ` + "`internal/config.ServerConfig`" + ` via
-reflection. Defaults come from ` + "`DefaultServerConfig()`" + `; every field
-can be overridden through the environment using the ` + "`SLUICE_` " + `prefix.
-
+An environment variable overrides a key: ` + "`SLUICE_REST__LISTEN`" + ` sets ` + "`rest.listen`" + `.
 `
 
-const footer = `
-## Secrets
-
-All ` + "`*Ref`" + ` / ` + "`genesis`" + ` / ` + "`token`" + ` fields accept a ` + "`secret://<provider>/<path>`" + `
-URI. The MVP providers are:
-
-- ` + "`secret://env/NAME`" + ` — read from the process environment.
-- ` + "`secret://file/PATH`" + ` — read from a file (permission-checked; 0o022
-  rejected, world-readable warned).
-
-Vault, AWS SM, and GCP SM land behind build tags in v0.3+; until then those
-references are rejected at config validation / boot.
-
-## Reference schema
-
-` + "`sluice schema export`" + ` emits a JSON Schema 2020-12 document covering
-every policy object; server-level settings live in ` + "`server.yaml`" + ` and are
-documented above.
-
-## Regenerating
-
-` + "```bash" + `
-make docs-generate
-` + "```" + `
-
-Walks ` + "`internal/config.ServerConfig`" + ` via reflection so this page tracks
-every new field the moment it lands. The drift gate in ` + "`docs-deploy.yaml`" + `
-fails when the committed file differs from the generator's output.
-`
+type row struct {
+	key, def string
+	block    string // optional block that holds the key
+	index    []int  // field index path in ServerConfig
+}
 
 func main() {
 	out := flag.String("out", "docs/reference/configuration.md", "output path")
@@ -79,17 +186,42 @@ func main() {
 	flag.Parse()
 
 	defaults := config.DefaultServerConfig()
-	defT := reflect.TypeOf(defaults)
-	defV := reflect.ValueOf(defaults)
+	var rows []row
+	walk(reflect.TypeOf(defaults), reflect.ValueOf(defaults), "", "", nil, &rows)
 
 	var buf bytes.Buffer
 	buf.WriteString(header)
-	buf.WriteString("| YAML path | Type | Default | Env var |\n")
-	buf.WriteString("| --------- | ---- | ------- | ------- |\n")
-
-	walkConfig(&buf, defT, defV, "")
-
-	buf.WriteString(footer)
+	buf.WriteString(envNote(rows, reflect.ValueOf(defaults)))
+	buf.WriteString("\nA key with an empty default is a string. Write a time like its default: `30s`, `5m`.\n\n")
+	buf.WriteString("| Key | Default | Meaning |\n|---|---|---|\n")
+	seen := map[string]bool{}
+	for _, r := range rows {
+		m, ok := meaning[r.key]
+		if !ok {
+			fatal("no meaning for %s: add it to the meaning map, or to skip", r.key)
+		}
+		seen[r.key] = true
+		def := r.def
+		if def != "" {
+			def = "`" + def + "`"
+		}
+		fmt.Fprintf(&buf, "| `%s` | %s | %s |\n", r.key, def, m)
+	}
+	for k := range meaning {
+		if !seen[k] {
+			fatal("meaning for %s matches no key: remove it", k)
+		}
+	}
+	for k := range blockDefault {
+		if !seen[k] {
+			fatal("blockDefault for %s matches no key: remove it", k)
+		}
+	}
+	for k, unmet := range skip {
+		if unmet {
+			fatal("skip entry %s matches no key: remove it", k)
+		}
+	}
 
 	abs, err := filepath.Abs(*out)
 	if err != nil {
@@ -114,137 +246,104 @@ func main() {
 	fmt.Printf("wrote %s\n", abs)
 }
 
-// walkConfig emits one row per leaf (non-struct) field and recurses into
-// nested structs. Field order mirrors source declaration order, keeping the
-// generated table readable top-down.
-func walkConfig(buf *bytes.Buffer, t reflect.Type, v reflect.Value, prefix string) {
-	if t.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return
-		}
-		t = t.Elem()
-		v = v.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return
-	}
-
+// walk collects one row per leaf key, in declaration order. A struct
+// pointer or a list of structs is an optional block: it is nil by default,
+// so its keys are read from the zero value of the struct.
+func walk(t reflect.Type, v reflect.Value, prefix, block string, index []int, rows *[]row) {
 	for i := range t.NumField() {
 		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-
-		name := mapstructureName(f)
-		if name == "" || name == "-" {
-			continue
-		}
-
-		path := name
+		key := f.Tag.Get("mapstructure")
 		if prefix != "" {
-			path = prefix + "." + name
+			key = prefix + "." + key
 		}
-
-		ft := f.Type
-		fv := v.Field(i)
-
-		// Recurse into struct / *struct fields. Pointer structs only
-		// recurse when non-nil to avoid spurious zero defaults in the
-		// output (e.g. *TLSConfig is nil by default).
-		if ft.Kind() == reflect.Struct {
-			walkConfig(buf, ft, fv, path)
-			continue
-		}
-		if ft.Kind() == reflect.Ptr && ft.Elem().Kind() == reflect.Struct {
-			// Emit a summary row for optional sections so the reader
-			// sees the path even when the default is nil, then recurse
-			// if a default is populated.
-			fmt.Fprintf(buf, "| `%s` | `%s?` | _unset_ | `%s` |\n",
-				path, shortTypeName(ft.Elem()), envName(path))
-			if !fv.IsNil() {
-				walkConfig(buf, ft.Elem(), fv.Elem(), path)
+		ft, fv := f.Type, v.Field(i)
+		idx := append(append([]int(nil), index...), i)
+		switch {
+		case ft.Kind() == reflect.Struct:
+			walk(ft, fv, key, block, idx, rows)
+		case ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct && !fv.IsNil():
+			walk(ft.Elem(), fv.Elem(), key, block, idx, rows)
+		case ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct:
+			walk(ft.Elem(), reflect.Zero(ft.Elem()), key, key, idx, rows)
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			walk(ft.Elem(), reflect.Zero(ft.Elem()), key+"[]", key, idx, rows)
+		default:
+			if _, ok := skip[key]; ok {
+				skip[key] = false
+				continue
 			}
-			continue
+			def := formatDefault(fv)
+			if d, ok := blockDefault[key]; ok {
+				def = d
+			}
+			*rows = append(*rows, row{key: key, def: def, block: block, index: idx})
 		}
-
-		fmt.Fprintf(buf, "| `%s` | `%s` | %s | `%s` |\n",
-			path, shortTypeName(ft), formatDefault(fv), envName(path))
 	}
 }
 
-func mapstructureName(f reflect.StructField) string {
-	tag := f.Tag.Get("mapstructure")
-	if tag == "" {
-		return strings.ToLower(f.Name)
+// envNote names the keys that a SLUICE_* variable cannot set alone. The
+// loader reads a variable only for a key that has a viper default or is in
+// the file, so each key is tried with LoadServer and no file.
+func envNote(rows []row, defaults reflect.Value) string {
+	var keys, blocks, lists []string
+	for _, r := range rows {
+		switch {
+		case strings.Contains(r.key, "[]"):
+			lists = appendNew(lists, "`"+r.block+"`")
+		case r.block != "":
+			blocks = appendNew(blocks, "`"+r.block+"`")
+		case !envSets(r, defaults.FieldByIndex(r.index)):
+			keys = append(keys, "`"+r.key+"`")
+		}
 	}
-	parts := strings.Split(tag, ",")
-	return parts[0]
+	return "These keys must also be in the file, or Sluice ignores the variable: " + strings.Join(keys, ", ") + ".\n" +
+		"The same holds for all keys under " + strings.Join(blocks, ", ") + ".\n" +
+		"No variable sets " + strings.Join(lists, ", ") + ".\n" +
+		"[Server config](../operations/server-config.md) explains this rule and secret references.\n"
 }
 
-func envName(path string) string {
-	// viper uses `.` → `__` per server.go (strings.NewReplacer).
-	return "SLUICE_" + strings.ToUpper(strings.ReplaceAll(path, ".", "__"))
+// envSets reports whether the variable of r changes the loaded value.
+func envSets(r row, def reflect.Value) bool {
+	var val string
+	switch d := def.Interface().(type) {
+	case bool:
+		val = strconv.FormatBool(!d)
+	case time.Duration:
+		val = (d + time.Second).String()
+	case float64:
+		val = strconv.FormatFloat(d+0.5, 'g', -1, 64)
+	case string, []string:
+		val = "x"
+	default:
+		val = strconv.FormatInt(def.Int()+1, 10)
+	}
+	name := "SLUICE_" + strings.ToUpper(strings.ReplaceAll(r.key, ".", "__"))
+	os.Setenv(name, val)
+	defer os.Unsetenv(name)
+	cfg, err := config.LoadServer("", nil)
+	if err != nil {
+		fatal("load with %s=%s: %v", name, val, err)
+	}
+	got := reflect.ValueOf(*cfg).FieldByIndex(r.index)
+	return !reflect.DeepEqual(got.Interface(), def.Interface())
 }
 
-func shortTypeName(t reflect.Type) string {
-	switch t.Kind() {
-	case reflect.Ptr:
-		return shortTypeName(t.Elem()) + "?"
-	case reflect.Slice, reflect.Array:
-		return "[]" + shortTypeName(t.Elem())
-	case reflect.Map:
-		return "map[" + shortTypeName(t.Key()) + "]" + shortTypeName(t.Elem())
+func appendNew(list []string, s string) []string {
+	for _, x := range list {
+		if x == s {
+			return list
+		}
 	}
-	if t.Name() != "" {
-		return t.Name()
-	}
-	return t.String()
+	return append(list, s)
 }
 
-// formatDefault renders a default value in a single table cell. Empty
-// strings and zeros stay visible as an empty code span, non-zeros are
-// fenced as code.
+// formatDefault renders a default value. An empty string gives an empty cell.
 func formatDefault(v reflect.Value) string {
-	if !v.IsValid() {
-		return "`` ``"
+	s := fmt.Sprint(v.Interface())
+	if _, ok := v.Interface().(time.Duration); ok && strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s") // 30m0s reads better as 30m
 	}
-	switch v.Kind() {
-	case reflect.String:
-		s := v.String()
-		if s == "" {
-			return "`\"\"`"
-		}
-		return "`" + s + "`"
-	case reflect.Bool:
-		return fmt.Sprintf("`%t`", v.Bool())
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		// Detect time.Duration by type name so values render as "30s"
-		// rather than "30000000000".
-		if v.Type().String() == "time.Duration" {
-			return fmt.Sprintf("`%s`", v.Interface())
-		}
-		return fmt.Sprintf("`%d`", v.Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fmt.Sprintf("`%d`", v.Uint())
-	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("`%g`", v.Float())
-	case reflect.Slice, reflect.Array:
-		if v.Len() == 0 {
-			return "`[]`"
-		}
-		return fmt.Sprintf("`%v`", v.Interface())
-	case reflect.Map:
-		if v.Len() == 0 {
-			return "`{}`"
-		}
-		return fmt.Sprintf("`%v`", v.Interface())
-	case reflect.Ptr:
-		if v.IsNil() {
-			return "_unset_"
-		}
-		return formatDefault(v.Elem())
-	}
-	return fmt.Sprintf("`%v`", v.Interface())
+	return s
 }
 
 func fatal(f string, args ...any) {

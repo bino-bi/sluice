@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-region
+  priority: 50
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["regional"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  # --8<-- [start:filter]
+  filter:
+    expression: 'row.region == subject.claims.region && row.status != "cancelled"'
+  # --8<-- [end:filter]

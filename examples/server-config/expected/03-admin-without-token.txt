@@ -1,0 +1,4 @@
+{
+  "code": "ERR_UNAUTHORIZED",
+  "message": "admin auth required"
+}

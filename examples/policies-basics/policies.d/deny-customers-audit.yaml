@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-customers
+  priority: 500
+spec:
+  # Audit mode: the policy matches, but it does not deny.
+  enforcementMode: Audit
+  effect: deny
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["customers"]

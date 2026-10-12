@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: research-agent
+spec:
+  claims:
+    subjectId: "research-agent"
+  apiKeys:
+    - id: "sl_demo_agent"
+      hashRef: "secret://env/SLUICE_APIKEY_AGENT_HASH"
+      groups: ["analysts"]
+  # 2 queries at once, then 1 query every 10 seconds.
+  rateLimit:
+    rps: 0.1
+    burst: 2
+  budget:
+    rowsPerDay: 3

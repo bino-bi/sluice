@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: CC-BY-4.0
 cases:
+  # --8<-- [start:rewritten]
   - name: acme reads only acme customers
     identity: { subject: acme-analyst, groups: [analytics], claims: { tenantId: acme } }
     sql: "SELECT id, email FROM shop.main.customers"
@@ -9,6 +10,7 @@ cases:
       rewrittenSql: >-
         SELECT id, email
         FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers
+  # --8<-- [end:rewritten]
 
   - name: a join filters both tables
     identity: { subject: acme-analyst, groups: [analytics], claims: { tenantId: acme } }

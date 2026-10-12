@@ -16,8 +16,10 @@ The script creates `data/shop.db` from `seed.sql` and starts Sluice on `http://l
 | `steps/01-query.sh` | A query returns only the rows of the caller's tenant, with `email` masked. |
 | `steps/02-denied.sh` | A table that no policy allows is denied. |
 | `steps/03-audit-verify.sh` | The audit log chain is intact. |
+| `steps/04-policy-explain.sh` | `sluice policy explain` lists the policies that apply to the demo subject. |
+| `steps/05-tenant-rows.sh` | A query without the masked column shows the row filter alone. |
 
-`expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
+`expected/` holds the real output of each step. See [the examples guide](../README.md) for the layout.
 
 ## Docker
 

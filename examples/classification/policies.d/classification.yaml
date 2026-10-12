@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1beta1
+kind: DataClassification
+metadata:
+  name: shop-tags
+spec:
+  rules:
+    - resources:
+        tables: ["customers"]
+        columns: ["email", "phone"]
+      tags: ["pii"]
+    - resources:
+        tables: ["payroll"]
+      tags: ["restricted"]

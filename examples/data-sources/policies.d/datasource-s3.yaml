@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: lake
+spec:
+  type: s3
+  bucket: "ref-data"
+  region: "us-east-1"
+  # One view per path: lake.main.countries_csv and lake.main.facts___parquet.
+  allowedPaths:
+    - "s3://ref-data/countries.csv"
+    - "s3://ref-data/facts/*.parquet"
+  credentialsRef: "secret://env/SLUICE_S3_CREDS"

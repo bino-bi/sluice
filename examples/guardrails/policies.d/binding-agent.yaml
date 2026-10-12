@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: agent
+spec:
+  claims:
+    subjectId: "report-agent"
+  apiKeys:
+    - id: "sl_demo_agent"
+      hashRef: "secret://env/SLUICE_APIKEY_AGENT_HASH"
+      groups: ["agents"]

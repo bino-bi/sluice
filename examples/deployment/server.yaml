@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+# --8<-- [start:admin]
+admin:
+  enabled: true
+  listen: ":9091"
+  # Empty on purpose. The variable SLUICE_ADMIN__TOKEN sets the value.
+  token: ""
+  tls:
+    certFile: "./data/tls/server.crt"
+    keyFile: "./data/tls/server.key"
+# --8<-- [end:admin]
+
+policies:
+  directory: "./policies.d"
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"

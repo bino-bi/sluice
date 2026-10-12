@@ -1,5 +1,4 @@
-# A masked table is read through a wrapper that lists its columns, so the
-# suite declares them: the runner has no live datasource.
+# The test runner has no database, so the suite lists the columns of the masked table.
 schema:
   pg.public.customers: [id, email, tenant_id]
 

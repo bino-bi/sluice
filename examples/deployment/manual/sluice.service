@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Install as /etc/systemd/system/sluice.service. The checks do not run this file.
+[Unit]
+Description=Sluice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sluice
+Group=sluice
+WorkingDirectory=/var/lib/sluice
+# Holds SLUICE_ADMIN__TOKEN and the secret variables. Give it mode 0600.
+EnvironmentFile=/etc/sluice/sluice.env
+ExecStart=/usr/local/bin/sluice serve --config /etc/sluice/server.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

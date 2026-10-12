@@ -2,150 +2,79 @@
 
 # Observability
 
-Three signals: structured logs on stderr, Prometheus metrics on the admin
-listener, and — the primary one for a policy gateway — the audit trail.
+Sluice writes logs, serves Prometheus metrics and sends traces. The record of every query is the [audit log](../security/audit.md).
 
-## Logging
+## Example
 
-Sluice logs structured JSON via `slog` to **stderr**; stdout stays clean
-for data (the MCP stdio transport owns it). Tune with:
+Goal: find out why a query failed.
 
-```yaml
-# fragment — server config excerpt
-logging:
-  level: info          # debug | info | warn | error
-  format: json         # json | text
-  maxErrorBytes: 4096  # cut of a logged error text, 0 = no cut
+```bash
+--8<-- "examples/observability/steps/02-failed-query.sh"
 ```
 
-Secret values never reach a log line: sensitive material is wrapped in the
-`telemetry.Redacted` helper, which renders as `[redacted]` in every
-handler. This guarantee covers logs, panics, metrics, and audit records.
+```json
+--8<-- "examples/observability/expected/02-failed-query.txt"
+```
 
-The cause of a failed query is not redacted. An `ERR_INTERNAL` response is
-logged at `error` and an `ERR_QUERY_FAILED` response at `warn`, each with the
-`query_id` and the underlying error. The client only gets the code. A DuckDB
-message can hold a piece of the rewritten SQL, literals of the query and cell
-values, also of rows a row filter hides. Treat the log as sensitive.
+Search the log for this error:
 
-DuckDB quotes values of the statement in its messages, so a caller could write
-log lines of any size. The text of an `error` attribute is therefore cut after
-`logging.maxErrorBytes` bytes (default 4096) in every log line. `0` turns the
-cut off.
+```bash
+--8<-- "examples/observability/steps/03-log.sh"
+```
+
+```text
+--8<-- "examples/observability/expected/03-log.txt"
+```
+
+What happened: the client gets an error code and a `query_id`. The log line with this `query_id` holds the cause from DuckDB.
+
+## Logs
+
+Sluice writes one line per event to stderr.
+
+```yaml
+--8<-- "examples/observability/server.yaml:logging"
+```
+
+- `logging.level` is `debug`, `info`, `warn` or `error`. `logging.format` is `json` or `text`.
+- Sluice accepts an unknown value. It then uses `info` or `json`.
+- `ERR_QUERY_FAILED` logs a `WARN` line. `ERR_INTERNAL` logs an `ERROR` line with the message `internal error`.
+- These lines are not redacted. They can hold SQL and cell values, like `'Alice'` above.
+- `logging.maxErrorBytes` cuts a long `error` text. The default is 4096, and `0` turns the cut off.
 
 ## Metrics
 
-Prometheus text-format metrics are served at `GET /metrics` on the
-**admin** listener (default `:9091`), behind the same bearer token as the
-rest of the admin plane. `admin.enabled` must be `true`; set a token — an
-empty token serves `/metrics` (and the whole admin plane) without
-authentication (dev mode).
+The admin listener serves `GET /metrics`. It needs `admin.enabled: true` and the admin token.
 
 ```bash
-curl -s -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
-  http://localhost:9091/metrics | head
+--8<-- "examples/observability/steps/04-metrics.sh"
 ```
 
-Scrape config:
-
-```yaml
-# fragment — prometheus.yml excerpt
-scrape_configs:
-  - job_name: sluice
-    static_configs:
-      - targets: ["sluice.internal:9091"]
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/sluice-admin-token
+```text
+--8<-- "examples/observability/expected/04-metrics.txt"
 ```
 
-The full catalog (policy evaluations, denials, audit queue depth, approval
-gauges, schema cache) is generated from source in the
-[metrics reference](../reference/metrics.md). A minimal alert set:
-`sluice_audit_dropped_total > 0`, rising
-`sluice_policy_denials_total`, and `sluice_audit_queue_depth` near
-capacity.
+[Metrics](../reference/metrics.md) lists every metric. Two alerts are useful:
 
-The audit-drop alert deserves a page, not a ticket: any non-zero increase
-means audit records were lost (the `sink`/`reason` labels say where — s3
-`buffer_full`/`write_error`, syslog `write_error`), which undermines the
-fail-closed audit posture:
-
-```yaml
-# fragment — prometheus alert rule
-groups:
-  - name: sluice
-    rules:
-      - alert: SluiceAuditRecordsDropped
-        expr: increase(sluice_audit_dropped_total[5m]) > 0
-        labels:
-          severity: page
-        annotations:
-          summary: "sluice dropped audit records ({{ $labels.sink }}/{{ $labels.reason }})"
-```
-
-## Audit trail
-
-Every query produces hash-chained JSONL records — decision, subject,
-fingerprints, policies applied, row counts. For live inspection the admin
-plane tails the current file as NDJSON:
-
-```bash
-curl -s -H "Authorization: Bearer $SLUICE_ADMIN_TOKEN" \
-  "http://localhost:9091/admin/audit/tail?n=200" \
-  | jq -r 'select(.decision == "deny")
-           | [.timestamp, .subject.id, .error_code, .sql_fingerprint]
-           | @tsv'
-```
-
-`n` defaults to 100 (max 1000). Record schema, chain verification
-(`sluice audit verify`), and retention are covered in the
-[audit trail](../security/audit.md) chapter.
-
-## Health endpoints
-
-| Endpoint | Listener | Purpose |
-| -------- | -------- | ------- |
-| `GET /v1/health` | data | Liveness. |
-| `GET /v1/ready` | data | Readiness; `503` lists unhealthy data sources. |
-| `GET /v1/version` | data | Build/version info. |
-| `GET /admin/healthz` | admin | Admin-plane health (token required). |
-| `GET /admin/version` | admin | Version, for fleet inventory. |
+- `sluice_audit_dropped_total` above 0: Sluice lost audit records. The `reason` label is `queue_full`, `context`, `buffer_full` or `write_error`.
+- `sluice_audit_queue_depth` close to 10000: the audit queue is almost full.
 
 ## Tracing
 
-OpenTelemetry tracing is opt-in via the `tracing` config block:
+Add a `tracing` block to the server config. Sluice then sends spans to an OTLP collector.
 
 ```yaml
-tracing:
-  enabled: true
-  endpoint: otel-collector:4317
-  protocol: grpc        # or http
-  insecure: false       # plaintext export, for local collectors
-  sampleRatio: 1.0      # parent-based ratio sampler
+--8<-- "examples/observability/tracing.yaml:2"
 ```
 
-Spans are exported over OTLP with W3C `traceparent` propagation. Each
-HTTP request on the REST and MCP (streamable) listeners gets a server
-span named after its route; the query pipeline emits a `query` span with
-`query.parse`, `query.policy`, `query.rewrite`, `query.execute`, and
-`query.mask` children. Over MCP stdio the pipeline spans are the trace
-roots.
+- `protocol` is `grpc` or `http`. `insecure: true` sends without TLS.
+- Sluice continues the trace of a W3C `traceparent` header.
+- Every REST request and every MCP request over HTTP gets a span.
+- A query adds the span `query` with the children `query.parse`, `query.policy`, `query.rewrite`, `query.execute` and `query.mask`.
+- The `query` span holds the query id, origin, decision, SQL fingerprint, catalogs and error code, never the SQL text. It ends before Sluice sends the rows.
 
-Attribute policy: spans carry the query id, origin, decision, SQL
-fingerprint, catalog names, and error code — **never raw SQL and never
-secret bytes** (metrics follow the same rule; a log line can hold SQL in
-the cause of a failed query, see [Logging](#logging)). The
-`query` span ends when the pipeline hands the row stream to the
-transport; row-streaming time is not included — the audit
-`query-result` record remains the source of truth for full duration.
-DB-driver-level spans (otelsql) are still on the roadmap; `query.execute`
-bounds DB time meanwhile.
+## See also
 
-## What is not there yet
-
-!!! warning "Not yet implemented"
-    The `postgres` and `otlp` audit sink types are not implemented;
-    `syslog` and `s3` forwarding are configured via the `audit.*` server
-    config (see [audit](../security/audit.md)), not via `AuditSink`
-    manifests.
+- [Metrics reference](../reference/metrics.md)
+- [Audit log](../security/audit.md)
+- [Deployment](deployment.md)
