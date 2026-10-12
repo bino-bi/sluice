@@ -64,7 +64,7 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `decision`, `message` | `allow`, `deny`, `reject` or `error`, with the reason |
 | `error_code` | Not on a policy `deny` or `reject`. A refused write is `error` with `ACL_REJECTED` |
 | `row_count`, `truncated` | Result size, on `query-result` only. Left out when 0 or `false` |
-| `duration_ms` | Time since the request started |
+| `duration_ms` | Time since the request started. Left out when 0. The examples leave it out |
 | `client_meta` | The `meta` pairs of the request |
 | `extras` | Other data, for example `approval_id` |
 | `sluice_version`, `parser_version` | The build. The parser, on `genesis` only |

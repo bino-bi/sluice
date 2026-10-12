@@ -210,7 +210,7 @@ def check_manual(example: Path) -> list[str]:
 def run_example(example: Path, env: dict, update: bool) -> list[str]:
     errors = check_manual(example)
     steps = sorted((example / "steps").glob("*.sh"))
-    suites = sorted((example / "tests").glob("*.yaml"))
+    suites = sorted((example / "tests").glob("*.y*ml"))
     if not steps and not suites:
         return ["has no tests/ and no steps/, so nothing checks it"]
     shutil.rmtree(example / "data", ignore_errors=True)

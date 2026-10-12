@@ -21,4 +21,4 @@ Every recipe also has a `SqlAccessPolicy`. Without an allow, Sluice denies every
 2. Start the server with `examples/<name>/serve.sh`.
 3. From the example folder, run the files in `steps/` in order.
 
-`expected/` holds the real output of each step. The recipes show it indented, with placeholders such as `<query-id>` for values that change.
+`expected/` holds the real output of each step. The recipes show it indented, with placeholders such as `<query-id>` for values that change. Duration fields are left out.

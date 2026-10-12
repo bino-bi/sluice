@@ -25,7 +25,7 @@ Every command accepts `--help`. A `bool` flag takes no value. The binary also ha
 
 ## apikey hash
 
-Compute the hex HMAC for an API key.
+Compute the hash of an API key.
 
 `sluice apikey hash [flags]`
 

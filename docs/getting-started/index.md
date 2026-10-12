@@ -36,7 +36,7 @@ Leave the server running. Open a second terminal in the `sluice` folder:
 --8<-- "examples/hello-sluice/expected/01-query.txt"
 ```
 
-The outputs are real, but indented. Values that change between runs appear as placeholders such as `<query-id>`.
+The outputs are real, but indented. Values that change between runs appear as placeholders such as `<query-id>`. Duration fields are left out.
 
 The API key maps to the [subject](../reference/glossary.md) `hello` with the group `analytics` and the tenant `acme`. The policy `allow-analytics` lets this group read `customers` and `orders`.
 

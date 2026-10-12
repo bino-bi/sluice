@@ -44,7 +44,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A client reads policy SQL or bound values with `EXPLAIN` | Refuses `EXPLAIN` on a table with a row filter or column mask: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
 | A client reads bound values with `$n` parameters | Refuses the statement: `ERR_UNSUPPORTED_SYNTAX` | Nothing |
 | A client gets around a policy with SQL that Sluice and DuckDB read differently | Rejects a two-part table name such as `shop.customers`: `ACL_REJECTED`. Refuses a name over 63 bytes. Before a rewrite, checks that DuckDB reads the SQL the same way: `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX` | Write `catalog.schema.table` |
-| A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRows` caps every result. Both count result rows | Add a `QueryRewritePolicy` on `tables: ["**"]` |
+| A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRowsCeiling` caps every result. Both count result rows | Add a `QueryRewritePolicy` on `tables: ["**"]` |
 | A client dumps a table over many queries | Daily budget per subject on result rows and run time: `ERR_BUDGET_EXCEEDED`. The query that crosses the budget is still served | Set `budget.enabled: true`. Set `budget` on the subject binding, with `claims.subjectId` or `issuer` |
 | A client floods Sluice with requests | On the REST listener, global and per-IP rate limits before login. One rate limit per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding, with `claims.subjectId` or `issuer`. `limits.perIpRps` is off by default |
 | A client sends a risky query form | A `QueryRejectPolicy` rule rejects it: `ACL_REJECTED` | Write the rules |
@@ -62,6 +62,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A person who controls the host | Nothing. This person can read every secret and change policies | Protect the host |
 | The holder of the admin token | Nothing. The admin API shows policies and audit records | Give the token to operators only |
 | A subject learns about one person from many counts and sums | Nothing | Allow such subjects only tables without personal data |
+| A subject with an allow policy without `resources` gets around a deny policy, row filter or column mask | Nothing. See [Request lifecycle](../architecture/request-lifecycle.md) | Set `resources` in every allow policy |
 
 In most rows, a statement that no allow policy matches gets `ACL_DENIED` instead of the row's code. With `resources` in every allow policy, this covers `BEGIN`, `ATTACH`, `INSTALL`, `LOAD` and most DDL.
 
@@ -102,9 +103,8 @@ What happened: Sluice refused each statement before it reached DuckDB.
 ## Limits
 
 - Sluice does not control what a client does with the rows it reads.
-- Counts and sums over allowed rows can show facts about single rows.
 - `EXPLAIN` on a table without a row filter or column mask is served. The plan can show the file path of a data source.
-- The row limit, `limits.maxRows` and `rowsPerDay` count result rows. One `list()` or `string_agg()` row can hold a whole table.
+- The row limit, `limits.maxRowsCeiling` and `rowsPerDay` count result rows. One `list()` or `string_agg()` row can hold a whole table.
 - `sluice audit verify` does not detect removed newest records, or a change when the later hashes are computed again.
 
 ## See also

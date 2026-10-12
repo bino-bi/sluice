@@ -110,7 +110,7 @@ var overrides = map[string]string{
 	"emit the report as JSON":                            "print the report as JSON",
 	"emit JSON":                                          "print JSON",
 	"emit version metadata as JSON":                      "print the version data as JSON",
-	"Compute the hex HMAC for an API key.":               "Compute the hash of an API key.",
+	"Compute the hex HMAC for an API key":                "Compute the hash of an API key.",
 	"synthetic subject identifier (required)":            "subject id (required)",
 	"synthetic issuer (iss claim)":                       "issuer (iss claim)",
 	"synthetic email claim":                              "email of the subject",

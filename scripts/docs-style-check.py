@@ -45,6 +45,7 @@ SNIPPET_RE = re.compile(r'^\s*--8<-- "([^":]+)(?::([\w-]+))?"\s*$')
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
 CHECKED_SUFFIX = (".sh", ".json", ".yaml", ".yml", ".service")
+LOADED_SUFFIX = (".yaml", ".yml", ".rego")
 NAV = ["Home", "Getting started", "Architecture", "Policies", "Operations",
        "Security", "Reference", "Cookbook"]
 
@@ -198,7 +199,8 @@ def tested_file(path: str) -> str:
         return "" if rel.endswith(CHECKED_SUFFIX) else "is a manual file without a syntax check"
     # Any other file must be named in something that runs: by its path, or by its
     # directory as a whole argument (`sluice policy validate invalid`, `moduleDir: ./rego`).
-    dirs = ["/".join(parts[2:i]) for i in range(3, len(parts))]
+    # A directory covers only what its command reads: policy and suite files, Rego modules.
+    dirs = ["/".join(parts[2:i]) for i in range(3, len(parts))] if rel.endswith(LOADED_SUFFIX) else []
     return "" if uses(example, rel) or any(uses(example, d, whole=True) for d in dirs) else \
         "is not used by serve.sh, a step or server.yaml"
 

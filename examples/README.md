@@ -31,7 +31,7 @@ bash steps/01-query.sh
 | `steps/NN-name.sh` | One command per file. The steps run in order, from the example folder. |
 | `expected/NN-name.txt` | Output of each step from a real run. Never edit these by hand. |
 | `manual/` | Files a reader uses by hand, for example a systemd unit. They get a syntax check only: `bash -n`, or a JSON, YAML or unit file parse. |
-| `data/` | Created at run time. Not in git. |
+| `data/` | Created at run time. Not in git. `key-rotation` also writes hash files to `/tmp/sluice-key-rotation`, because a secret file needs an absolute path. |
 
 An example needs `tests/` or `steps/`, or both. A file that nothing runs must not be shown in the docs.
 
@@ -45,7 +45,7 @@ For each example, `scripts/docs-examples.py`:
 4. Runs each step with `bash`. It captures stdout, stderr and the exit status.
 5. Compares the output with `expected/NN-name.txt`.
 
-The output is changed in two ways before it is stored:
+The output is changed in three ways before it is stored:
 
 - JSON is indented for reading. This includes the `data:` lines of MCP answers.
 - Values that differ between runs or builds are replaced with a placeholder such as `<query-id>`, `<time>`, `<hash>` or `<digest>`.

@@ -113,7 +113,7 @@ Sluice tries each webhook 3 times. A failed delivery is logged and does not fail
 | Accept within `syncWait` | 200 | Rows |
 | Reject within `syncWait` | 403 | `ERR_APPROVAL_REJECTED` |
 | The approval expires within `syncWait` | 410 | `ERR_APPROVAL_EXPIRED` |
-| Same query, approval still open | 202 | `ERR_APPROVAL_PENDING`, same id, no new webhook |
+| Same query, approval still pending | 202 | `ERR_APPROVAL_PENDING`, same id, no new webhook |
 | Run after a reject or an expired grant | 202 | `ERR_APPROVAL_PENDING`, new id |
 
 The subject that asked reads the state with `GET /v1/approvals/{id}`. Other subjects get 404. States: `pending`, `approved`, `rejected`, `expired`, `consumed`. After a reject:
