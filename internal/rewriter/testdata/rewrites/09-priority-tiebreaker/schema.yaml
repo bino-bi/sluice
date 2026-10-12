@@ -1,0 +1,1 @@
+pg.public.customers: [id, name, email]

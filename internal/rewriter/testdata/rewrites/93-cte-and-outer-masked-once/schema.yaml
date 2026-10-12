@@ -1,0 +1,1 @@
+pg.hr.employees: [id, name, email, ssn, salary, notes]

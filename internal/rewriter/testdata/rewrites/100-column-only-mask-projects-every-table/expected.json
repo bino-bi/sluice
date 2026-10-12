@@ -1,0 +1,14 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT e.id, d.name FROM (SELECT sluice_src.id, sluice_src.dept_id, NULL AS ssn FROM pg.hr.employees sluice_src) e JOIN (SELECT sluice_src.id, sluice_src.name FROM pg.hr.dept sluice_src) d ON d.id = e.dept_id",
+  "changed": true,
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-ssn-everywhere",
+    "SqlAccessPolicy/allow-hr"
+  ],
+  "fingerprint": "8d9454eba743526c",
+  "masks": [
+    "pg.hr.dept.ssn=null",
+    "pg.hr.employees.ssn=null"
+  ]
+}

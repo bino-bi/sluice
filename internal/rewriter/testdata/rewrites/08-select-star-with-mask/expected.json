@@ -1,13 +1,13 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, 'redacted@example.com' AS email, NULL AS ssn FROM pg.public.customers",
+  "sql": "SELECT id, email, ssn FROM (SELECT sluice_src.id, sluice_src.name, 'redacted@example.com' AS email, NULL AS ssn FROM pg.public.customers sluice_src) customers",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/mask-email",
     "ColumnMaskPolicy/mask-ssn",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "3b36da4db7d394a8",
+  "fingerprint": "a7138b1949fedabe",
   "masks": [
     "pg.public.customers.email=constant",
     "pg.public.customers.ssn=null"

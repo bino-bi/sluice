@@ -67,12 +67,11 @@ func TestRewriter_StarColumnMaskApplies(t *testing.T) {
 	}
 }
 
-// TestRewriter_MaskSubstitutesInAllExpressionContexts guards the generic
-// expression walk: a masked column must be substituted wherever it
-// appears — sort keys, IN left-hand sides, function args — not only in
-// bare target-list refs and comparison operands. Before the generic walk
-// these contexts silently returned the raw column (a PII leak).
-func TestRewriter_MaskSubstitutesInAllExpressionContexts(t *testing.T) {
+// TestRewriter_MaskAppliesInAllExpressionContexts guards that a masked
+// column is masked in every context: sort keys, IN left-hand sides and
+// function args. Each read of the table gets a wrapper that masks the
+// column, and no wrapper reads it raw.
+func TestRewriter_MaskAppliesInAllExpressionContexts(t *testing.T) {
 	rw := buildRewriter(t)
 	m := maskPolicy("mask-ssn", "emp", []string{"ssn"}, apitypes.MaskSpec{Type: apitypes.MaskNull})
 	sql := "SELECT upper(ssn) AS u FROM pg.hr.emp WHERE ssn IN (SELECT ssn FROM pg.hr.emp) ORDER BY ssn"
@@ -82,17 +81,17 @@ func TestRewriter_MaskSubstitutesInAllExpressionContexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	if strings.Contains(res.SQL, "ssn)") || strings.HasSuffix(res.SQL, "ssn") {
+	if strings.Contains(res.SQL, "sluice_src.ssn") {
 		t.Errorf("raw masked column survives in rewritten SQL: %q", res.SQL)
 	}
-	if !strings.Contains(res.SQL, "upper(NULL)") {
-		t.Errorf("mask not substituted inside function arg: %q", res.SQL)
+	if n := strings.Count(res.SQL, "NULL AS ssn"); n != 2 {
+		t.Errorf("NULL AS ssn appears %d times, want once per read of the table: %q", n, res.SQL)
 	}
 }
 
 // TestRewriter_ExpandStarShortMaskNoPanic guards the expand-star slice-
 // bounds panic: a mask decision key shorter than a FROM table key must not
-// crash fromNeedsExpansion. Here the mask is on a short-named table `t`
+// crash star expansion. Here the mask is on a short-named table `t`
 // referenced only in a subquery, while the outer query selects `*` from a
 // longer-named table.
 func TestRewriter_ExpandStarShortMaskNoPanic(t *testing.T) {

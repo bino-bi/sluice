@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM (SELECT * FROM shop.main.orders WHERE tenant_id = $1) orders WHERE customer_id IN (SELECT id FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $2) customers) AND EXISTS (SELECT 1 FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $3) c WHERE c.id = 3)",
+  "sql": "SELECT id FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $1) orders WHERE customer_id IN (SELECT id FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $2) customers) AND EXISTS (SELECT 1 FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $3) c WHERE c.id = 3)",
   "changed": true,
   "params": [
     "acme",
@@ -12,7 +12,7 @@
     "RowFilterPolicy/filter-tenant",
     "SqlAccessPolicy/allow-analytics"
   ],
-  "fingerprint": "fd40cf6df4f42ddc",
+  "fingerprint": "c7400631c8ac30aa",
   "masks": [
     "shop.main.customers.email=null"
   ],

@@ -1,15 +1,11 @@
 {
   "outcome": "allow",
-  "sql": "EXPLAIN SELECT orders.id, orders.tenant_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders",
-  "changed": true,
-  "params": [
-    "t-42"
-  ],
+  "changed": false,
+  "error_code": "ERR_UNSUPPORTED_SYNTAX",
   "applied_policies": [
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "37c32ef01b820114",
   "filters": [
     "pg.public.orders"
   ]

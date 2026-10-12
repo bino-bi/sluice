@@ -28,7 +28,7 @@ A missing or invalid credential yields `401` with
 | Field | Type | Meaning |
 |---|---|---|
 | `sql` | string | The statement to execute (required) |
-| `params` | array | Positional query parameters |
+| `params` | array | Not supported. A statement with a `$n` parameter is refused with `ERR_UNSUPPORTED_SYNTAX` |
 | `max_rows` | int | Row cap for this query (default `limits.maxRows`, clamped to `limits.maxRowsCeiling`) |
 | `timeout_ms` | int | Query timeout in milliseconds (clamped to `limits.maxQueryTimeout`) |
 | `format` | string | `json` (default), `csv`, or `arrow` (rejected — see below) |

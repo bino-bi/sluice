@@ -4,8 +4,12 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
+
+	pg "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
@@ -63,18 +67,85 @@ WHERE database_name = 'system' AND schema_name = 'main'`)
 	}
 }
 
-// The join-keyword alias guard must list exactly the DuckDB keywords that
-// act as a join-type prefix. If DuckDB adds or renames one, this fails.
-func TestJoinKeywordAliasesAreDuckDBKeywords(t *testing.T) {
+// TestWrapperAliasKeywords checks the unsafe alias list against DuckDB.
+// For every word of duckdb_keywords() it deparses a subquery aliased with
+// that word and joined to a table, the shape a row-filter wrapper takes,
+// and asks DuckDB how it reads the statement. A list entry that DuckDB no
+// longer lists is not reported; it only costs an extra refusal. Re-run it
+// on every DuckDB or pg_query upgrade.
+func TestWrapperAliasKeywords(t *testing.T) {
+	ctx := context.Background()
 	e := newExec(t, executor.Config{})
-	for _, kw := range []string{"semi", "anti", "asof", "positional"} {
-		var n int
-		if err := e.DB().QueryRowContext(context.Background(),
-			"SELECT count(*) FROM duckdb_keywords() WHERE keyword_name = ?", kw).Scan(&n); err != nil {
-			t.Fatalf("query: %v", err)
+
+	rows, err := e.DB().QueryContext(ctx, "SELECT keyword_name FROM duckdb_keywords()")
+	if err != nil {
+		t.Fatalf("duckdb_keywords: %v", err)
+	}
+	var words []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			t.Fatalf("scan: %v", err)
 		}
-		if n == 0 {
-			t.Errorf("%q is not a DuckDB keyword; the alias guard may be stale", kw)
+		words = append(words, w)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(words) < 100 {
+		t.Fatalf("duckdb_keywords returned %d words", len(words))
+	}
+
+	var unsafe []string
+	for _, w := range words {
+		tree, err := pg.Parse("SELECT * FROM (SELECT 1 AS x) placeholder JOIN u ON true")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
 		}
+		join0 := tree.Stmts[0].Stmt.GetSelectStmt().FromClause[0].GetJoinExpr()
+		join0.Larg.GetRangeSubselect().Alias.Aliasname = w
+		sql, err := pg.Deparse(tree)
+		if err != nil {
+			t.Fatalf("deparse %q: %v", w, err)
+		}
+
+		// json_serialize_sql takes a constant only.
+		var out string
+		q := "SELECT json_serialize_sql('" + strings.ReplaceAll(sql, "'", "''") + "')::VARCHAR"
+		if err := e.DB().QueryRowContext(ctx, q).Scan(&out); err != nil {
+			t.Fatalf("json_serialize_sql(%q): %v", sql, err)
+		}
+		var parsed struct {
+			Error      bool `json:"error"`
+			Statements []struct {
+				Node struct {
+					FromTable struct {
+						Type string `json:"type"`
+						Left struct {
+							Alias string `json:"alias"`
+						} `json:"left"`
+					} `json:"from_table"`
+				} `json:"node"`
+			} `json:"statements"`
+		}
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			t.Fatalf("decode %s: %v", out, err)
+		}
+		readsAlias := !parsed.Error && len(parsed.Statements) == 1 &&
+			parsed.Statements[0].Node.FromTable.Type == "JOIN" &&
+			strings.EqualFold(parsed.Statements[0].Node.FromTable.Left.Alias, w)
+		if !readsAlias {
+			unsafe = append(unsafe, w)
+		}
+	}
+	slices.Sort(unsafe)
+
+	for _, w := range words {
+		if got, want := parser.IsUnsafeBareAlias(w), slices.Contains(unsafe, w); got != want {
+			t.Errorf("IsUnsafeBareAlias(%q) = %v, DuckDB says %v", w, got, want)
+		}
+	}
+	if t.Failed() {
+		t.Logf("DuckDB does not read these as a bare alias: %s", strings.Join(unsafe, " "))
 	}
 }

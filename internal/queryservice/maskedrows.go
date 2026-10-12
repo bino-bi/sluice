@@ -5,9 +5,11 @@ package queryservice
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/rewriter"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
@@ -79,6 +81,42 @@ func (s *Service) buildMaskedRows(ctx context.Context, inner executor.RowIterato
 		masks[pm.ColumnIndex] = mask
 	}
 	return &maskedRows{inner: inner, masks: masks}, nil
+}
+
+// checkResultShape refuses a result whose columns are not the ones the
+// rewriter bound the post-query masks to. A mask would otherwise hit
+// another column and the masked one would be served raw.
+func checkResultShape(cols []executor.ColumnInfo, rw *rewriter.RewriteResult) error {
+	refuse := pkgerr.New(pkgerr.CodeMaskContext).
+		WithMessage("the result columns do not match the select list, post-query masks cannot be applied")
+	if len(cols) != rw.ResultColumnCount {
+		return refuse
+	}
+	for _, pm := range rw.PostMasks {
+		if pm.ColumnIndex < 0 || pm.ColumnIndex >= len(cols) {
+			return refuse
+		}
+		got, want := parser.FoldASCII(cols[pm.ColumnIndex].Name), parser.FoldASCII(pm.OutputName)
+		if got != want && (!rw.Sampled || !isRenamedDuplicate(got, want)) {
+			return refuse
+		}
+	}
+	return nil
+}
+
+// isRenamedDuplicate reports whether got is name followed by _<digits>,
+// the name DuckDB gives a duplicate column of a subquery.
+func isRenamedDuplicate(got, name string) bool {
+	suffix, ok := strings.CutPrefix(got, name+"_")
+	if !ok || suffix == "" {
+		return false
+	}
+	for i := 0; i < len(suffix); i++ {
+		if suffix[i] < '0' || suffix[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // maskedRows is a RowIterator decorator that masks selected columns as

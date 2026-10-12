@@ -91,7 +91,7 @@ var defaultMessage = map[Code]string{
 	CodeMultipleStatements:    "only a single statement is allowed per request",
 	CodeUnsupportedSyntax:     "SQL feature not supported",
 	CodeRewriteFailed:         "policy rewrite failed",
-	CodeMaskContext:           "a post-query masked column cannot appear in a filter, join, or expression",
+	CodeMaskContext:           "a post-query masked column is used outside a bare select item",
 	CodeUnauthorized:          "authentication required",
 	CodeACLDenied:             "access denied by policy",
 	CodeACLRejected:           "query shape rejected by policy",

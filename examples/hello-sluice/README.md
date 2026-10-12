@@ -101,7 +101,7 @@ Expected response (trimmed):
 Three things to notice:
 
 1. **Row filter applied.** Although `customers` has rows for three tenants, only the two rows with `tenant_id = 'acme'` are returned — the row-filter policy rewrote the statement to `WHERE tenant_id = $1` and bound `$1 = 'acme'`.
-2. **Column mask applied.** The `email` column is `null` — the mask policy substituted `NULL AS email` in the target list.
+2. **Column mask applied.** The `email` column is `null`. Sluice reads `customers` through a subquery that lists its columns with `NULL AS email`, so the rest of the query only sees the masked value.
 3. **query_id in the response.** This is the ULID of the audit record for this request.
 
 ## 4. Verify the audit trail

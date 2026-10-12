@@ -41,17 +41,12 @@ type exprFrame struct {
 }
 
 // checkDepth rejects a statement whose nesting would overflow pg_query's C
-// stack. It scans the token stream (lexing does not recurse, so it is safe
+// stack. It reads the token stream (lexing does not recurse, so it is safe
 // on the same input that would crash the parser) and tracks the true
 // expression-tree depth plus independent JOIN and set-operation chain
-// lengths. A scan error is left for Parse to report as the real syntax
-// error.
-func checkDepth(sql string) error {
-	scan, err := pg.Scan(sql)
-	if err != nil || scan == nil {
-		return nil
-	}
-	toks := scan.Tokens
+// lengths. toks is empty after a scan error, which is left for Parse to
+// report as the real syntax error.
+func checkDepth(toks []*pg.ScanToken) error {
 	var stack []exprFrame
 	cur := exprFrame{}
 	heavy := 0

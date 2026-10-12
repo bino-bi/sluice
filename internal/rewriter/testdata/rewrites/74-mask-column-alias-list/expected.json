@@ -1,0 +1,20 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT c.e2 FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) c(i, n, e2, t, cr)",
+  "changed": true,
+  "params": [
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "0c4fbb14589cc7c5",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers"
+  ]
+}

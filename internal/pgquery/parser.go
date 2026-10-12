@@ -56,7 +56,13 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	if len(sql) > p.maxBytes {
 		return nil, parser.ErrInputTooLarge
 	}
-	if err := checkDepth(sql); err != nil {
+	// One scan feeds every token check. After a scan error the checks get
+	// no tokens, and pg.Parse reports the syntax error.
+	scan, scanErr := pg.Scan(sql)
+	if err := checkDepth(scan.GetTokens()); err != nil {
+		return nil, err
+	}
+	if err := checkIdentifierLength(sql, scan.GetTokens()); err != nil {
 		return nil, err
 	}
 
@@ -70,7 +76,11 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 	if len(tree.Stmts) > 1 {
 		return nil, parser.ErrMultipleStatements
 	}
-	if err := checkIdentifierRunes(sql); err != nil {
+	// The token checks could not run, so refuse rather than serve.
+	if scanErr != nil {
+		return nil, &parser.ParseError{Cause: scanErr}
+	}
+	if err := checkIdentifierRunes(sql, scan.GetTokens()); err != nil {
 		return nil, &parser.ParseError{Cause: err}
 	}
 	if err := checkAliasKeywords(tree); err != nil {
@@ -102,22 +112,8 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 // treats Unicode spaces as token separators. A statement that is served
 // unchanged would then mean something else to the engine than to the
 // checks that ran on the pg_query tree.
-func checkIdentifierRunes(sql string) error {
-	ascii := true
-	for i := 0; i < len(sql); i++ {
-		if sql[i] >= utf8.RuneSelf {
-			ascii = false
-			break
-		}
-	}
-	if ascii {
-		return nil
-	}
-	scan, err := pg.Scan(sql)
-	if err != nil {
-		return err
-	}
-	for _, tok := range scan.Tokens {
+func checkIdentifierRunes(sql string, toks []*pg.ScanToken) error {
+	for _, tok := range toks {
 		if tok.Token != pg.Token_IDENT || int(tok.End) > len(sql) || tok.Start >= tok.End {
 			continue
 		}
@@ -135,6 +131,41 @@ func checkIdentifierRunes(sql string) error {
 			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
 				return parser.ErrIdentifierChars
 			}
+		}
+	}
+	return nil
+}
+
+// maxIdentifierBytes is where pg_query cuts an identifier (NAMEDATALEN-1).
+const maxIdentifierBytes = 63
+
+// checkIdentifierLength refuses an identifier longer than 63 bytes.
+// pg_query cuts it to 63 bytes and DuckDB does not, so a policy on the full
+// name would not match the name policy sees, and a CTE named with the first
+// 63 bytes would hide the table. A quoted name counts after decoding. A
+// Unicode escape name (U&"...") counts its content as written, which is
+// never shorter than its decoded form.
+func checkIdentifierLength(sql string, toks []*pg.ScanToken) error {
+	for _, tok := range toks {
+		if int(tok.End) > len(sql) || tok.Start >= tok.End {
+			continue
+		}
+		text := sql[tok.Start:tok.End]
+		switch tok.Token {
+		case pg.Token_IDENT:
+			if len(text) >= 2 && text[0] == '"' {
+				text = strings.ReplaceAll(text[1:len(text)-1], `""`, `"`)
+			}
+		case pg.Token_UIDENT:
+			// Drop the U&" prefix and the closing quote.
+			if len(text) >= 4 {
+				text = text[3 : len(text)-1]
+			}
+		default:
+			continue
+		}
+		if len(text) > maxIdentifierBytes {
+			return parser.ErrIdentifierTooLong
 		}
 	}
 	return nil
@@ -165,12 +196,19 @@ func (p *Parser) Fingerprint(sql string) (string, error) {
 	if len(sql) > p.maxBytes {
 		return "", parser.ErrInputTooLarge
 	}
-	if err := checkDepth(sql); err != nil {
+	scan, scanErr := pg.Scan(sql)
+	if err := checkDepth(scan.GetTokens()); err != nil {
+		return "", err
+	}
+	if err := checkIdentifierLength(sql, scan.GetTokens()); err != nil {
 		return "", err
 	}
 	fp, err := pg.Fingerprint(sql)
 	if err != nil {
 		return "", &parser.ParseError{Cause: err}
+	}
+	if scanErr != nil {
+		return "", &parser.ParseError{Cause: scanErr}
 	}
 	return fp, nil
 }

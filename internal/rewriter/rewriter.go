@@ -22,21 +22,31 @@ import (
 // Options configures a new Rewriter.
 type Options struct {
 	Parser         parser.Parser
-	Schema         schema.Cache // may be nil when SELECT-* expansion is not needed
+	Schema         schema.Cache // required to read a table with a column mask
 	Logger         *slog.Logger
 	Clock          func() time.Time
 	DefaultCatalog string
+	// DefaultDatabase is DuckDB's current_database(), the catalog of a
+	// table written without one. Unlike DefaultCatalog it does not change
+	// policy keys. It lets the rewriter refuse catalog.t.col on a table
+	// sluice wraps. Empty means unknown.
+	DefaultDatabase string
 	// Masks resolves mask types beyond the null/constant fast paths.
 	// Nil falls back to mask.Default().
 	Masks *pkgmask.Registry
 	// Salts resolves secret:// salt references for salted hash masks.
 	Salts pkgmask.SaltStore
+	// ParseCheck refuses a mutated SELECT whose deparse DuckDB reads in
+	// another way than the caller's text. Nil skips the check; only unit
+	// tests leave it nil.
+	ParseCheck ParseChecker
 }
 
 // Rewriter is the sole public surface of the package. It is safe for
 // concurrent use; callers share a single instance.
 type Rewriter struct {
-	opts Options
+	opts     Options
+	snippets *snippetMemo
 }
 
 // New returns a new Rewriter. Parser is required — everything else takes
@@ -51,7 +61,7 @@ func New(opts Options) *Rewriter {
 	if opts.Clock == nil {
 		opts.Clock = time.Now
 	}
-	return &Rewriter{opts: opts}
+	return &Rewriter{opts: opts, snippets: &snippetMemo{pc: opts.ParseCheck}}
 }
 
 // RewriteRequest carries everything Rewrite needs. AST may be nil if the
@@ -77,17 +87,26 @@ type RewriteResult struct {
 	// (FPE, fake, jitter, hmac). ColumnIndex is the zero-based position in
 	// the result set; queryservice builds one mask per entry.
 	PostMasks []PostMask
+	// ResultColumnCount is the number of columns the statement returns. It
+	// is set with PostMasks; queryservice refuses a result of another shape.
+	ResultColumnCount int
+	// Sampled reports the sample wrap. Its SELECT * makes DuckDB rename a
+	// duplicate column name to name_1, name_2 and so on.
+	Sampled bool
 }
 
 // PostMask describes one post-query masking instruction bound to a result
 // column position.
 type PostMask struct {
 	ColumnIndex int
-	TableKey    string
-	Column      string
-	Type        apitypes.MaskType
-	Args        pkgmask.Args
-	Policy      string
+	// OutputName is the result column name DuckDB gives the item: its
+	// alias, else the column name.
+	OutputName string
+	TableKey   string
+	Column     string
+	Type       apitypes.MaskType
+	Args       pkgmask.Args
+	Policy     string
 }
 
 // Rewrite applies req.Decision to req.AST. The general flow is:
@@ -95,7 +114,9 @@ type PostMask struct {
 //  1. Reject unsupported statement kinds.
 //  2. Deny / reject: return a typed APIError.
 //  3. Fast-path: pass-through when no mutation is required.
-//  4. Clone the AST, apply expand-star → inject-filter → substitute-mask.
+//  4. Clone the AST, normalize it for DuckDB and refuse it when DuckDB
+//     reads its deparse in another way than req.Raw. Then plan the
+//     post-query masks and wrap each filtered or masked table.
 //  5. Deparse, compute fingerprint, return the result.
 //
 // Steps 4+ are only reached when req.AST != nil. The nil-AST branch
@@ -151,6 +172,15 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
 			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
 		}
+		if req.AST.Shape().HasParams {
+			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(parser.ErrParamRef.Error())
+		}
+		// The plan shows the policy SQL with its bound values (salts too)
+		// and statistics over the rows a filter hides.
+		if req.AST.Statement() == parser.StmtExplain && (len(req.Decision.RowFilters) > 0 || len(req.Decision.ColumnMasks) > 0) {
+			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
+				WithMessage("EXPLAIN is not supported on a table with a row filter or column mask")
+		}
 	}
 
 	// Step 3: pass-through fast path.
@@ -180,27 +210,42 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		return nil, ErrForeignAST
 	}
 
-	state := &state{
-		ctx:            ctx,
-		decision:       req.Decision,
-		user:           req.User,
-		facts:          req.Facts,
-		schema:         r.opts.Schema,
-		defaultCatalog: r.opts.DefaultCatalog,
-		masks:          r.opts.Masks,
-		salts:          r.opts.Salts,
+	// DuckDB runs the deparsed text, and pg_query deparses for PostgreSQL.
+	// Check before any mutation, so a difference is the dialect's alone.
+	normalizeForDuckDB(clone, req.Raw)
+	if err := r.checkDuckDBParse(ctx, req, clone); err != nil {
+		return nil, err
 	}
 
-	if err := state.checkMaskedAliases(clone); err != nil {
+	state := &state{
+		ctx:             ctx,
+		decision:        req.Decision,
+		user:            req.User,
+		facts:           req.Facts,
+		schema:          r.opts.Schema,
+		defaultCatalog:  r.opts.DefaultCatalog,
+		defaultDatabase: r.opts.DefaultDatabase,
+		masks:           r.opts.Masks,
+		salts:           r.opts.Salts,
+		snippets:        r.snippets,
+	}
+
+	if err := state.checkReservedName(clone); err != nil {
+		return nil, err
+	}
+	if err := state.checkPostMaskForms(clone); err != nil {
 		return nil, err
 	}
 	if err := state.applyExpandStar(clone); err != nil {
 		return nil, err
 	}
-	if err := state.applyInjectFilter(clone); err != nil {
+	if err := state.applyPostMasks(clone); err != nil {
 		return nil, err
 	}
-	if err := state.applySubstituteMask(clone); err != nil {
+	if err := state.applyWrapTables(clone); err != nil {
+		return nil, err
+	}
+	if err := state.verifyWrapped(clone); err != nil {
 		return nil, err
 	}
 	if err := state.applyRewrite(clone); err != nil {
@@ -224,53 +269,70 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	// DuckDB's USING SAMPLE, so the wrap happens after deparse and the
 	// fingerprint above is intentionally computed on the inner SQL (the
 	// wrapped form no longer parses under the PG grammar).
+	sampled := false
 	if eff := req.Decision.Rewrite; eff != nil && eff.Sample != nil {
 		if req.AST.Statement() == parser.StmtSelect {
 			var note string
 			sql, note = sampleWrap(sql, eff.Sample)
 			state.rewrites = append(state.rewrites, note)
+			sampled = true
 		} else {
 			state.rewrites = append(state.rewrites, "sample-skipped:"+string(req.AST.Statement()))
 		}
 	}
 
 	return &RewriteResult{
-		SQL:         sql,
-		Params:      state.params,
-		Fingerprint: fp,
-		Changed:     true,
-		Rewrites:    state.rewrites,
-		PostMasks:   state.postMasks,
+		SQL:               sql,
+		Params:            state.params,
+		Fingerprint:       fp,
+		Changed:           true,
+		Rewrites:          state.rewrites,
+		PostMasks:         state.postMasks,
+		ResultColumnCount: state.resultColumns,
+		Sampled:           sampled,
 	}, nil
 }
 
 // state carries the per-Rewrite mutable bookkeeping.
 type state struct {
-	ctx            context.Context
-	decision       *policy.Decision
-	user           *identity.UserCtx
-	facts          *policy.RequestFacts
-	schema         schema.Cache
-	defaultCatalog string
-	masks          *pkgmask.Registry
-	salts          pkgmask.SaltStore
+	ctx             context.Context
+	decision        *policy.Decision
+	user            *identity.UserCtx
+	facts           *policy.RequestFacts
+	schema          schema.Cache
+	defaultCatalog  string
+	defaultDatabase string
+	masks           *pkgmask.Registry
+	salts           pkgmask.SaltStore
+	snippets        *snippetMemo
 
 	params    []any
 	rewrites  []string
 	postMasks []PostMask
+	// resultColumns is the select list length postMasks are bound to.
+	resultColumns int
 
-	// wrappers maps each row-filter wrapper to the table it wraps. The
-	// mask pass resolves the wrapper's alias to that table. A subquery the
-	// caller wrote is not in here: it is masked in its own SELECT.
-	wrappers map[*pg.RangeSubselect]*pg.RangeVar
+	// wrapped maps the RangeVar inside each wrapper to the RangeVar the
+	// query wrote.
+	wrapped map[*pg.RangeVar]*pg.RangeVar
 	// subAliases counts the aliases generated for unaliased FROM subqueries.
 	subAliases int
-	// selectDepth is the nesting level of the SELECT the mask pass is in.
+	// topSelect is the outer SELECT of the statement, for star expansion.
+	topSelect *pg.SelectStmt
+	// selectDepth is the nesting level of the SELECT the post-mask guard
+	// walk is in.
 	selectDepth int
 	// localAliases holds the FROM tables of that SELECT alone.
 	localAliases aliasMap
 	// schemaIndex finds schema cache entries by lower-case key.
 	schemaIndex map[string]*schema.Entry
+	// tables keeps the first schema cache answer per table key.
+	tables map[string]tableLookup
+}
+
+type tableLookup struct {
+	entry *schema.Entry
+	err   error
 }
 
 // needsMutation reports whether the decision requires any AST change.

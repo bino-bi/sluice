@@ -75,7 +75,10 @@ plain deny.
 `limit.max` (integer, 1 to 2147483647) is an inject-or-clamp cap: a SELECT without a `LIMIT` gets
 one injected; a constant `LIMIT` above the cap is clamped; a constant at or below it is left
 alone; a parameter or expression limit is replaced by the cap. Non-SELECT statements (`EXPLAIN`,
-`SET`, `SHOW`, `PRAGMA`) are skipped.
+`SET`, `SHOW`, `PRAGMA`) are skipped. An `EXPLAIN` is served when no row filter or column mask
+applies, and a matching limit is not applied to it. An `EXPLAIN` on a table with a row filter or
+column mask is refused with `ERR_UNSUPPORTED_SYNTAX`, because the plan would show the policy SQL
+with its bound values.
 
 ```sql
 -- client sends (policy: limit.max = 1000)

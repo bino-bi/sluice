@@ -22,11 +22,19 @@ var (
 	// ErrTooDeep reports a statement whose nesting would overflow the C
 	// stack inside pg_query. Rejected before parsing.
 	ErrTooDeep = errors.New("parser: statement nesting is too deep")
-	// ErrAliasKeyword reports a FROM alias that DuckDB reads as a join-type
-	// keyword (SEMI, ANTI, ASOF, POSITIONAL). pg_query reads it as an alias
-	// and deparses it bare, so DuckDB would restructure the join and skip
-	// the row filter and mask.
-	ErrAliasKeyword = errors.New("table alias is a reserved join keyword (semi, anti, asof, positional), use another alias")
+	// ErrIdentifierTooLong reports an identifier over 63 bytes. pg_query
+	// cuts it to 63 bytes and DuckDB does not, so policy would see another
+	// name than DuckDB reads.
+	ErrIdentifierTooLong = errors.New("identifier longer than 63 bytes, use a shorter name or rename the object at the source")
+	// ErrAliasKeyword reports a FROM alias that DuckDB reads as a keyword
+	// (IsUnsafeBareAlias). pg_query reads it as an alias and deparses it
+	// bare, so DuckDB would restructure the join or read the alias as a
+	// clause, and skip the row filter and mask.
+	ErrAliasKeyword = errors.New("table alias is a DuckDB keyword (such as semi, asof, qualify or pivot), use another alias")
+	// ErrParamRef reports a $n in the caller's statement. Caller params are
+	// not bound, and $n would read the values the rewriter binds: row filter
+	// values and mask params such as a hash salt.
+	ErrParamRef = errors.New("query parameters ($n) are not supported")
 )
 
 // ParseError carries position information for logs and audit records. The

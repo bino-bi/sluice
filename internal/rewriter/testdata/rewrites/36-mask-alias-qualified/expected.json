@@ -1,12 +1,12 @@
 {
   "outcome": "allow",
-  "sql": "SELECT NULL AS ssn FROM pg.hr.emp e",
+  "sql": "SELECT e.ssn FROM (SELECT sluice_src.id, sluice_src.dept, NULL AS ssn FROM pg.hr.emp sluice_src) e",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/mask-ssn",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "b7a43c2ac1cb386c",
+  "fingerprint": "7652ce5d436e8597",
   "masks": [
     "pg.hr.emp.ssn=null"
   ]

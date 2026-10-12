@@ -19,7 +19,6 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
 	"github.com/bino-bi/sluice/internal/rewriter"
-	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -151,6 +150,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
+	// Also before the cache: a $n reads the values the rewriter binds (row
+	// filter values, a hash salt). Caller params are never bound.
+	if shape.HasParams {
+		apiErr := pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithQueryID(qid).WithMessage(parser.ErrParamRef.Error())
+		setErrorCode(rec, apiErr)
+		rec.Decision = audit.DecisionError
+		s.emit(ctx, rec, start)
+		releaseSlot()
+		return nil, apiErr
+	}
 
 	// 1d. Catalog used as schema. DuckDB resolves `shop.customers` as
 	// catalog shop with its default schema. The table walker and every
@@ -278,12 +287,14 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		})
 		rwSpan.End()
 		if reErr != nil {
-			// Never cache error paths.
-			setErrorCode(rec, reErr)
+			// Never cache error paths. Map first so the audit record
+			// carries the client code.
+			apiErr := toAPIError(reErr, qid)
+			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
 			releaseSlot()
-			return nil, toAPIError(reErr, qid)
+			return nil, apiErr
 		}
 		if cacheable {
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec, Rewrite: rewriteResp})
@@ -337,7 +348,11 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	// with nothing served and nothing falsely audited as allowed.
 	if len(rewriteResp.PostMasks) > 0 {
 		maskCtx, maskSpan := s.tracer.Start(ctx, "query.mask")
-		masked, mErr := s.buildMaskedRows(maskCtx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		var masked executor.RowIterator
+		mErr := checkResultShape(resp.Columns, rewriteResp)
+		if mErr == nil {
+			masked, mErr = s.buildMaskedRows(maskCtx, resp.Rows, identityView{req.User}, rewriteResp.PostMasks)
+		}
 		maskSpan.End()
 		if mErr != nil {
 			_ = resp.Rows.Close()
@@ -490,24 +505,14 @@ func toAPIError(err error, qid string) error {
 	if ae := pkgerr.FromError(err); ae != nil && ae.Code != pkgerr.CodeInternal {
 		return ae.WithQueryID(qid)
 	}
-	// Rewriter sentinels.
 	switch {
-	case stderrors.Is(err, rewriter.ErrMaskPostQueryContext):
-		return pkgerr.Wrap(pkgerr.CodeMaskContext, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrUnsupportedSyntax):
-		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrDeparseFailed):
-		return pkgerr.Wrap(pkgerr.CodeRewriteFailed, err).WithQueryID(qid)
-	case stderrors.Is(err, rewriter.ErrStatementRejected):
-		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrDeny):
 		return pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid)
 	case stderrors.Is(err, policy.ErrReject):
 		return pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid)
-	case stderrors.Is(err, schema.ErrUnknownCatalog):
-		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
 	}
-	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
+	// Rewriter sentinels, context and schema cache errors.
+	return pkgerr.Wrap(rewriter.ErrorCode(err), err).WithQueryID(qid)
 }
 
 func parseErrToAPI(err error, qid string) error {
@@ -523,6 +528,8 @@ func parseErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid)
 	case stderrors.Is(err, parser.ErrTooDeep):
 		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrTooDeep.Error())
+	case stderrors.Is(err, parser.ErrIdentifierTooLong):
+		return pkgerr.Wrap(pkgerr.CodeUnsupportedSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierTooLong.Error())
 	case stderrors.Is(err, parser.ErrIdentifierChars):
 		return pkgerr.Wrap(pkgerr.CodeSyntax, err).WithQueryID(qid).WithMessage(parser.ErrIdentifierChars.Error())
 	case stderrors.Is(err, parser.ErrAliasKeyword):

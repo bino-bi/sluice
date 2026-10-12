@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT o.id, count(*) OVER (ORDER BY o.created_at RANGE BETWEEN to_days(trunc('30'::double precision)::int) PRECEDING AND CURRENT ROW) AS recent FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) o WHERE o.created_at \u003e ('2026-01-01 00:00:00'::timestamp - to_months(trunc('6'::double precision)::int))",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "e83a7805b66fac7d",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

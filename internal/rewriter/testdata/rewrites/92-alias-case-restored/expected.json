@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "WITH totals(\"OrderId\", \"Total\") AS (SELECT o.id, o.total FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) o) SELECT t.orderid, struct_pack(Total := t.total) AS \"Info\", to_json(t) AS \"Doc\" FROM totals t",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "d69da4afa237a866",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

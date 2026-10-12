@@ -65,6 +65,10 @@ flowchart LR
 | Reading around policy through a function (`query_table`, `read_csv`, `duckdb_settings`, `current_setting`) | Function allowlist (default-deny, before the rewrite cache) | `ACL_REJECTED` |
 | Cross-tenant row access | `RowFilterPolicy` — predicates injected as bound `$N` parameters | Rows filtered |
 | Reading PII columns | `ColumnMaskPolicy` (partial, hash, fpe, fake, ...) | Values masked |
+| Reading the policy SQL, salts or row counts through `EXPLAIN` | `EXPLAIN` refused when a row filter or mask applies | `ERR_UNSUPPORTED_SYNTAX` |
+| A name longer than 63 bytes that pg_query cuts and DuckDB does not | Parser refuses identifiers over 63 bytes | `ERR_UNSUPPORTED_SYNTAX` |
+| Reading the values the policy binds (a hash salt, a filter value) through `$n` | Statements with `$n` parameters are refused | `ERR_UNSUPPORTED_SYNTAX` |
+| Rewritten SQL that DuckDB reads in another way than the caller's text | Normalization plus a DuckDB parse check of both texts before any policy SQL is added | `ERR_UNSUPPORTED_SYNTAX` (`ERR_SYNTAX` when DuckDB cannot parse the caller's text) |
 | Bulk exfiltration in one query | `QueryRewritePolicy` LIMIT clamp + sampling | Result bounded |
 | Bulk exfiltration over many queries | Per-subject daily budgets (`rowsPerDay`, `cpuSecondsPerDay`) | `ERR_BUDGET_EXCEEDED` |
 | Runaway agent loop | Per-subject rate limits (token bucket) | `ERR_RATE_LIMITED` |
@@ -80,10 +84,17 @@ are enforced per `SubjectBinding` — see [Subjects, keys & budgets](../policies
 
 ## Residual risks
 
-- **CASE oracle in column masks.** A masked column can still be referenced in
-  `WHERE email = 'victim@example.com'` — the result-set shape leaks whether
-  the value exists. Deny such predicates with a `QueryRejectPolicy` where
-  this matters; see [Column masks](../policies/column-masks.md).
+- **What a mask output shows.** A query only sees the output of a SQL mask,
+  so `WHERE email = 'victim@example.com'` under a `'***'` mask matches
+  nothing. The output itself can still tell something: a `partial` mask
+  shows its prefix, an unsalted `sha256` hash can be checked against guessed
+  values, and equal hashes show equal inputs. See
+  [Column masks](../policies/column-masks.md).
+- **A filter column the table does not have.** Sluice does not check that a
+  row filter column exists in each table the filter matches. When it does
+  not, a crafted query can make the filter test a value it builds itself, and
+  the rows are served unfiltered. Keep the filter column in every matched
+  table, also under wildcard table patterns.
 - **Jailbreak of the agent itself.** Sluice bounds *what data an agent can
   obtain*, not what the agent does with data it is legitimately allowed to
   read. A hijacked agent can still exfiltrate its permitted slice through its

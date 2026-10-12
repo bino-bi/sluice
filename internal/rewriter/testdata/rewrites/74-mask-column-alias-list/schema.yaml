@@ -1,0 +1,2 @@
+shop.main.customers: [id, name, email, tenant_id, created_at]
+shop.main.orders: [id, customer_id, total_cents, tenant_id, placed_at]

@@ -13,12 +13,13 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 )
 
-// collectFunctions returns every function call in raw, at any depth, and
-// the FROM items that are not a table, subquery, join or function. The
-// walk is generic over the protobuf tree so no clause can hide a call.
-func collectFunctions(raw *pg.RawStmt) ([]parser.FuncRef, []string) {
+// collectFunctions returns every function call in raw, at any depth, the
+// FROM items that are not a table, subquery, join or function, and whether
+// raw has a $n parameter reference. The walk is generic over the protobuf
+// tree so no clause can hide a call.
+func collectFunctions(raw *pg.RawStmt) ([]parser.FuncRef, []string, bool) {
 	if raw == nil || raw.Stmt == nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	c := &funcCollector{
 		seenFuncs: make(map[parser.FuncRef]struct{}),
@@ -41,7 +42,7 @@ func collectFunctions(raw *pg.RawStmt) ([]parser.FuncRef, []string) {
 		return !a.DynamicArgs && b.DynamicArgs
 	})
 	sort.Strings(c.from)
-	return c.funcs, c.from
+	return c.funcs, c.from, c.params
 }
 
 type funcCollector struct {
@@ -49,6 +50,7 @@ type funcCollector struct {
 	seenFuncs map[parser.FuncRef]struct{}
 	from      []string
 	seenFrom  map[string]struct{}
+	params    bool
 }
 
 func (c *funcCollector) addFunc(ref parser.FuncRef) {
@@ -81,6 +83,8 @@ func (c *funcCollector) walkNode(n *pg.Node) {
 		c.addFunc(funcRef(v.FuncCall, false))
 	case *pg.Node_SqlvalueFunction:
 		c.addFunc(parser.FuncRef{Name: sqlValueFunctionName(v.SqlvalueFunction)})
+	case *pg.Node_ParamRef:
+		c.params = true
 	default:
 		// SQL/JSON, XML and MERGE syntax has its own node types. DuckDB
 		// runs the deparsed text as ordinary calls, so name them.

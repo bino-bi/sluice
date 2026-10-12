@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, CASE WHEN notes IS NULL THEN NULL WHEN length(notes::varchar) \u003e $1 THEN concat(substr(notes::varchar, 1, $1), $2) ELSE notes::varchar END AS notes FROM pg.hr.employees",
+  "sql": "SELECT id, notes FROM (SELECT sluice_src.id, sluice_src.name, sluice_src.email, sluice_src.ssn, sluice_src.salary, CASE WHEN sluice_src.notes IS NULL THEN NULL WHEN length(sluice_src.notes::varchar) \u003e $1 THEN concat(substr(sluice_src.notes::varchar, 1, $1), $2) ELSE sluice_src.notes::varchar END AS notes FROM pg.hr.employees sluice_src) employees",
   "changed": true,
   "params": [
     4,
@@ -10,7 +10,7 @@
     "ColumnMaskPolicy/mask-notes",
     "SqlAccessPolicy/allow-hr"
   ],
-  "fingerprint": "b98a08a235d0f397",
+  "fingerprint": "fb3ec491cec061af",
   "masks": [
     "pg.hr.employees.notes=truncate"
   ]

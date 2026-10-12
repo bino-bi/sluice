@@ -57,7 +57,15 @@ A successful swap updates, atomically:
   previous binding set stays live,
 - rate-limit and budget specs from `SubjectBinding` manifests,
 - the rewrite cache (purged — no decision outlives its snapshot),
-- the schema cache (invalidated).
+- the schema cache (emptied; each catalog is loaded again on the next
+  lookup). A reload is not the only refresh: any lookup that misses a table
+  of a catalog loads that catalog again (a table not cached yet, a name that
+  does not exist, an evicted entry). There is no timer. A table with a
+  column mask is read through a subquery that lists the cached columns, so
+  until the next such load a column added at the source is not returned, and
+  a column dropped at the source makes every query on that table fail. With
+  `cache.rewrite.enabled`, a repeated query keeps the old column list for up
+  to `cache.rewrite.ttl` after that load.
 
 `ApprovalPolicy` objects hot-reload like every other policy kind. The
 broker that serves them exists whenever `approval.publicBaseUrl` is set —

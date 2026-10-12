@@ -88,6 +88,9 @@ curl -s -H "X-Api-Key: sre.rotatedtoken" -H "Content-Type: application/json" \
 
 As a policy test: the analyst case expects
 `masks: ["shop.main.customers.email=null"]`, the SRE case expects `masks: []`.
+The analyst case reads a masked table, so the suite needs a `schema:` block
+that lists the columns of `shop.main.customers` (see
+[Schema fixtures for masked tables](../policies/testing.md#schema-fixtures-for-masked-tables)).
 
 ## Audit follow-up
 

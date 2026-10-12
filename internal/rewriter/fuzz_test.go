@@ -13,7 +13,9 @@ import (
 	"github.com/bino-bi/sluice/internal/pgquery"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/rewriter"
+	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -32,8 +34,10 @@ func FuzzRewrite(f *testing.F) {
 		"",
 		"UPDATE pg.public.orders SET total = 0",
 	}
+	isSeed := map[string]bool{}
 	for _, s := range seeds {
 		f.Add(s)
+		isSeed[s] = true
 	}
 
 	p := pgquery.New(parser.Options{})
@@ -86,7 +90,12 @@ func FuzzRewrite(f *testing.F) {
 		f.Fatalf("apply snapshot: %v", err)
 	}
 
-	rw := rewriter.New(rewriter.Options{Parser: p, DefaultCatalog: "pg"})
+	// Masked tables need a schema entry. Without one every input on
+	// customers would stop at ErrSchemaMissing and skip the mask code.
+	rw := rewriter.New(rewriter.Options{Parser: p, DefaultCatalog: "pg", Schema: schema.NewStatic([]*schema.Entry{
+		{Key: schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}, Columns: []pkgds.Column{{Name: "id"}, {Name: "total"}, {Name: "tenant_id"}}},
+		{Key: schema.Key{Catalog: "pg", Schema: "public", Table: "customers"}, Columns: []pkgds.Column{{Name: "id"}, {Name: "name"}, {Name: "email"}}},
+	})})
 	user := &identity.UserCtx{Subject: "fuzz", Claims: map[string]any{"tenant_id": "t-1"}}
 
 	f.Fuzz(func(t *testing.T, sql string) {
@@ -108,6 +117,9 @@ func FuzzRewrite(f *testing.F) {
 			Raw:      sql,
 		})
 		if err != nil {
+			if isSeed[sql] && errors.Is(err, rewriter.ErrSchemaMissing) {
+				t.Fatalf("seed %q has no schema entry: %v", sql, err)
+			}
 			var apiErr *pkgerr.APIError
 			if errors.As(err, &apiErr) {
 				return

@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders JOIN (SELECT * FROM pg.public.customers WHERE tenant_id = $2) customers USING (customer_id)",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) orders JOIN (SELECT * FROM pg.public.customers sluice_src WHERE sluice_src.tenant_id = $2) customers USING (customer_id)",
   "changed": true,
   "params": [
     "t-42",
@@ -10,7 +10,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "5ad752021031cce4",
+  "fingerprint": "8f227a7677ce172c",
   "filters": [
     "pg.public.customers",
     "pg.public.orders"

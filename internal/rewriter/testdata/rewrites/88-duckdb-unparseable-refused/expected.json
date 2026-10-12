@@ -1,0 +1,12 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_SYNTAX",
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "filters": [
+    "pg.public.orders"
+  ]
+}

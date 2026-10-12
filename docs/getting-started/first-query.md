@@ -11,7 +11,7 @@ Request body:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `sql` | string | The statement. Exactly one; write statements are rejected. |
-| `params` | array | Positional parameters for `$1`, `$2`, … in your SQL. |
+| `params` | array | Not supported. A statement with `$1`, `$2`, … is refused with `ERR_UNSUPPORTED_SYNTAX`. |
 | `max_rows` | int | Row cap for this request; clamped to the server limit. |
 | `timeout_ms` | int | Per-request timeout; clamped to the server maximum. |
 | `format` | string | `json` (default) or `csv`. |
@@ -47,7 +47,7 @@ spec:
       value: "{{ subject.tenantId }}"
 ```
 
-Sluice rewrites each matching table into a filtered subquery — `... FROM (SELECT * FROM shop.main.customers WHERE tenant_id = $1) customers` — binding the caller's `tenantId` as a parameter. That is why only the two `acme` rows ever leave the gateway.
+Sluice rewrites each matching table into a filtered subquery, such as `... FROM (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $1) orders`, and binds the caller's `tenantId` as a parameter. That is why only the two `acme` rows ever leave the gateway. `customers` also has the email mask, so its subquery lists the columns and returns `NULL AS email`.
 
 ## Sharpen the mask: from null to partial
 

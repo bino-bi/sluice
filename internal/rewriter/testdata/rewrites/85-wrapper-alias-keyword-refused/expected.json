@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_UNSUPPORTED_SYNTAX",
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "filters": [
+    "pg.public.orders",
+    "pg.public.semi"
+  ]
+}

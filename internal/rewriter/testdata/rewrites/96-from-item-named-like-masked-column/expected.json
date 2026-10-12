@@ -1,0 +1,22 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT c.id, email.total_cents FROM (SELECT sluice_src.id, sluice_src.name, NULL AS email, sluice_src.tenant_id, sluice_src.created_at FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) c JOIN (SELECT * FROM shop.main.orders sluice_src WHERE sluice_src.tenant_id = $2) email ON email.customer_id = c.id",
+  "changed": true,
+  "params": [
+    "acme",
+    "acme"
+  ],
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "RowFilterPolicy/filter-tenant",
+    "SqlAccessPolicy/allow-analytics"
+  ],
+  "fingerprint": "4b0d42a42319a67f",
+  "masks": [
+    "shop.main.customers.email=null"
+  ],
+  "filters": [
+    "shop.main.customers",
+    "shop.main.orders"
+  ]
+}

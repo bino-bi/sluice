@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1 AND region = $2) orders",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1 AND sluice_src.region = $2) orders",
   "changed": true,
   "params": [
     "t-42",
@@ -11,7 +11,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "bcf63f800a431a8a",
+  "fingerprint": "699d7127f5d8f22d",
   "filters": [
     "pg.public.orders"
   ]

@@ -1,13 +1,14 @@
-# SELECT * combined with a column mask needs a schema fixture: the runner
-# has no live datasource, so the suite declares the table's columns.
+# A column mask needs a schema fixture: the wrapper lists the table's
+# columns, and the runner has no live datasource. The star stays and reads
+# the wrapper.
 schema:
   pg.public.customers: [id, email, tenant_id]
 
 cases:
-  - name: star expands and masks email via schema fixture
+  - name: star reads email masked via schema fixture
     identity: { subject: alice, groups: [analysts] }
     sql: "SELECT * FROM pg.public.customers"
     expect:
       outcome: allow
       masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(customers.email", "customers.tenant_id FROM pg.public.customers"]
+      rewrittenSqlContains: ["substr(sluice_src.email", "sluice_src.tenant_id FROM pg.public.customers sluice_src"]

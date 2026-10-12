@@ -3,7 +3,10 @@
 package rewriter
 
 import (
+	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
@@ -18,15 +21,19 @@ import (
 // into the overall query parameter list, and appends the provider's
 // params to state.params. The snippet text comes exclusively from the
 // provider (never from Args), so parsing it is safe; anything
-// user-influencable arrives as a bound parameter.
+// user-influencable arrives as a bound parameter. pkg/mask is public, so
+// the snippet gets the same DuckDB normalization and parse check as the
+// statement.
 func (s *state) renderMaskSnippet(snippet string, params []pkgmask.Param, orig *pg.Node) (*pg.Node, error) {
-	parsed, err := pg.Parse("SELECT " + snippet)
+	src := "SELECT " + snippet
+	parsed, err := pg.Parse(src)
 	if err != nil {
 		return nil, fmt.Errorf("%w: snippet does not parse: %w", ErrMaskUnsupported, err)
 	}
 	if len(parsed.Stmts) != 1 {
 		return nil, fmt.Errorf("%w: snippet must be a single expression", ErrMaskUnsupported)
 	}
+	normalizeForDuckDB(parsed, src)
 	sel := parsed.Stmts[0].Stmt.GetSelectStmt()
 	if sel == nil || len(sel.TargetList) != 1 {
 		return nil, fmt.Errorf("%w: snippet must be a single scalar expression", ErrMaskUnsupported)
@@ -34,6 +41,9 @@ func (s *state) renderMaskSnippet(snippet string, params []pkgmask.Param, orig *
 	rt := sel.TargetList[0].GetResTarget()
 	if rt == nil || rt.Val == nil {
 		return nil, fmt.Errorf("%w: snippet has no expression", ErrMaskUnsupported)
+	}
+	if err := s.snippets.check(s.ctx, src, parsed); err != nil {
+		return nil, err
 	}
 
 	base := len(s.params)
@@ -45,6 +55,49 @@ func (s *state) renderMaskSnippet(snippet string, params []pkgmask.Param, orig *
 		s.params = append(s.params, p.Value)
 	}
 	return expr, nil
+}
+
+// maxSnippetMemo bounds the texts a snippetMemo keeps. A provider that puts
+// request data into its snippet text would grow it without end; past the
+// bound, each new text is checked every time.
+const maxSnippetMemo = 4096
+
+// snippetMemo caches the DuckDB parse check verdict of each mask snippet
+// text. The verdict depends on the text alone. A nil pc skips the check.
+type snippetMemo struct {
+	pc       ParseChecker
+	verdicts sync.Map // snippet text -> error, nil when DuckDB reads it as written
+	n        atomic.Int64
+}
+
+// check refuses a snippet when DuckDB reads its deparse in another way than
+// src. parsed is the normalized parse of src, before the splice. A failed
+// check is not cached.
+func (m *snippetMemo) check(ctx context.Context, src string, parsed *pg.ParseResult) error {
+	if m.pc == nil {
+		return nil
+	}
+	if v, ok := m.verdicts.Load(src); ok {
+		err, _ := v.(error)
+		return err
+	}
+	same, srcParses, err := duckDBVerdict(ctx, m.pc, src, parsed)
+	if err != nil {
+		return err
+	}
+	var verdict error
+	switch {
+	case !srcParses:
+		verdict = fmt.Errorf("%w: DuckDB cannot parse the mask snippet", ErrMaskUnsupported)
+	case !same:
+		verdict = fmt.Errorf("%w: mask snippet changes meaning in DuckDB", ErrMaskUnsupported)
+	}
+	if m.n.Load() < maxSnippetMemo {
+		if _, loaded := m.verdicts.LoadOrStore(src, verdict); !loaded {
+			m.n.Add(1)
+		}
+	}
+	return verdict
 }
 
 // spliceSnippet walks the snippet expression tree, replacing __col__

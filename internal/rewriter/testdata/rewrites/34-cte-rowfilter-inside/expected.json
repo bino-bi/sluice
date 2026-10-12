@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "WITH x AS (SELECT orders.id, orders.tenant_id FROM (SELECT * FROM pg.public.orders WHERE tenant_id = $1) orders) SELECT count(*) FROM x",
+  "sql": "WITH x AS (SELECT * FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) orders) SELECT count(*) FROM x",
   "changed": true,
   "params": [
     "t-42"
@@ -9,7 +9,7 @@
     "RowFilterPolicy/tenant-isolation",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "5d57125fca16399f",
+  "fingerprint": "6f4f5498f9911b02",
   "filters": [
     "pg.public.orders"
   ]

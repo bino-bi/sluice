@@ -95,11 +95,21 @@ returns:
 | `ssn` | `111-22-3333` | `REDACTED` |
 | `birth_date` | `1988-03-14` | `1988-03-14` (no mask matches it) |
 
-The rewritten SQL replaces the columns in the projection:
+The rewritten SQL reads the table through a subquery that lists its columns and applies the
+masks there:
 
 ```sql
-SELECT id, NULL AS email, '+1-555-REDACTED' AS phone, 'REDACTED' AS ssn, birth_date FROM shop.main.customers ORDER BY id
+SELECT id, email, phone, ssn, birth_date
+FROM (SELECT sluice_src.id, sluice_src.tenant_id, NULL AS email, '+1-555-REDACTED' AS phone,
+             'REDACTED' AS ssn, sluice_src.birth_date, sluice_src.created_at
+      FROM shop.main.customers sluice_src) customers
+ORDER BY id
 ```
+
+The rest of the query only reads the subquery, so `WHERE email LIKE '%acme%'`, a `GROUP BY` or a
+join on a masked column sees the masked value too. The subquery lists the columns from the
+schema cache, so a masked table needs an entry there; on the server the cache reads them from
+the data source.
 
 ## Upgrade: structure-preserving providers
 
@@ -139,6 +149,11 @@ mask:                       # deterministic fake phone number
 Save as `policies.d/tests/masks.yaml` and run `sluice policy test policies.d`:
 
 ```yaml
+# The runner has no live datasource. A masked table is read through a
+# wrapper that lists its columns, so the suite declares them.
+schema:
+  shop.main.customers: [id, tenant_id, email, phone, ssn, birth_date, created_at]
+
 cases:
   - name: email, phone and ssn are masked; birth_date is untouched
     identity: { subject: pii-analyst, groups: [analytics] }
@@ -151,6 +166,7 @@ cases:
         - "shop.main.customers.ssn=constant"
 ```
 
+Without the `schema:` block the case fails with a rewrite error that asks for it.
 With the upgraded providers, `expect.masks` lists all winners
 (`email=partial`, `phone=fake`, `ssn=hash`) and `expect.postMasks`
 additionally asserts the two post-query ones:

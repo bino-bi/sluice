@@ -63,12 +63,11 @@ type Cache interface {
 	// Invalidate evicts a single entry so the next Get re-introspects.
 	Invalidate(key Key)
 
-	// InvalidateCatalog evicts every entry belonging to catalog. Called
-	// after a DataSource is reattached.
+	// InvalidateCatalog evicts every entry belonging to catalog. Nothing
+	// calls it today.
 	InvalidateCatalog(catalog string)
 
-	// InvalidateAll drops every entry. Used by admin /reload before a
-	// wholesale policy + data source rebuild.
+	// InvalidateAll drops every entry. Called on a policy reload.
 	InvalidateAll()
 
 	// Refresh loads every known catalog. On first call it also primes the
@@ -83,8 +82,9 @@ type Options struct {
 	// Loader is required. Cache panics on New when nil.
 	Loader Loader
 
-	// TTL is the entry lifetime; entries older than TTL become candidates
-	// for refresh. Zero means DefaultTTL.
+	// TTL is the age at which Refresh loads a catalog again. Get does not
+	// check it, and nothing calls Refresh today, so an entry stays until
+	// it is invalidated. Zero means DefaultTTL.
 	TTL time.Duration
 
 	// Capacity is the maximum number of entries retained in the LRU.
@@ -100,8 +100,7 @@ type Options struct {
 
 // Defaults — tuned for the MVP workload.
 const (
-	// DefaultTTL is 10 minutes. A running instance with ~1k tables pays
-	// one lightweight information_schema scan per catalog per TTL.
+	// DefaultTTL is 10 minutes. Only Refresh reads the TTL.
 	DefaultTTL = 10 * time.Minute
 
 	// DefaultCapacity matches the performance budget in
@@ -120,6 +119,7 @@ type lruCache struct {
 	mu           sync.Mutex
 	catalogSet   map[string]struct{}
 	catalogLocks map[string]*sync.Mutex // per-catalog load dedup
+	loads        map[string]uint64      // completed loads per catalog
 
 	metrics *metrics
 }
@@ -153,6 +153,7 @@ func New(opts Options) Cache {
 		entries:      lc,
 		catalogSet:   make(map[string]struct{}),
 		catalogLocks: make(map[string]*sync.Mutex),
+		loads:        make(map[string]uint64),
 		metrics:      globalMetrics,
 	}
 }
@@ -166,10 +167,10 @@ func (c *lruCache) Get(ctx context.Context, key Key) (*Entry, error) {
 	c.metrics.miss(key.Catalog)
 
 	// Miss: load the catalog. The per-catalog lock plus an under-lock
-	// re-check of the missed key make concurrent misses a true
-	// singleflight — the first loader populates the catalog and the rest
-	// see the key present and skip the redundant introspection.
-	if err := c.loadCatalogForKey(ctx, key); err != nil {
+	// re-check make concurrent misses a true singleflight: the first
+	// loader populates the catalog, and the rest see that a load ended
+	// while they waited and skip the redundant introspection.
+	if err := c.loadCatalogForKey(ctx, key, c.loadCount(key.Catalog)); err != nil {
 		return nil, err
 	}
 	if e, ok := c.entries.Get(key); ok {
@@ -255,13 +256,15 @@ func (c *lruCache) Refresh(ctx context.Context, catalogs []string) error {
 	return firstErr
 }
 
-// loadCatalogForKey loads key.Catalog on a Get miss. Under the per-catalog
-// lock it re-checks whether key is already present — a concurrent miss for
-// the same catalog may have populated it while we waited — and only then
-// runs Loader.Load. This dedups a burst of concurrent misses into a single
-// introspection while still honouring Invalidate: an invalidated key is
-// absent under the lock, so it reloads.
-func (c *lruCache) loadCatalogForKey(ctx context.Context, key Key) error {
+// loadCatalogForKey loads key.Catalog on a Get miss. seen is the catalog's
+// load count at the miss. Under the per-catalog lock it re-checks whether
+// a concurrent miss loaded the catalog while we waited, and only then
+// runs Loader.Load. Such a load is fresh also when it did not bring key
+// (another letter case, no such table), so the check is on the load count
+// and not on key alone. This dedups a burst of concurrent misses into a
+// single introspection while still honouring Invalidate: without a load
+// in between, an invalidated key reloads, and so does an emptied cache.
+func (c *lruCache) loadCatalogForKey(ctx context.Context, key Key, seen uint64) error {
 	lock := c.lockForCatalog(key.Catalog)
 	lock.Lock()
 	defer lock.Unlock()
@@ -269,7 +272,17 @@ func (c *lruCache) loadCatalogForKey(ctx context.Context, key Key) error {
 	if c.entries.Contains(key) {
 		return nil
 	}
+	if c.loadCount(key.Catalog) != seen && c.catalogHasEntries(key.Catalog) {
+		return nil
+	}
 	return c.reloadCatalogLocked(ctx, key.Catalog)
+}
+
+// loadCount returns the number of completed loads of catalog.
+func (c *lruCache) loadCount(catalog string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loads[catalog]
 }
 
 // loadCatalogIfStale skips the Load when every entry for catalog is
@@ -299,12 +312,11 @@ func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) erro
 	}
 
 	now := c.opts.Clock()
-	// Remove stale entries for catalog, then repopulate.
-	for _, k := range c.entries.Keys() {
-		if k.Catalog == catalog {
-			c.entries.Remove(k)
-		}
-	}
+	// Add the loaded entries first and remove the dropped ones after. A
+	// table that exists before and after is then never absent for a
+	// concurrent reader.
+	old := c.entries.Keys()
+	loaded := make(map[Key]struct{})
 	for _, ns := range sch.Schemas {
 		for _, tbl := range ns.Tables {
 			// Clone columns so later mutations to the driver's slice do
@@ -318,11 +330,18 @@ func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) erro
 				Fetched: now,
 			}
 			c.entries.Add(e.Key, e)
+			loaded[e.Key] = struct{}{}
+		}
+	}
+	for _, k := range old {
+		if _, ok := loaded[k]; !ok && k.Catalog == catalog {
+			c.entries.Remove(k)
 		}
 	}
 
 	c.mu.Lock()
 	c.catalogSet[catalog] = struct{}{}
+	c.loads[catalog]++
 	c.mu.Unlock()
 	return nil
 }

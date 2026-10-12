@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM (SELECT * FROM pg.public.products WHERE starts_with(sku, $1) AND ends_with(region, $2) AND regexp_matches(name, $3) AND contains(notes, $4)) products",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.products sluice_src WHERE starts_with(sluice_src.sku, $1) AND ends_with(sluice_src.region, $2) AND regexp_matches(sluice_src.name, $3) AND contains(sluice_src.notes, $4)) products",
   "changed": true,
   "params": [
     "100%",
@@ -12,7 +12,7 @@
     "RowFilterPolicy/string-ops",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "ff4e2f56ab17ea73",
+  "fingerprint": "7c18ae44d12b6000",
   "filters": [
     "pg.public.products"
   ]

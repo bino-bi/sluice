@@ -24,6 +24,7 @@ func TestExecute_ParseErrorAuditCodeMatchesClient(t *testing.T) {
 		code pkgerr.Code
 	}{
 		{"too deep", parser.ErrTooDeep, pkgerr.CodeUnsupportedSyntax},
+		{"identifier too long", parser.ErrIdentifierTooLong, pkgerr.CodeUnsupportedSyntax},
 		{"syntax", &parser.ParseError{Cause: parser.ErrSyntax}, pkgerr.CodeSyntax},
 	}
 	for _, tc := range cases {

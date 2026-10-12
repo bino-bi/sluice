@@ -130,7 +130,7 @@ func TestCollectFunctions(t *testing.T) {
 			},
 		},
 		{
-			// A quoted name is a column to pg_query and to the mask pass.
+			// A quoted name is a column to pg_query and to the rewriter.
 			name:      "only the unquoted session keyword is a call",
 			sql:       `SELECT "current_user", "user", t."user", user FROM t`,
 			wantFuncs: []parser.FuncRef{fn("user")},
@@ -182,5 +182,28 @@ func TestCollectFunctions(t *testing.T) {
 				t.Errorf("unsupported FROM: got %v, want %v", shape.UnsupportedFrom, tc.wantFrom)
 			}
 		})
+	}
+}
+
+// The rewriter refuses a $n in the caller's statement, so the collector
+// must find one in every clause.
+func TestShapeHasParams(t *testing.T) {
+	for sql, want := range map[string]bool{
+		"SELECT $1":                                         true,
+		"SELECT id FROM t WHERE id = $2":                    true,
+		"SELECT id FROM t LIMIT $1":                         true,
+		"SELECT * FROM generate_series(1, $1)":              true,
+		"SELECT (SELECT max(x) FROM u WHERE y = $1) FROM t": true,
+		"WITH c AS (SELECT $1 AS v) SELECT v FROM c":        true,
+		"SELECT '$1', \"$1\" FROM t":                        false,
+		"SELECT id FROM t":                                  false,
+	} {
+		ast, err := newTestParser(t).Parse(context.Background(), sql)
+		if err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+		if got := ast.Shape().HasParams; got != want {
+			t.Errorf("%s: HasParams = %v, want %v", sql, got, want)
+		}
 	}
 }

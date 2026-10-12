@@ -1,0 +1,16 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT o.id FROM (SELECT * FROM pg.public.orders sluice_src WHERE sluice_src.tenant_id = $1) o WHERE like_escape(o.status, 'open!_%', '!') OR not_ilike_escape(o.note, '%#%%', '#')",
+  "changed": true,
+  "params": [
+    "t-42"
+  ],
+  "applied_policies": [
+    "RowFilterPolicy/tenant-isolation",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "01a16cb0c9f187c7",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

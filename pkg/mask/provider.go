@@ -20,6 +20,10 @@ type Provider interface {
 	// repeat). The rewriter renumbers them into the overall query
 	// parameter list. Args values must never be interpolated into the
 	// snippet text — everything user-influencable binds as a param.
+	//
+	// The rewriter refuses a snippet, and every query that uses the mask
+	// fails with ERR_INTERNAL, unless DuckDB reads the PostgreSQL deparse
+	// of the snippet as it reads the snippet text.
 	MaskSQL(ctx MaskContext) (sql string, params []Param, err error)
 
 	// MaskArrow rewrites an Arrow column after query execution. Providers

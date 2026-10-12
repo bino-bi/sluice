@@ -1,12 +1,12 @@
 {
   "outcome": "allow",
-  "sql": "SELECT CASE WHEN NULL = '123' THEN 1 ELSE 0 END AS flagged FROM pg.hr.emp",
+  "sql": "SELECT CASE WHEN ssn = '123' THEN 1 ELSE 0 END AS flagged FROM (SELECT sluice_src.id, sluice_src.dept, NULL AS ssn FROM pg.hr.emp sluice_src) emp",
   "changed": true,
   "applied_policies": [
     "ColumnMaskPolicy/mask-ssn",
     "SqlAccessPolicy/allow-all"
   ],
-  "fingerprint": "83474ddb16f1c653",
+  "fingerprint": "86c04aca04c0a91e",
   "masks": [
     "pg.hr.emp.ssn=null"
   ]

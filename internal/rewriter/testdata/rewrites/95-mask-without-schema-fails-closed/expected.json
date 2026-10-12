@@ -1,0 +1,12 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ERR_REWRITE_FAILED",
+  "applied_policies": [
+    "ColumnMaskPolicy/mask-email",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "masks": [
+    "pg.public.customers.email=constant"
+  ]
+}

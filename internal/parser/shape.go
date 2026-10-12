@@ -73,6 +73,9 @@ type QueryShape struct {
 	// join or function (TABLESAMPLE, XMLTABLE, ...). No rewriter pass
 	// applies row filters or masks to them.
 	UnsupportedFrom []string
+	// HasParams is set when the statement has a $n parameter reference at
+	// any depth. The rewriter binds its own values as $1, $2, ...
+	HasParams bool
 }
 
 // FuncRef is one function call found in a statement.

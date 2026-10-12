@@ -62,6 +62,17 @@ fallback still extracts table names so policy can evaluate — and deny — the 
 would otherwise have allowed the query: a deny or reject always takes precedence, so a caller
 cannot use syntax probing to map what they are denied.
 
+An identifier longer than 63 bytes (a quoted name counts after decoding, the content of a
+`U&"..."` name as written) is a parse error with `ERR_UNSUPPORTED_SYNTAX`. pg_query cuts such a
+name to 63 bytes and DuckDB does not, so policy would match another name than the one DuckDB
+reads.
+
+A `FROM` alias that DuckDB reads as a keyword (`semi`, `anti`, `asof`, `positional`, `qualify`,
+`by`, `pivot`, `show` and more) is a parse error with `ERR_SYNTAX`. pg_query writes the alias
+bare, and DuckDB would read the keyword: a join keyword changes the join type, and
+`generate_series(1, 1) AS qualify(x)` becomes `QUALIFY (x)`, a row filter on the raw value of
+`x`. Use another alias.
+
 ## Function gate
 
 A cleanly parsed statement is checked for function calls before the rewrite cache and before
@@ -70,7 +81,9 @@ or subquery argument, a qualified function name (`schema.f(x)` or the method for
 table name that contains path characters (`/ \ : * ? [`), or a `FROM` item other than a table,
 subquery, join, or function (`TABLESAMPLE`, `XMLTABLE`, `JSON_TABLE`) terminates with
 `ACL_REJECTED`. The request is audited with decision `reject` and no applied policies. See
-[Security model](security-model.md).
+[Security model](security-model.md). A statement with a `$n` parameter terminates with
+`ERR_UNSUPPORTED_SYNTAX` ("query parameters ($n) are not supported") and is audited with decision
+`error`: caller params are not bound, and `$n` would read the values the rewriter binds.
 
 ## Policy evaluation
 
@@ -80,8 +93,10 @@ filters, column masks, rewrite effects, rejections, and any approval requirement
 - **Rewrite cache.** With `cache.rewrite.enabled: true`, the (decision, rewrite) pair is memoised
   in an LRU cache. The key binds the active snapshot's version and digest, a hash of the raw SQL
   text, and a hash of the caller's identity — so a policy reload, a different query, or a different
-  subject can never hit a stale entry. Only cleanly parsed queries are cacheable, and rate limits,
-  budgets, approvals, and audit still run on every request.
+  subject can never hit a stale entry. The schema cache is not part of the key: a cached rewrite
+  keeps the column list of a masked table until the entry expires (`cache.rewrite.ttl`) or the
+  policies reload, also after the catalog was loaded again. Only cleanly parsed queries are
+  cacheable, and rate limits, budgets, approvals, and audit still run on every request.
 - **Enforcement mode.** Only `enforcementMode: Enforce` policies (the default) shape the decision.
   `Audit` and `DryRun` policies are evaluated and recorded as shadow entries in the decision and
   audit record, but change nothing.
@@ -103,14 +118,43 @@ within the window re-runs the pipeline once, consuming the grant. Otherwise the 
 ## Rewrite
 
 The rewriter applies the decision to the AST, in every `SELECT` of the statement including
-subqueries inside expressions: `SELECT *` is expanded against the schema cache; row
-filters are injected by wrapping the table in a subquery whose `WHERE` predicate uses bound `$N`
-parameters (values are never spliced into SQL text); column masks replace the column references; a `LIMIT` is injected when absent and a constant `LIMIT` above the cap is clamped; a sampling
+subqueries inside expressions. Each table with a row filter or column mask is replaced with a
+subquery, `(SELECT ... FROM <table> sluice_src WHERE <filter>) <alias>`. The filter uses bound
+`$N` parameters (values are never spliced into SQL text). For a masked table the subquery lists
+the table's columns from the schema cache and applies the SQL masks, so the rest of the statement
+only reads masked values; a masked table without a cache entry is refused with
+`ERR_REWRITE_FAILED`, and a schema load that fails gives `ERR_DATASOURCE_UNAVAILABLE`. When the
+decision has a post-query mask, `SELECT *` in the outermost select list is expanded against the
+schema cache, so the position of each result column is known. A `LIMIT` is injected when absent and a constant `LIMIT` above the cap is clamped; a sampling
 instruction wraps the statement in `SELECT * FROM (<sql>) AS sluice_sample USING SAMPLE <r>%
 (<method>)`. Only `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and `PRAGMA` are allowed:
 `INSERT`/`UPDATE`/`DELETE` return `ACL_REJECTED`, and DDL/`COPY`/`ATTACH` return
 `ERR_UNSUPPORTED_SYNTAX`. A `QueryRewritePolicy` timeout or row cap tightens the request-level
 clamps from admission — it never loosens them.
+
+An `EXPLAIN` is refused with `ERR_UNSUPPORTED_SYNTAX` when a row filter or column mask applies,
+because the plan would show the policy SQL with its bound values. A filtered or masked table
+without an alias whose name DuckDB reads as a keyword (`semi`, `by`, `qualify`, ...) is refused
+with `ERR_UNSUPPORTED_SYNTAX`. Give such a table an alias. On a query with a row filter or mask,
+the name `sluice_src` is reserved, and a statement that contains it is refused with
+`ERR_UNSUPPORTED_SYNTAX`. After the wrap, the rewriter checks that no filtered or masked table is
+read outside its subquery.
+
+pg_query deparses for PostgreSQL, and DuckDB runs the deparsed text. So on a `SELECT` that a row
+filter, column mask, limit or sample applies to, the rewriter first writes a few forms the way
+DuckDB reads them (`LIKE ... ESCAPE`, `INTERVAL 'n' <unit>`, casts to `json` and `bit`, a bare
+`FLOAT`, the letter case of aliases and of `EXTRACT` units). Then, before it adds any policy SQL,
+it asks a separate DuckDB instance (one thread, two connections, nothing attached, memory sized
+from `limits.maxSqlBytes`) to parse the caller's text and the deparsed text, and compares the two
+trees. When they differ, the query is refused with `ERR_UNSUPPORTED_SYNTAX`;
+when DuckDB cannot parse the caller's text, with `ERR_SYNTAX`. The forms and what to write instead
+are listed in
+[Row filters](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables). A failed
+check is `ERR_INTERNAL`, a statement too large for the check is `ERR_PAYLOAD_TOO_LARGE`, and a
+request canceled or timed out during the check gets `ERR_CANCELED` or `ERR_TIMEOUT`. A mask snippet from a `pkg/mask` provider gets the same check once per distinct
+text. A pass-through query is not deparsed, so it is not checked. A column qualified with the
+schema or catalog of a filtered or masked table without an alias (`main.orders.id`) is refused
+with `ERR_UNSUPPORTED_SYNTAX`, because the wrapper is named after the table alone.
 
 ## Execute
 
@@ -122,9 +166,13 @@ maps to `ERR_TIMEOUT`; a client disconnect maps to `ERR_CANCELED`.
 
 Masks of type `hash` with `algorithm: hmac_sha256`, `fpe`, `jitter`, and `fake` are applied in Go
 to the result rows rather than rewritten into SQL: they need keyed cryptography or deterministic
-fake-data generation that cannot be expressed as a portable SQL expression. The mask decorators are
+fake-data generation that cannot be expressed as a portable SQL expression. The table's subquery
+passes such a column through raw, so the rewriter refuses every form that would read it
+somewhere other than a bare item of the outer select list. The mask decorators are
 built *before* the audit gate, so a construction failure (for example an unresolvable key
-reference) refuses the query with nothing served.
+reference) refuses the query with nothing served. The masks are bound by column position, so the
+service first checks that the result has the column count and, at each masked position, the
+column name the rewriter planned. A mismatch refuses the query with `ERR_MASK_UNSUPPORTED_CONTEXT`.
 
 ## Audit gate and streaming
 
@@ -144,11 +192,12 @@ CPU time and rows served; client streaming time is deliberately excluded).
 | Budget | `ERR_BUDGET_EXCEEDED` |
 | Input caps | `ERR_PAYLOAD_TOO_LARGE` |
 | Parse | `ERR_SYNTAX`, `ERR_MULTIPLE_STATEMENTS`, `ERR_UNSUPPORTED_SYNTAX` (surfaced only on allow) |
-| Function gate | `ACL_REJECTED` |
+| Function gate | `ACL_REJECTED`, `ERR_UNSUPPORTED_SYNTAX` (`$n` parameters) |
 | Policy | `ACL_DENIED`, `ACL_REJECTED` (or a policy's custom code) |
 | Approval | `ERR_APPROVAL_PENDING`, `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED`, `ERR_RATE_LIMITED` (broker full) |
-| Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_REWRITE_FAILED`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
+| Rewrite | `ACL_REJECTED` (writes), `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX` (DuckDB cannot parse the statement), `ERR_REWRITE_FAILED` (also a masked table the schema cache does not know), `ERR_DATASOURCE_UNAVAILABLE` (the schema of its catalog cannot be loaded, or the catalog is not attached), `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_PAYLOAD_TOO_LARGE` and `ERR_INTERNAL` (DuckDB parse check) |
 | Execute | `ERR_TIMEOUT`, `ERR_CANCELED`, `ERR_INTERNAL` |
+| Post-query masks | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |
 | Audit gate | `ERR_AUDIT_UNAVAILABLE` |
 
 The full catalog, with HTTP status mappings, is in [Error codes](../reference/error-codes.md).

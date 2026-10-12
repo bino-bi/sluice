@@ -1,0 +1,1 @@
+SELECT o.id, count(*) OVER (ORDER BY o.created_at RANGE BETWEEN INTERVAL '30' DAY PRECEDING AND CURRENT ROW) AS recent FROM pg.public.orders o WHERE o.created_at > TIMESTAMP '2026-01-01 00:00:00' - INTERVAL '6' MONTH
