@@ -1,0 +1,5 @@
+{
+  "approval_id": "<approval-id>",
+  "note": "recorded",
+  "state": "approved"
+}

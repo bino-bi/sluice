@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Reference data in a DuckDB file.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ref
+spec:
+  type: duckdb_file
+  path: ./data/ref.duckdb
+  readonly: true
+  schemas: ["main"]

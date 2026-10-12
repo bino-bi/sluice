@@ -1,9 +1,4 @@
 -- SPDX-License-Identifier: CC-BY-4.0
--- pii-masking example — one customer table with four PII columns:
--- email, phone, ssn, birth_date. Column masks neutralise each in a
--- different way to illustrate the MVP providers (null + constant)
--- versus the v0.2 providers (partial + hash) that the policy declares
--- but currently downgrade to "null" until pkg/mask registers them.
 
 CREATE TABLE IF NOT EXISTS customers (
   id         INTEGER PRIMARY KEY,

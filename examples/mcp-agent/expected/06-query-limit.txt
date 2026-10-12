@@ -1,0 +1,24 @@
+event: message
+data: {
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "id | name\n----------------\n1 | Ceramic Mug\n2 | Black T-Shirt (M)\n3 | A5 Notebook\nrow_count=3 truncated=true query_id=<id>\n"
+      }
+    ],
+    "structuredContent": {
+      "columns": ["id", "name"],
+      "query_id": "<query-id>",
+      "row_count": 3,
+      "rows": [
+        [1, "Ceramic Mug"],
+        [2, "Black T-Shirt (M)"],
+        [3, "A5 Notebook"]
+      ],
+      "truncated": true
+    }
+  }
+}

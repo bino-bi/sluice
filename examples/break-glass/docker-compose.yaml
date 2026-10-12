@@ -12,7 +12,7 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "break-glass-demo-pepper"
       SLUICE_AUDIT_GENESIS: "break-glass-demo-genesis"
-      # hex(HMAC-SHA256(pepper, "<id>:<material>")) — same values printed by
+      # hex(HMAC-SHA256(pepper, "<id>:<material>")) - same values printed by
       #   sluice apikey hash --pepper break-glass-demo-pepper \
       #                      --id sl_demo_analyst --material supersecret
       # (and --id sl_demo_sre --material rotatedtoken for the SRE key).
@@ -21,7 +21,7 @@ services:
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro
-      - ./data:/data
+      - ./data:/etc/sluice/data
     working_dir: /etc/sluice
     command:
       - "serve"

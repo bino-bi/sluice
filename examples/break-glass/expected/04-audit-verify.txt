@@ -1,0 +1,1 @@
+chain OK (1 file(s), 5 record(s), last_hash=<hash>)

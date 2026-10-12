@@ -14,3 +14,15 @@ INSERT INTO products VALUES
   (3, 'NOTE-A5',   'A5 Notebook',        799, 200),
   (4, 'PEN-BLK',   'Black Ballpoint',    199, 500),
   (5, 'STICK-L',   'Sticker Pack (L)',   999,  80);
+
+-- The agent has no access to this table.
+CREATE TABLE IF NOT EXISTS customers (
+  id    INTEGER PRIMARY KEY,
+  name  TEXT    NOT NULL,
+  email TEXT    NOT NULL
+);
+
+DELETE FROM customers;
+INSERT INTO customers VALUES
+  (1, 'Ada Lovelace', 'ada@example.com'),
+  (2, 'Grace Hopper', 'grace@example.com');

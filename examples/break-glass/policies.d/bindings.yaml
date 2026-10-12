@@ -1,14 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Two callers: a regular analyst and an SRE on call. The difference is
-# only in the `groups` claim attached to the API key. That one-claim
-# change flips the ColumnMaskPolicy off for this subject — without any
-# change to the table, the caller identity, or the SQL.
-#
-# One SubjectBinding per caller, because for API-key callers the
-# spec-level `claims` values are stamped literally onto the session.
-# The presented header "X-Api-Key: sl_demo_analyst.supersecret" splits
-# on the last "." — everything before it is the keyID, so `id` must
-# match the full prefix.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SubjectBinding
 metadata:
@@ -18,7 +8,6 @@ spec:
     subjectId: "day-to-day-analyst"
   apiKeys:
     - id: "sl_demo_analyst"
-      # hex(HMAC-SHA256(pepper, "sl_demo_analyst:supersecret"))
       hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"
       groups: ["analytics"]
 ---
@@ -31,10 +20,6 @@ spec:
     subjectId: "on-call-sre"
   apiKeys:
     - id: "sl_demo_sre"
-      # hex(HMAC-SHA256(pepper, "sl_demo_sre:rotatedtoken"))
       hashRef: "secret://env/SLUICE_APIKEY_SRE_HASH"
-      # `sre` is the break-glass group. Every caller with this group
-      # bypasses the PII masks and gets an additional audit record
-      # tagged with `subject.groups=["sre"]` so the incident team can
-      # review every elevated query after the fact.
+      # The sre group lifts the email mask.
       groups: ["analytics", "sre"]

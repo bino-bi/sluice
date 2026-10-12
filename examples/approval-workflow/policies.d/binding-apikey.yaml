@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The demo key is "sl_demo_alice.world": key id "sl_demo_alice", material "world".
+# serve.sh sets the hash. To compute it:
+#   sluice apikey hash --pepper approval-workflow-demo-pepper --id sl_demo_alice --material world
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: analysts
+spec:
+  claims:
+    subjectId: "alice"
+  apiKeys:
+    - id: "sl_demo_alice"
+      hashRef: "secret://env/SLUICE_APIKEY_ALICE_HASH"
+      groups: ["analysts"]

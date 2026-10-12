@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A masked table needs its column list. The test runner has no database.
+schema:
+  shop.main.customers: [id, tenant_id, email, created_at]
+
+cases:
+  - name: analyst reads email masked
+    identity: { subject: day-to-day-analyst, groups: [analytics] }
+    sql: "SELECT id, email FROM shop.main.customers"
+    expect:
+      outcome: allow
+      masks: ["shop.main.customers.email=null"]
+
+  - name: sre reads email in clear
+    identity: { subject: on-call-sre, groups: [analytics, sre] }
+    sql: "SELECT id, email FROM shop.main.customers"
+    expect:
+      outcome: allow
+      masks: []
+
+  - name: the sre group alone gives no access
+    identity: { subject: on-call-sre, groups: [sre] }
+    sql: "SELECT id, email FROM shop.main.customers"
+    expect:
+      outcome: deny

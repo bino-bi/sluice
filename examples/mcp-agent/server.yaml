@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Sluice server configuration for the mcp-agent example. REST is still
-# enabled for health probes; MCP is configured for stdio so a local
-# agent (@modelcontextprotocol/inspector or Claude Desktop) can spawn
-# `sluice serve` as a child process and talk MCP over stdin/stdout.
+# Sluice server configuration for the mcp-agent example.
 
 rest:
   listen: ":8080"
   maxBodyBytes: 1048576
   requestTimeout: 30s
 
+# MCP over HTTP on its own port. Every request must carry the agent's API key.
+# `sluice mcp` also reads this file, but takes the transport from its own flag.
 mcp:
   enabled: true
-  transport: "stdio"
+  transport: "streamable_http"
+  listen: ":8081"
   sessionIdleMax: 30m
 
 admin:
@@ -38,11 +38,7 @@ audit:
     genesis: "secret://env/SLUICE_AUDIT_GENESIS"
 
 identity:
-  # The stdio transport inherits the parent process's environment; the
-  # composition root synthesises an anonymous UserCtx with whatever
-  # groups are configured via SLUICE_MCP_GROUPS (comma-separated) so
-  # local-only agent sessions don't need a real authenticator. Never
-  # expose the Streamable HTTP transport without a real Identifier.
+  # HMAC pepper for API keys. serve.sh sets the demo value.
   apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"
 
 logging:

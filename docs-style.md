@@ -38,6 +38,8 @@ Do not use these words and phrases:
 - Pages include these files with `pymdownx.snippets` (`--8<--`). Never paste code by hand.
 - A fragment is allowed only as a named snippet section of a tested file.
 - Outputs come from real runs and are stored as golden files. Never write expected output by hand.
+- [examples/README.md](examples/README.md) explains the layout and how to add an example.
+- Include a whole file, a file from line 2 to skip its SPDX line (`file.yaml:2`), or a named section (`file.yaml:name`). Do not use other line numbers.
 
 ## 4. Diagrams
 
@@ -74,3 +76,20 @@ Use this for feature pages. Reference pages and the threat model may use tables 
 ## See also
 <2-4 links>
 ```
+
+## 7. Check your changes
+
+```bash
+make docs-check
+```
+
+It fails when:
+
+- an example fails, or its output differs from the golden files,
+- a generated reference page is out of date (`make docs-generate` fixes it),
+- a page breaks a rule from this guide (`scripts/docs-style-check.py`),
+- `mkdocs build --strict` fails, for example on a broken link.
+
+`make docs-update` rewrites the golden files from a real run. Read the diff before you commit it.
+
+To count prose words per section, run `python3 scripts/docs-wordcount.py`.

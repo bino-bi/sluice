@@ -1,0 +1,15 @@
+{
+  "approval_id": "<approval-id>",
+  "subject": {
+    "id": "alice",
+    "issuer": "analysts",
+    "groups": ["analysts"]
+  },
+  "sql": "SELECT name, ssn FROM shop.main.people ORDER BY id",
+  "reasons": ["policy approve-pii-reads: PII columns on people require a data-steward sign-off"],
+  "policies": ["approve-pii-reads"],
+  "accept_url": "<accept-url>",
+  "reject_url": "<reject-url>",
+  "requested_at": "<time>",
+  "expires_at": "<time>"
+}

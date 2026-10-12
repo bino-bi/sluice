@@ -1,8 +1,5 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Allow reads from both catalogs. Sluice enforces per-table access, so
-# granting orders on pg doesn't implicitly grant anything on ref, and
-# vice versa. Cross-source joins are just two pattern matches under
-# the same policy.
+# One clause per catalog. A join needs an allow for every table it reads.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SqlAccessPolicy
 metadata:
@@ -15,8 +12,8 @@ spec:
       - subjects:
           groups: ["analytics"]
         resources:
-          catalogs: ["pg"]
-          schemas: ["public"]
+          catalogs: ["shop"]
+          schemas: ["main"]
           tables: ["orders"]
       - subjects:
           groups: ["analytics"]

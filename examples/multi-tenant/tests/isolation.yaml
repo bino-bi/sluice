@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: acme reads only acme customers
+    identity: { subject: acme-analyst, groups: [analytics], claims: { tenantId: acme } }
+    sql: "SELECT id, email FROM shop.main.customers"
+    expect:
+      outcome: allow
+      filters: ["shop.main.customers"]
+      rewrittenSql: >-
+        SELECT id, email
+        FROM (SELECT * FROM shop.main.customers sluice_src WHERE sluice_src.tenant_id = $1) customers
+
+  - name: a join filters both tables
+    identity: { subject: acme-analyst, groups: [analytics], claims: { tenantId: acme } }
+    sql: "SELECT c.email, o.amount_cents FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id"
+    expect:
+      outcome: allow
+      filters: ["shop.main.customers", "shop.main.orders"]
+
+  - name: a subject without the analytics group is denied
+    identity: { subject: visitor, groups: [guests], claims: { tenantId: acme } }
+    sql: "SELECT id FROM shop.main.customers"
+    expect:
+      outcome: deny

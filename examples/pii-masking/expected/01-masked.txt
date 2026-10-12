@@ -1,0 +1,12 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "email", "phone", "ssn", "birth_date"],
+  "rows": [
+    [1, null, "+1-555-REDACTED", "REDACTED", "1988-03-14"],
+    [2, null, "+1-555-REDACTED", "REDACTED", "1975-07-22"],
+    [3, null, "+1-555-REDACTED", "REDACTED", "1990-11-30"],
+    [4, null, "+1-555-REDACTED", "REDACTED", "2001-02-02"]
+  ],
+  "row_count": 4,
+  "truncated": false
+}

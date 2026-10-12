@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: agent reads products, a small LIMIT stays
+    identity: { subject: mcp-agent, groups: [agents] }
+    sql: "SELECT name, price_cents FROM shop.main.products ORDER BY price_cents DESC LIMIT 2"
+    expect:
+      outcome: allow
+      applied: ["SqlAccessPolicy/allow-agents", "QueryRewritePolicy/limit-agents"]
+      rewrittenSql: "SELECT name, price_cents FROM shop.main.products ORDER BY price_cents DESC LIMIT 2"
+
+  - name: a query without LIMIT gets LIMIT 3
+    identity: { subject: mcp-agent, groups: [agents] }
+    sql: "SELECT id, name FROM shop.main.products ORDER BY id"
+    expect:
+      outcome: allow
+      rewrittenSql: "SELECT id, name FROM shop.main.products ORDER BY id LIMIT 3"
+
+  - name: a larger LIMIT is cut to 3
+    identity: { subject: mcp-agent, groups: [agents] }
+    sql: "SELECT id, name FROM shop.main.products ORDER BY id LIMIT 1000"
+    expect:
+      outcome: allow
+      rewrittenSql: "SELECT id, name FROM shop.main.products ORDER BY id LIMIT 3"
+
+  - name: agent cannot read customers
+    identity: { subject: mcp-agent, groups: [agents] }
+    sql: "SELECT name, email FROM shop.main.customers"
+    expect:
+      outcome: deny
+
+  - name: a subject outside the agents group cannot read products
+    identity: { subject: alice, groups: [analytics] }
+    sql: "SELECT name FROM shop.main.products"
+    expect:
+      outcome: deny

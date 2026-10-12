@@ -1,0 +1,13 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "customer_id", "country"],
+  "rows": [
+    [1, null, "United States"],
+    [2, null, "Germany"],
+    [3, null, "France"],
+    [4, null, "United States"],
+    [5, null, "Japan"]
+  ],
+  "row_count": 5,
+  "truncated": false
+}

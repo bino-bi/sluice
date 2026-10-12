@@ -1,0 +1,36 @@
+{
+  "catalogs": ["shop"],
+  "decision": "allow",
+  "duration_ms": 0,
+  "event_type": "query",
+  "origin": "rest",
+  "policies_applied": [
+    {
+      "kind": "SqlAccessPolicy",
+      "name": "allow-analytics",
+      "priority": 100
+    },
+    {
+      "kind": "ColumnMaskPolicy",
+      "name": "mask-email",
+      "priority": 50
+    }
+  ],
+  "prior_hash": "<hash>",
+  "query_id": "<query-id>",
+  "remote_ip": "<remote-ip>",
+  "rewritten_fingerprint": "f90a934da548078a",
+  "sluice_version": "<version>",
+  "sql_fingerprint": "f90a934da548078a",
+  "sql_sample": "SELECT id, email FROM shop.main.customers ORDER BY id",
+  "subject": {
+    "groups": ["analytics", "sre"],
+    "id": "on-call-sre",
+    "issuer": "break-glass-sre",
+    "method": "api_key",
+    "remote_ip": "<remote-ip>"
+  },
+  "tables": ["shop.main.customers"],
+  "timestamp": "<time>",
+  "hash": "<hash>"
+}

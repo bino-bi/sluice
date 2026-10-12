@@ -5,6 +5,6 @@ metadata:
   name: shop
 spec:
   type: sqlite
-  path: /data/shop.db
+  path: ./data/shop.db
   readonly: true
   schemas: ["main"]

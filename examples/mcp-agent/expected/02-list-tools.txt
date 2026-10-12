@@ -1,0 +1,413 @@
+event: message
+data: {
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "description": "Block up to timeout_seconds waiting for an approval request to be decided, then return its state. Prefer this over polling check_approval in a loop.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "approval_id": "<approval-id>",
+            "timeout_seconds": {
+              "type": "integer",
+              "description": "await_approval only: seconds to block (capped)"
+            }
+          },
+          "required": ["approval_id"],
+          "additionalProperties": false
+        },
+        "name": "await_approval",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "approval_id": "<approval-id>",
+            "state": {
+              "type": "string"
+            },
+            "expires_at": "<time>"
+          },
+          "required": ["approval_id", "state"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Check the state of an approval request returned by execute_sql (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql to execute.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "approval_id": "<approval-id>",
+            "timeout_seconds": {
+              "type": "integer",
+              "description": "await_approval only: seconds to block (capped)"
+            }
+          },
+          "required": ["approval_id"],
+          "additionalProperties": false
+        },
+        "name": "check_approval",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "approval_id": "<approval-id>",
+            "state": {
+              "type": "string"
+            },
+            "expires_at": "<time>"
+          },
+          "required": ["approval_id", "state"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Return the column list for a table, e.g. pg.public.orders.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string",
+              "description": "fully-qualified name (catalog.schema.table)"
+            }
+          },
+          "required": ["table"],
+          "additionalProperties": false
+        },
+        "name": "describe_table",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string"
+            },
+            "columns": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "nullable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["name", "type", "nullable"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["table", "columns"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Execute a SELECT against attached catalogs, subject to Sluice policies.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": {
+              "type": "string",
+              "description": "SQL SELECT statement"
+            },
+            "row_limit": {
+              "type": "integer",
+              "description": "maximum rows to return (1..100000)"
+            }
+          },
+          "required": ["sql"],
+          "additionalProperties": false
+        },
+        "name": "execute_sql",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "query_id": "<query-id>",
+            "columns": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "rows": {
+              "type": ["null", "array"],
+              "items": {
+                "type": ["null", "array"],
+                "items": true
+              }
+            },
+            "row_count": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": ["query_id", "columns", "rows", "row_count", "truncated"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Explain, for the current identity, which policies apply to a table or candidate SQL — the effective decision plus row filters and column masks — WITHOUT running the query. Use this to understand what is allowed and why before calling execute_sql.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string",
+              "description": "fully-qualified table (catalog.schema.table) to check"
+            },
+            "sql": {
+              "type": "string",
+              "description": "a candidate SELECT to check instead of a single table"
+            }
+          },
+          "additionalProperties": false
+        },
+        "name": "explain_access",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string"
+            },
+            "resource": {
+              "type": "string"
+            },
+            "decision": {
+              "type": "string"
+            },
+            "row_filters": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_masks": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column": {
+                    "type": "string"
+                  },
+                  "mask_type": {
+                    "type": "string"
+                  },
+                  "policy": {
+                    "type": "string"
+                  }
+                },
+                "required": ["column", "mask_type", "policy"],
+                "additionalProperties": false
+              }
+            },
+            "matched": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": -2147483648,
+                    "maximum": 2147483647
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": ["kind", "name"],
+                "additionalProperties": false
+              }
+            },
+            "rejected": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": -2147483648,
+                    "maximum": 2147483647
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": ["kind", "name"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["subject", "resource", "decision"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "List the tables the current identity is allowed to query, optionally within one catalog.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "catalog": {
+              "type": "string",
+              "description": "optional catalog to restrict to"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "max tables per page (default 500, max 1000)"
+            },
+            "cursor": {
+              "type": "string",
+              "description": "opaque cursor from a previous next_cursor"
+            }
+          },
+          "additionalProperties": false
+        },
+        "name": "list_accessible_tables",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "tables": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "next_cursor": {
+              "type": "string"
+            }
+          },
+          "required": ["tables"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "List attached data sources (catalogs).",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "name": "list_catalogs",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "catalogs": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "healthy": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["name", "healthy"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["catalogs"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "List tables in a catalog/schema.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "catalog": {
+              "type": "string",
+              "description": "catalog name"
+            },
+            "schema": {
+              "type": "string",
+              "description": "schema within the catalog (optional)"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "max tables per page (default 500, max 1000)"
+            },
+            "cursor": {
+              "type": "string",
+              "description": "opaque cursor from a previous next_cursor"
+            }
+          },
+          "required": ["catalog"],
+          "additionalProperties": false
+        },
+        "name": "list_tables",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "tables": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "next_cursor": {
+              "type": "string"
+            }
+          },
+          "required": ["tables"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Report the identity this session is authenticated as (subject, groups, claims).",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "name": "whoami",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "anonymous": {
+              "type": "boolean"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "groups": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "auth_method": {
+              "type": "string"
+            }
+          },
+          "required": ["anonymous"],
+          "additionalProperties": false
+        }
+      }
+    ]
+  }
+}

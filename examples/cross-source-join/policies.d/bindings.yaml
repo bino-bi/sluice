@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Two API keys. The header "X-Api-Key: sl_demo_analyst.supersecret" holds
+# the key id, a dot and the secret.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: analyst
+spec:
+  claims:
+    subjectId: "analyst"
+  apiKeys:
+    - id: "sl_demo_analyst"
+      hashRef: "secret://env/SLUICE_APIKEY_ANALYST_HASH"
+      groups: ["analytics"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: intern
+spec:
+  claims:
+    subjectId: "intern"
+  apiKeys:
+    - id: "sl_demo_intern"
+      hashRef: "secret://env/SLUICE_APIKEY_INTERN_HASH"
+      groups: ["reference"]

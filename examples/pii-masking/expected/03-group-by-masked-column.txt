@@ -1,0 +1,9 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["ssn", "customers"],
+  "rows": [
+    ["REDACTED", 4]
+  ],
+  "row_count": 1,
+  "truncated": false
+}

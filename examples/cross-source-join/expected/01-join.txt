@@ -1,0 +1,13 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "amount_cents", "country", "region"],
+  "rows": [
+    [1, 1999, "United States", "Americas"],
+    [2, 4599, "Germany", "EMEA"],
+    [3, 7800, "France", "EMEA"],
+    [4, 250, "United States", "Americas"],
+    [5, 32000, "Japan", "APAC"]
+  ],
+  "row_count": 5,
+  "truncated": false
+}

@@ -14,6 +14,9 @@
 *.out
 /vendor/
 
+# Python (docs scripts)
+__pycache__/
+
 # Editors
 .idea/
 .vscode/*
@@ -34,6 +37,9 @@ Thumbs.db
 
 # goreleaser
 /dist/
+
+# Example run output (make docs-check)
+/examples/*/data/
 
 # stray root build output (use ./bin/sluice)
 /sluice

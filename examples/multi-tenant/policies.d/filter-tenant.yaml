@@ -1,7 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# One row filter, two callers. `{{ subject.tenantId }}` binds to a
-# positional parameter at rewrite time, so the same policy isolates
-# acme rows for the acme key and beta rows for the beta key.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: RowFilterPolicy
 metadata:

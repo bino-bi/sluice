@@ -144,7 +144,7 @@ Or run the containerized example — the compose file pulls the published image 
 
 ```bash
 cd examples/hello-sluice
-sqlite3 data/shop.db < seed.sql
+python3 ../seed.py seed.sql data/shop.db
 docker compose up
 ```
 

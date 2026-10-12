@@ -1,103 +1,30 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # break-glass
 
-An on-call SRE needs to see the raw `email` column during an incident.
-Every other analytics user sees it masked. No policy reload is required
-to switch modes — the `sre` group claim on the API key does the work,
-and every elevated query is written to the hash-chained audit log with
-the elevated group plainly recorded.
+Analysts read `email` masked. A member of the `sre` group reads the real value. The audit log records who did.
 
-## What this demonstrates
-
-- **Selector exclusions on column masks.** The mask policy matches
-  `subjects.groups=[analytics]` but excludes `subjects.groups=[sre]`.
-  The SRE key belongs to *both* groups — the exclude wins.
-- **Audit as the accountability ledger.** There is no separate
-  "break-glass" log. The standard audit record captures the subject,
-  their groups, the SQL, and the decision. `sluice audit verify`
-  covers the same chain whether the caller was elevated or not.
-- **Least-privilege by default.** The SRE key inherits the analytics
-  access policy; it does not get a separate `SqlAccessPolicy` because
-  the whole point of break-glass is "same data, fewer safeguards", not
-  "different data".
-
-## Layout
-
-```
-break-glass/
-├── README.md
-├── docker-compose.yaml
-├── server.yaml
-├── seed.sql
-├── policies.d/
-│   ├── datasource-shop.yaml
-│   ├── bindings.yaml           — two API keys: `sl_demo_analyst` and `sl_demo_sre`
-│   ├── allow-analytics.yaml    — SqlAccessPolicy (shared)
-│   └── mask-email.yaml         — ColumnMaskPolicy + exclude: sre
-└── data/
-```
-
-## Run it
+## Run
 
 ```bash
-sqlite3 data/shop.db < seed.sql
+examples/break-glass/serve.sh
+```
+
+The script creates `data/shop.db` from `seed.sql` and starts Sluice on `http://localhost:8080`. Then run the steps from this folder, for example `bash steps/01-analyst.sh`.
+
+| Step | Shows |
+|---|---|
+| `steps/01-analyst.sh` | The analyst key reads `email` as `null`. |
+| `steps/02-sre.sh` | The SRE key reads the real `email`. |
+| `steps/03-audit-record.sh` | The audit record of the SRE query names the subject and its groups. |
+| `steps/04-audit-verify.sh` | The audit log chain is intact. |
+
+`expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
+
+## Docker
+
+```bash
+python3 ../seed.py seed.sql data/shop.db
 docker compose up
 ```
 
-This pulls `ghcr.io/bino-bi/sluice:0.1.0-rc.2`. To run your own build instead: `docker build -t sluice:dev ../.. && SLUICE_IMAGE=sluice:dev docker compose up`.
-
-## Observe the difference
-
-```bash
-# analyst → email is null
-curl -s -H "X-Api-Key: sl_demo_analyst.supersecret" \
-     -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT id, email FROM shop.main.customers ORDER BY id"}' \
-     http://localhost:8080/v1/query | jq '.rows'
-# [[1,null],[2,null],[3,null]]
-
-# SRE → email visible (break-glass in effect)
-curl -s -H "X-Api-Key: sl_demo_sre.rotatedtoken" \
-     -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT id, email FROM shop.main.customers ORDER BY id"}' \
-     http://localhost:8080/v1/query | jq '.rows'
-# [[1,"alice@acme.example"],[2,"bob@acme.example"],[3,"carol@acme.example"]]
-```
-
-## Review the elevated queries
-
-```bash
-./bin/sluice audit verify data/audit
-# chain OK (1 file(s), 5 record(s), last_hash=...)
-# genesis + (query + query-result) for each of the two queries above
-
-# Grep for elevated subjects:
-jq 'select(.subject.groups | index("sre"))' data/audit/audit-*.jsonl
-```
-
-Every record written while the SRE key was in use carries
-`subject.groups: ["analytics","sre"]`. Because the chain is
-tamper-evident (SHA-256 over canonical JSON), removing or editing
-these records invalidates the chain and trips the next
-`sluice audit verify` run.
-
-## Operational discipline
-
-Break-glass is a mechanism, not an excuse. Treat every SRE query as a
-reviewable event:
-
-1. Rotate the SRE API key on a calendar cadence (quarterly or tighter).
-2. Feed `data/audit/` into your SIEM so a separate team sees every
-   elevated record — SREs cannot review their own break-glass usage.
-3. Cover `subject.groups` includes `"sre"` with a paging alert whose
-   threshold is "any non-zero count over a business day", so the
-   incident team finds out the same day an elevation happened.
-
-## Not for production
-
-Real break-glass deployments pair this mechanism with
-just-in-time group issuance (e.g. a short-lived OIDC token from your
-IdP) so the SRE key itself doesn't carry the elevated group at rest.
-The example uses long-lived API keys for readability; a JWT
-`SubjectBinding` (issuer, JWKS URL, groups claim) reproduces the same
-flow with short-lived IdP tokens instead.
+The compose file pulls the released image. `make docs-check` does not run it.

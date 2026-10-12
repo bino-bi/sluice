@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A suite cannot expect "held for approval". The applied list shows it:
+# it names ApprovalPolicy/approve-pii-reads when the query needs approval.
+cases:
+  - name: a sensitive column needs approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name, ssn FROM shop.main.people ORDER BY id"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: salary* matches salary_eur
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT avg(salary_eur) FROM shop.main.people"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: a filter on country = 'de' needs approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name FROM shop.main.people WHERE country = 'de'"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: other columns and other countries run at once
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name FROM shop.main.people WHERE country = 'fr'"
+    expect:
+      outcome: allow
+      applied: ["SqlAccessPolicy/allow-analysts"]
+
+  - name: a subject outside the analysts group is denied
+    identity: { subject: mallory, groups: [guests] }
+    sql: "SELECT name FROM shop.main.people"
+    expect:
+      outcome: deny

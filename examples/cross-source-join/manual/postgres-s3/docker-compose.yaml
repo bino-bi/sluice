@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The same join on Postgres (orders) and S3 Parquet (countries).
+# Services: Postgres, MinIO as the S3 store, a seed job that writes
+# countries.parquet into the bucket, and Sluice.
+# Run `docker compose up` from this folder. The checks do not run this file.
+# The tables are `pg.public.orders` and `ref.main.countries`.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "sluice"
+      POSTGRES_PASSWORD: "demo-pg-password"
+      POSTGRES_DB: "orders"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./seed/postgres.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sluice -d orders"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "sluice-demo"
+      MINIO_ROOT_PASSWORD: "demo-s3-password"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  # Runs once and writes countries.parquet into the ref-data bucket.
+  seed-parquet:
+    image: alpine:3.20
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache duckdb curl >/dev/null
+        wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+        mc alias set local http://minio:9000 sluice-demo demo-s3-password
+        mc mb -p local/ref-data || true
+        duckdb :memory: "COPY (SELECT * FROM (VALUES ('US','United States','Americas'),('DE','Germany','EMEA'),('FR','France','EMEA'),('JP','Japan','APAC')) t(code,name,region)) TO '/tmp/c.parquet' (FORMAT PARQUET);"
+        mc cp /tmp/c.parquet local/ref-data/countries.parquet
+        echo "seeded ref-data/countries.parquet"
+
+  # Pulls the published image by default. To run a locally built one instead:
+  #   docker build -t sluice:dev ../../../..  &&  SLUICE_IMAGE=sluice:dev docker compose up
+  sluice:
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed-parquet:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+      - "9091:9091"
+    environment:
+      # Demo secrets. Do not use these values in production.
+      SLUICE_APIKEY_PEPPER: "cross-source-demo-pepper"
+      SLUICE_AUDIT_GENESIS: "cross-source-demo-genesis"
+      # Printed by:
+      #   sluice apikey hash --pepper cross-source-demo-pepper \
+      #                      --id sl_demo_analyst --material supersecret
+      SLUICE_APIKEY_ANALYST_HASH: "6b76e522f99f8d61cb09bbd1780dc5055b96a3071d9996091c6c8618a8abaef8"
+      SLUICE_PG_PASSWORD: "demo-pg-password"
+      # The S3 driver reads the keys "key_id" and "secret" from this JSON.
+      SLUICE_S3_CREDS: '{"key_id":"sluice-demo","secret":"demo-s3-password"}'
+    volumes:
+      - ../../server.yaml:/etc/sluice/server.yaml:ro
+      - ./policies.d:/etc/sluice/policies.d:ro
+      - ../../data:/etc/sluice/data
+    working_dir: /etc/sluice
+    command:
+      - "serve"
+      - "--config=/etc/sluice/server.yaml"
+      - "--policies-dir=/etc/sluice/policies.d"
+    restart: unless-stopped

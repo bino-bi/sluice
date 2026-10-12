@@ -54,6 +54,7 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.snippets:
       check_paths: true
+      dedent_subsections: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -68,6 +69,10 @@ plugins:
   - search
   - minify:
       minify_html: true
+
+# Pages include files from examples/ as snippets.
+watch:
+  - examples
 
 # Build inputs that live under docs/ but must not be published.
 exclude_docs: |

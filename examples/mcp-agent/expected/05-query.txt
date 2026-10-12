@@ -1,0 +1,23 @@
+event: message
+data: {
+  "jsonrpc": "2.0",
+  "id": 5,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "name | price_cents\n----------------\nBlack T-Shirt (M) | 2499\nCeramic Mug | 1299\nrow_count=2 truncated=false query_id=<id>\n"
+      }
+    ],
+    "structuredContent": {
+      "columns": ["name", "price_cents"],
+      "query_id": "<query-id>",
+      "row_count": 2,
+      "rows": [
+        ["Black T-Shirt (M)", 2499],
+        ["Ceramic Mug", 1299]
+      ],
+      "truncated": false
+    }
+  }
+}

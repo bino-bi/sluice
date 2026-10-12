@@ -1,0 +1,5 @@
+{
+  "approval_id": "<approval-id>",
+  "expires_at": "<time>",
+  "state": "rejected"
+}

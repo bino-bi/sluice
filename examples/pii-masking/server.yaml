@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Sluice server configuration for the pii-masking example.
 
 rest:
   listen: ":8080"
@@ -9,6 +8,7 @@ rest:
 admin:
   enabled: true
   listen: ":9091"
+  # Demo value. Use your own token.
   token: "demo-admin-token-change-me"
 
 duckdb:

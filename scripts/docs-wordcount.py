@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Count prose words per docs section. Fenced code blocks, HTML comments
-and snippet include lines are not counted. Prints a Markdown table."""
+and snippet include lines are not counted. Prints a Markdown table.
+
+Usage: docs-wordcount.py [--pages] [docs-dir]   (--pages lists every page)
+"""
 
 import re
 import sys
@@ -27,7 +30,12 @@ def prose_words(text: str) -> int:
 
 
 def main() -> int:
-    docs = Path(sys.argv[1] if len(sys.argv) > 1 else "docs")
+    args = [a for a in sys.argv[1:] if a != "--pages"]
+    docs = Path(args[0] if args else "docs")
+    if "--pages" in sys.argv:
+        for md in sorted(docs.rglob("*.md")):
+            print(f"{prose_words(md.read_text()):6d}  {md}")
+        return 0
     sections: dict[str, tuple[int, int]] = {}
     for md in sorted(docs.rglob("*.md")):
         rel = md.relative_to(docs)

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The reference group may read the country list and nothing else.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-reference
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["reference"]
+        resources:
+          catalogs: ["ref"]
+          schemas: ["main"]
+          tables: ["countries"]

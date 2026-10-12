@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# The MCP stdio transport runs as a local child process — there is no
-# HTTP layer to attach a header-based identity to. The composition
-# root synthesises this subject for every tool call made over stdio.
+# The identity of the agent. The agent presents the API key "mcp.supersecret":
+# as the X-Api-Key header over HTTP, or as --api-key for `sluice mcp` (stdio).
+# The part before the last "." is the key id, the rest is the secret.
+#
+# Demo values. Do not use them in production. To compute the hash:
+#   sluice apikey hash --pepper mcp-agent-demo-pepper --id mcp --material supersecret
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SubjectBinding
 metadata:

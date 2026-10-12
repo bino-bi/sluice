@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# hello-sluice docker-compose — one Sluice service with the seeded SQLite
+# hello-sluice docker-compose - one Sluice service with the seeded SQLite
 # catalog bind-mounted read-only.
 #
 # Pulls the published image by default. To run a locally built one instead:
@@ -16,14 +16,14 @@ services:
       # Secrets resolved via `secret://env/...` in server.yaml and policies.
       SLUICE_APIKEY_PEPPER: "hello-sluice-demo-pepper"
       SLUICE_AUDIT_GENESIS: "hello-sluice-demo-genesis"
-      # hex(HMAC-SHA256(pepper, "sl_demo_hello:world")) — same value printed by
+      # hex(HMAC-SHA256(pepper, "sl_demo_hello:world")) - same value printed by
       #   sluice apikey hash --pepper hello-sluice-demo-pepper \
       #                      --id sl_demo_hello --material world
       SLUICE_APIKEY_HELLO_HASH: "c0c9ab61795cbbb79767ef51dd0199cfbfd93ed4fd5fe767af1e81192f385153"
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro
-      - ./data:/data
+      - ./data:/etc/sluice/data
     working_dir: /etc/sluice
     command:
       - "serve"

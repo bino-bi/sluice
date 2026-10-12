@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "sluice": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd /ABSOLUTE/PATH/TO/sluice/examples/mcp-agent && exec ../../bin/sluice mcp --config server.yaml --api-key mcp.supersecret"
+      ],
+      "env": {
+        "SLUICE_APIKEY_PEPPER": "mcp-agent-demo-pepper",
+        "SLUICE_AUDIT_GENESIS": "mcp-agent-demo-genesis",
+        "SLUICE_APIKEY_MCP_HASH": "341081ca3a9ec503c1ee5ab902f514de90c9978a103d67ee43ed836247da40bb"
+      }
+    }
+  }
+}

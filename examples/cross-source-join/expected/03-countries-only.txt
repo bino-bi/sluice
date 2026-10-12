@@ -1,0 +1,12 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["code", "name", "region"],
+  "rows": [
+    ["DE", "Germany", "EMEA"],
+    ["FR", "France", "EMEA"],
+    ["JP", "Japan", "APAC"],
+    ["US", "United States", "Americas"]
+  ],
+  "row_count": 4,
+  "truncated": false
+}

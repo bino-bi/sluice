@@ -1,7 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# phone → constant "+1-555-REDACTED". Demonstrates that a constant mask
-# preserves column type so downstream consumers (BI tools, CSV exports)
-# don't see a schema change.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata:

@@ -1,0 +1,9 @@
+{
+  "code": "ERR_APPROVAL_PENDING",
+  "message": "human approval required; a decision has been requested. Poll or await the approval, then re-run the IDENTICAL query within the grant window to execute.",
+  "query_id": "<query-id>",
+  "details": {
+    "approval_id": "<approval-id>",
+    "expires_at": "<time>"
+  }
+}

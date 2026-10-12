@@ -1,0 +1,7 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id"],
+  "rows": [],
+  "row_count": 0,
+  "truncated": false
+}
