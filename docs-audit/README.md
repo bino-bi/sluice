@@ -6,6 +6,7 @@ Working files for the docs simplification. This folder is not published.
 |---|---|
 | `phase0-inventory.md` | Baseline checks and prose word counts before the rewrite |
 | `diagrams.md`, `diagrams/` | Every diagram that must stay, with a byte copy of each |
+| `final-report.md` | Result: word counts, what was removed and merged, every mismatch, open points |
 | `getting-started.md` | Audit of Home and Getting started |
 | `architecture.md`, `policies.md`, `operations.md`, `security.md`, `reference.md`, `cookbook.md` | Audit of each section |
 
