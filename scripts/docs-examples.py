@@ -184,6 +184,30 @@ class Server:
             break
 
 
+# Keys that `sluice policy test` reads. It ignores any other key, so a typo would
+# turn an expectation into text that nothing compares.
+SUITE_KEYS = {
+    "": {"schema", "cases"},
+    "case": {"name", "identity", "request", "sql", "expect"},
+    "identity": {"subject", "issuer", "email", "groups", "claims"},
+    "request": {"headers", "userAgent"},
+    "expect": {"outcome", "denyPolicy", "errorCode", "rejections", "filters", "masks",
+               "postMasks", "applied", "rewrittenSqlContains", "rewrittenSql"},
+}
+
+
+def check_suite(suite: Path) -> list[str]:
+    """Fail on a key that the test runner would ignore."""
+    import yaml  # from docs/requirements.txt
+    doc = yaml.safe_load(suite.read_text()) or {}
+    found = [("", k) for k in doc if k not in SUITE_KEYS[""]]
+    for case in doc.get("cases") or []:
+        found += [("case", k) for k in case if k not in SUITE_KEYS["case"]]
+        for part in ("identity", "request", "expect"):
+            found += [(part, k) for k in (case.get(part) or {}) if k not in SUITE_KEYS[part]]
+    return [f"{suite.relative_to(ROOT)}: unknown {where or 'suite'} key {key!r}" for where, key in found]
+
+
 def check_manual(example: Path) -> list[str]:
     """Files the harness cannot run get a syntax check."""
     errors = []
@@ -215,6 +239,8 @@ def run_example(example: Path, env: dict, update: bool) -> list[str]:
         return ["has no tests/ and no steps/, so nothing checks it"]
     shutil.rmtree(example / "data", ignore_errors=True)
 
+    for suite in suites:
+        errors += check_suite(suite)
     if suites:
         r = subprocess.run(["sluice", "policy", "test", "policies.d", "--tests", "tests"],
                            cwd=example, env=env, capture_output=True, text=True)

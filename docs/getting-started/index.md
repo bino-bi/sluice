@@ -110,7 +110,7 @@ The first build compiles DuckDB and takes about 30 minutes. From a second termin
 
 ## See also
 
-- [Policies](../policies/index.md): how policies work and how to write your own.
-- [Cookbook](../cookbook/index.md): complete setups for common cases.
-- [REST API](../reference/rest-api.md): all request and response fields.
-- [Install](install.md): release archives and container images.
+- [Policies](../policies/index.md)
+- [Cookbook](../cookbook/index.md)
+- [REST API](../reference/rest-api.md)
+- [Install](install.md)

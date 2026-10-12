@@ -30,7 +30,7 @@ bash steps/01-query.sh
 | `serve.sh` | Creates the sample data and starts Sluice. Only for examples that need a server. |
 | `steps/NN-name.sh` | One command per file. The steps run in order, from the example folder. |
 | `expected/NN-name.txt` | Output of each step from a real run. Never edit these by hand. |
-| `manual/` | Files a reader uses by hand, for example a systemd unit. They get a syntax check only: `bash -n`, or a JSON, YAML or unit file parse. |
+| `manual/` | Files a reader uses by hand, for example a systemd unit. They get a syntax check only: `bash -n`, or a JSON, YAML or unit file parse. A page may show one only if `MANUAL_FILES` in `scripts/docs-style-check.py` lists it. |
 | `data/` | Created at run time. Not in git. `key-rotation` also writes hash files to `/tmp/sluice-key-rotation`, because a secret file needs an absolute path. |
 
 An example needs `tests/` or `steps/`, or both. A file that nothing runs must not be shown in the docs.
@@ -40,7 +40,7 @@ An example needs `tests/` or `steps/`, or both. A file that nothing runs must no
 For each example, `scripts/docs-examples.py`:
 
 1. Deletes `data/`.
-2. Runs `sluice policy test policies.d --tests tests` if `tests/` exists. All cases must pass.
+2. Runs `sluice policy test policies.d --tests tests` if `tests/` exists. All cases must pass. A suite key that the test runner would ignore is an error.
 3. Starts `serve.sh` if it exists and waits for `GET /v1/health`.
 4. Runs each step with `bash`. It captures stdout, stderr and the exit status.
 5. Compares the output with `expected/NN-name.txt`.

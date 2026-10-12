@@ -62,6 +62,6 @@ The images hold every DuckDB extension that Sluice needs. Other builds can downl
 
 ## See also
 
-- [Quickstart](index.md): run the example.
-- [Server config](../operations/server-config.md): the server config and the policy directory.
-- [CLI](../reference/cli.md): all commands and flags.
+- [Quickstart](index.md)
+- [Server config](../operations/server-config.md)
+- [CLI](../reference/cli.md)

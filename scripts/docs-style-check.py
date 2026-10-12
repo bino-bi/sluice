@@ -45,7 +45,20 @@ SNIPPET_RE = re.compile(r'^\s*--8<-- "([^":]+)(?::([\w-]+))?"\s*$')
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
 CHECKED_SUFFIX = (".sh", ".json", ".yaml", ".yml", ".service")
-LOADED_SUFFIX = (".yaml", ".yml", ".rego")
+# Manual files that pages may show. A new one needs a line here and in the final report.
+MANUAL_FILES = {
+    "examples/deployment/manual/docker-compose.yaml",
+    "examples/deployment/manual/sluice.service",
+    "examples/install/manual/archive.sh",
+    "examples/install/manual/build.sh",
+    "examples/install/manual/docker-example.sh",
+    "examples/install/manual/image.sh",
+    "examples/install/manual/second-terminal.sh",
+    "examples/install/manual/start-example.sh",
+    "examples/mcp-agent/manual/claude-desktop.json",
+}
+SNIPPET_MARK_RE = re.compile(r"-+8<-+")
+SKIPPED_DIRS = ("tests", "testdata")  # the policy loader does not read these
 NAV = ["Home", "Getting started", "Architecture", "Policies", "Operations",
        "Security", "Reference", "Cookbook"]
 
@@ -153,7 +166,7 @@ def check_file(md: Path, errors, pinned):
             else:
                 block.append(line)
             continue
-        if "--8<--" in line:
+        if SNIPPET_MARK_RE.search(line):
             errors.append(f"{rel}:{no}: snippet include outside a code block")
             continue
         if HTML_CODE_RE.search(re.sub(r"`[^`]*`", "", line)):
@@ -191,18 +204,29 @@ def tested_file(path: str) -> str:
     if rel.startswith("tests/") and yaml and "/" not in rel[6:]:
         return ""
     if rel.startswith("policies.d/") and yaml:
+        if any(part in SKIPPED_DIRS or part.startswith(".") for part in parts[3:-1]):
+            return "is in a directory that the policy loader skips"
         return "" if suites or (example / "serve.sh").exists() or uses(example, "policies.d", whole=True) else \
             "is in a policies.d that nothing loads"
     if rel.startswith("expected/"):
         return "" if (example / "steps" / (Path(rel).stem + ".sh")).is_file() else "has no step that writes it"
     if rel.startswith("manual/") or rel == "docker-compose.yaml":
-        return "" if rel.endswith(CHECKED_SUFFIX) else "is a manual file without a syntax check"
+        if not rel.endswith(CHECKED_SUFFIX):
+            return "is a manual file without a syntax check"
+        return "" if path in MANUAL_FILES else "is a manual file that is not in MANUAL_FILES"
     # Any other file must be named in something that runs: by its path, or by its
     # directory as a whole argument (`sluice policy validate invalid`, `moduleDir: ./rego`).
-    # A directory covers only what its command reads: policy and suite files, Rego modules.
-    dirs = ["/".join(parts[2:i]) for i in range(3, len(parts))] if rel.endswith(LOADED_SUFFIX) else []
-    return "" if uses(example, rel) or any(uses(example, d, whole=True) for d in dirs) else \
-        "is not used by serve.sh, a step or server.yaml"
+    # A directory covers only the files directly in it that its command reads.
+    if uses(example, rel):
+        return ""
+    parent = "/".join(parts[2:-1])
+    server = example / "server.yaml"
+    is_module_dir = server.is_file() and re.search(
+        rf"moduleDir:\s*[\"']?(\./)?{re.escape(parent)}/?[\"']?\s*$", server.read_text(), re.M)
+    wanted = (".rego",) if is_module_dir else (".yaml", ".yml")
+    if parent and rel.endswith(wanted) and uses(example, parent, whole=True):
+        return ""
+    return "is not used by serve.sh, a step or server.yaml"
 
 
 def uses(example: Path, rel: str, whole: bool = False) -> bool:
