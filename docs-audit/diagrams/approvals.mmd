@@ -1,0 +1,14 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as Sluice
+    participant W as Webhook target
+    participant A as Approver
+    C->>S: POST /v1/query (matches an ApprovalPolicy)
+    S->>W: POST approval payload (accept_url, reject_url)
+    S-->>C: 202 ERR_APPROVAL_PENDING + approval_id (after syncWait)
+    A->>S: GET or POST accept_url (capability token)
+    S-->>A: approved — single-use grant minted
+    Note over C,S: MCP clients block on await_approval(approval_id) instead of polling
+    C->>S: POST /v1/query (identical SQL, same subject)
+    S-->>C: 200 rows (grant consumed)
