@@ -96,6 +96,8 @@ func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
 		{"quoted table name as qualifier", `SELECT "CUSTOMERS".email FROM shop.main.customers`},
 		{"quoted column in a function", `SELECT lower("EMAIL") FROM shop.main.customers`},
 		{"select alias behind the alias prefix", "SELECT c.email AS e, alias.e AS m FROM shop.main.customers c"},
+		{"set operation", "SELECT email FROM shop.main.customers UNION ALL SELECT email FROM shop.main.customers"},
+		{"correlated subquery without FROM", "SELECT (SELECT c.email) AS e FROM shop.main.customers c"},
 	}
 	for _, tc := range masked {
 		t.Run("masked/"+tc.name, func(t *testing.T) {
@@ -142,6 +144,9 @@ func TestExecute_MaskReachesEveryUseOfTheColumn(t *testing.T) {
 		{"quoted CTE name in mixed case", `WITH "Totals" AS (SELECT customer_id, sum(total_cents) AS total FROM shop.main.orders GROUP BY 1) SELECT customer_id, total FROM "Totals" ORDER BY 1`, "[[1 17400] [2 19900]]"},
 		{"star over a join keeps FROM order", "SELECT * FROM shop.main.orders o JOIN shop.main.customers c ON c.id = o.customer_id ORDER BY 1 LIMIT 1",
 			"[[101 1 12900 acme 2026-03-01T12:00:00Z 1 Alice <nil> acme 2026-01-03T10:00:00Z]]"},
+		{"masked column in expressions", "SELECT email || '' AS e, lower(email) AS l FROM shop.main.customers", "[[<nil> <nil>] [<nil> <nil>]]"},
+		{"masked column under its own name in a column alias list", "SELECT c.email FROM shop.main.customers AS c(id, tenant_id, email)", "[[<nil>] [<nil>]]"},
+		{"masked column aggregated in a scalar subquery", "SELECT (SELECT string_agg(email, ',') FROM shop.main.customers) AS emails", "[[<nil>]]"},
 	}
 	for _, tc := range served {
 		t.Run("served/"+tc.name, func(t *testing.T) {
@@ -494,6 +499,17 @@ func TestExecute_PostQueryMaskKeepsRefusals(t *testing.T) {
 		"SELECT id FROM shop.main.customers c WHERE CAST(c AS VARCHAR) LIKE '%Alice%'",
 		"SELECT #2 FROM shop.main.customers",
 		"SELECT c.* LIKE '%Alice%' FROM shop.main.customers c",
+		"SELECT unnest(c) FROM shop.main.customers c",
+		"SELECT struct_extract(c, 'name') AS n FROM shop.main.customers c",
+		"SELECT max(c) FROM shop.main.customers c",
+		"SELECT to_json(c.*) AS j FROM shop.main.customers c",
+		"SELECT row(c.*) AS r FROM shop.main.customers c",
+		"SELECT list_transform(ARRAY[c], x -> x.name) AS n FROM shop.main.customers c",
+		// A star that names a table of an outer SELECT, and a star without FROM.
+		"SELECT x.name FROM shop.main.orders o, shop.main.customers c, LATERAL (SELECT c.*) x",
+		"SELECT c.id, (SELECT c.* FROM shop.main.orders o LIMIT 1) AS n FROM shop.main.customers c",
+		"SELECT c.id FROM shop.main.customers c WHERE EXISTS (SELECT 1 FROM (SELECT c.* FROM shop.main.orders o) x WHERE x.name = 'Alice')",
+		"SELECT x.name FROM shop.main.customers c, LATERAL (SELECT *) x",
 		"SELECT c.n FROM shop.main.customers AS c(i, n)",
 		"SELECT j.name FROM (shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id) AS j",
 		"SELECT (SELECT c.name FROM shop.main.orders c LIMIT 1) AS n FROM shop.main.customers c",
@@ -559,6 +575,9 @@ func TestExecute_PostQueryMaskKeepsRefusals(t *testing.T) {
 		"SELECT p.id, (p.addr).city AS city FROM shop.main.people p ORDER BY p.id":                                                                                       "[[1 Berlin] [2 Paris]]",
 		"SELECT id, (addr).city AS city FROM shop.main.people ORDER BY id":                                                                                               "[[1 Berlin] [2 Paris]]",
 		"SELECT count(*) FROM shop.main.orders o WHERE EXISTS (SELECT * FROM shop.main.customers c WHERE c.id = o.customer_id)":                                          "[[3]]",
+		"SELECT c.id FROM shop.main.customers c WHERE c.id IN (SELECT q.* FROM (SELECT customer_id FROM shop.main.orders) q) ORDER BY c.id":                              "[[1] [2]]",
+		"SELECT c.id FROM shop.main.customers c WHERE c.id IN (SELECT c.* FROM (SELECT customer_id FROM shop.main.orders) c) ORDER BY c.id":                              "[[1] [2]]",
+		"WITH q AS (SELECT customer_id FROM shop.main.orders) SELECT c.id FROM shop.main.customers c WHERE c.id IN (SELECT q.* FROM q) ORDER BY c.id":                    "[[1] [2]]",
 		"SELECT count(*) FROM shop.main.orders o WHERE o.customer_id IN (SELECT q.cid FROM (SELECT x.*, c.id AS cid FROM shop.main.customers c, (SELECT 1 AS one) x) q)": "[[3]]",
 	} {
 		rows, err := runRows(svc, sql)
@@ -1658,6 +1677,101 @@ func TestExecute_SchemaLoadErrorCodesUnderStar(t *testing.T) {
 	}
 }
 
+// The gateway passes these forms on and DuckDB 1.5.5 refuses them. Each one
+// reads the table wrapper (golden fixture 104, the rawfails lines of the
+// differential corpus). When a DuckDB release serves one, this test fails:
+// pin the masked rows then.
+func TestExecute_FormsDuckDBRefusesReadTheWrapper(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	for _, sql := range []string{
+		"SELECT to_json(c.*) AS j FROM shop.main.customers c",
+		"SELECT row(c.*) AS r FROM shop.main.customers c",
+		"SELECT struct_pack(c.*) AS r FROM shop.main.customers c",
+		"SELECT x.email FROM shop.main.customers c, LATERAL (SELECT c.*) x",
+		"SELECT x.email FROM shop.main.customers c, LATERAL (SELECT *) x",
+		"SELECT shop.main.customers.email FROM shop.main.customers c",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, DuckDB refused this form before", sql, rows)
+		}
+		if ex.calls != before+1 {
+			t.Errorf("%s: executor ran %d times, want 1", sql, ex.calls-before)
+		}
+	}
+}
+
+// DuckDB binds s.ssn to the FROM item s and fails. It does not fall back to
+// the select alias s of the post-query masked item. If a release does, the
+// statement returns the raw field and this test fails.
+func TestExecute_SelectAliasIsNoQualifier(t *testing.T) {
+	svc, _, _ := newSeededHelloSluiceService(t, nil, peopleSeed, fakeNamePolicy, peoplePolicies)
+	for _, sql := range []string{
+		"SELECT p.id, p.info AS s, s.ssn AS leak FROM shop.main.people p, (SELECT 1 AS one) s ORDER BY p.id",
+		"SELECT p.id, p.info AS s, s.ssn AS leak FROM shop.main.people p, shop.main.orders s ORDER BY p.id",
+		"SELECT p.id, p.info AS s FROM shop.main.people p, (SELECT 1 AS one) s ORDER BY s.ssn DESC",
+	} {
+		if rows, err := runRows(svc, sql); err == nil {
+			t.Errorf("%s: served %v, want a DuckDB binder error", sql, rows)
+		}
+	}
+	// A FROM item named like the select alias of the masked item is served.
+	for sql, n := range map[string]int{
+		"SELECT c.name AS o, o.id FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id":                      3,
+		"SELECT c.name AS o FROM shop.main.customers c WHERE EXISTS (SELECT 1 FROM shop.main.orders o WHERE o.customer_id = c.id)": 2,
+		"SELECT name AS customers, * FROM shop.main.customers":                                                                     2,
+	} {
+		rows, err := runRows(svc, sql)
+		if got := fmt.Sprint(rows); err != nil || len(rows) != n || strings.Contains(got, "Alice") || strings.Contains(got, "Bob") {
+			t.Errorf("%s: rows = %s, err = %v, want %d rows with fake names", sql, got, err, n)
+		}
+	}
+}
+
+const allowWithoutTables = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-without-tables
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+`
+
+// pg_query cannot parse these DuckDB statements, so they end before the
+// executor. SUMMARIZE would return the min and max of the raw column. The
+// table walker finds no table in some of them, so the caller gets an allow
+// that names no table.
+func TestExecute_DuckDBOnlyStatementsNotExecuted(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowWithoutTables)
+	for _, sql := range []string{
+		"SUMMARIZE shop.main.customers",
+		"SUMMARIZE SELECT email FROM shop.main.customers",
+		"DESCRIBE shop.main.customers",
+		"PIVOT shop.main.customers ON tenant_id USING max(email)",
+		"FROM shop.main.customers SELECT email",
+		"SELECT * EXCLUDE (id) FROM shop.main.customers",
+		"SELECT * REPLACE (upper(name) AS name) FROM shop.main.customers",
+		"SELECT [c] AS l FROM shop.main.customers c",
+		"SELECT email FROM shop.main.customers GROUP BY ALL",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_SYNTAX", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_SYNTAX", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+}
+
 // orders has a row filter and no mask. A post-query mask on a table read
 // only in a subquery must not refuse a star over orders.
 func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {
@@ -1695,6 +1809,13 @@ func TestExecute_FormerMaskRefusalsServeMaskedValues(t *testing.T) {
 			"[[acme " + aliceRow + "] [acme " + bobRow + "]]", 0},
 		{"whole row", "SELECT c FROM shop.main.customers c ORDER BY c.id", rowsBoth, 0},
 		{"whole row, table name", "SELECT customers FROM shop.main.customers ORDER BY customers.id", rowsBoth, 0},
+		{"whole row without a sort key", "SELECT c FROM shop.main.customers c", "", 2},
+		{"whole row expanded by unnest", "SELECT unnest(c) FROM shop.main.customers c", "", 2},
+		{"whole row field by name", "SELECT struct_extract(c, 'email') AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},
+		{"whole row in a lambda", "SELECT list_transform(ARRAY[c], x -> x.email) AS e FROM shop.main.customers c ORDER BY c.id", "[[[<nil>]] [[<nil>]]]", 0},
+		{"whole row in an aggregate", "SELECT max(c) FROM shop.main.customers c", "[[" + bobRow + "]]", 0},
+		{"table alias named like the masked column", "SELECT email FROM shop.main.customers email", twoNulls, 0},
+		{"star in a function that drops it", "SELECT count(c.*) AS n FROM shop.main.customers c", "[[2]]", 0},
 		{"whole row as function argument", "SELECT to_json(c) AS j FROM shop.main.customers c ORDER BY c.id", rowsBoth, 0},
 		{"whole row field access", "SELECT (c).email AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},
 		{"whole row subscript", "SELECT c['email'] AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},

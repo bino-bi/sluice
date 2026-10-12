@@ -283,3 +283,53 @@ func TestPostMask_ResultShapeRecorded(t *testing.T) {
 		t.Errorf("post masks = %v, want [1:Tax_ID 2:ssn]", got)
 	}
 }
+
+// The four post-query mask types share one planner. A form that reads the
+// masked column without naming it is refused for each of them.
+func TestPostMask_EveryTypeRefusesUnnamedReads(t *testing.T) {
+	rw := buildRewriter(t)
+	for name, spec := range map[string]apitypes.MaskSpec{
+		"fpe":         fpeMask("employees", "ssn").Spec.Mask,
+		"jitter":      {Type: apitypes.MaskJitter, Args: apitypes.MaskArgs{Range: 0.1}},
+		"fake":        {Type: apitypes.MaskFake, Args: apitypes.MaskArgs{FakeType: "name"}},
+		"hmac_sha256": {Type: apitypes.MaskHash, Args: apitypes.MaskArgs{Algorithm: apitypes.HashHMACSHA256, SaltRef: "secret://env/K"}},
+	} {
+		m := maskPolicy("post-ssn", "employees", []string{"ssn"}, spec)
+		for sql, refused := range map[string]bool{
+			"SELECT e FROM pg.hr.employees e":                                     true,
+			"SELECT unnest(e) FROM pg.hr.employees e":                             true,
+			"SELECT max(e) FROM pg.hr.employees e":                                true,
+			"SELECT to_json(e.*) FROM pg.hr.employees e":                          true,
+			"SELECT row(e.*) FROM pg.hr.employees e":                              true,
+			"SELECT struct_extract(e, 'ssn') FROM pg.hr.employees e":              true,
+			"SELECT list_transform(ARRAY[e], x -> x.ssn) FROM pg.hr.employees e":  true,
+			"SELECT #2 FROM pg.hr.employees":                                      true,
+			"SELECT ssn FROM pg.hr.employees UNION ALL SELECT ssn FROM pg.hr.emp": true,
+			"SELECT e.id FROM pg.hr.employees e JOIN pg.hr.other o USING (ssn)":   true,
+			// A star over an outer table.
+			"SELECT x.ssn FROM pg.hr.badge b, pg.hr.employees e, LATERAL (SELECT e.*) x":                                   true,
+			"SELECT e.id, (SELECT e.* FROM pg.hr.badge b LIMIT 1) FROM pg.hr.employees e":                                  true,
+			"SELECT x.ssn FROM pg.hr.employees e, LATERAL (SELECT *) x":                                                    true,
+			"SELECT e.id, e.ssn FROM pg.hr.employees e":                                                                    false,
+			"SELECT * FROM pg.hr.employees":                                                                                false,
+			"SELECT e.ssn FROM pg.hr.employees e WHERE e.id IN (SELECT q.* FROM (SELECT id FROM pg.hr.badge) q)":           false,
+			"SELECT e.ssn FROM pg.hr.employees e WHERE e.id IN (SELECT e.* FROM (SELECT id FROM pg.hr.badge) e)":           false,
+			"WITH c AS (SELECT id FROM pg.hr.badge) SELECT e.ssn FROM pg.hr.employees e WHERE e.id IN (SELECT c.* FROM c)": false,
+			// A FROM item named like the select alias of the masked item.
+			"SELECT e.ssn AS s, s.x FROM pg.hr.employees e, (SELECT 1 AS x) s": false,
+		} {
+			dec, ast := evaluate(t, sql, &identity.UserCtx{Subject: "u"}, allowAll(0), m)
+			res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: dec, Raw: sql})
+			switch {
+			case refused && err == nil:
+				t.Errorf("%s, %s: served %q, want ERR_MASK_UNSUPPORTED_CONTEXT", name, sql, res.SQL)
+			case refused && rewriter.ErrorCode(err) != pkgerr.CodeMaskContext:
+				t.Errorf("%s, %s: err = %v, want ERR_MASK_UNSUPPORTED_CONTEXT", name, sql, err)
+			case !refused && err != nil:
+				t.Errorf("%s, %s: %v", name, sql, err)
+			case !refused && len(res.PostMasks) != 1:
+				t.Errorf("%s, %s: PostMasks = %+v, want 1", name, sql, res.PostMasks)
+			}
+		}
+	}
+}

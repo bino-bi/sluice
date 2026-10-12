@@ -60,6 +60,10 @@ func (s *state) guardSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 		}
 		aliases[alias] = ref
 	}
+	if star := s.outerStar(sel, outerAliases); star != "" {
+		return pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
+			"%s reads a table of an outer SELECT with post-query masked columns, list the columns", star))
+	}
 	s.selectDepth++
 	prevLocal := s.localAliases
 	s.localAliases = local
@@ -274,6 +278,38 @@ func (s *state) checkFieldAccess(cr *pg.ColumnRef, aliases aliasMap) error {
 			"field access on post-query masked column %q is not supported", column))
 	}
 	return nil
+}
+
+// outerStar returns a star in the select list of sel that could expand
+// over a table of an outer SELECT with a post-query mask: `q.*` where q is
+// such a table and no FROM item of sel, or `*` when sel has no FROM. DuckDB
+// does not expand a star over an outer table today. If it did, the masked
+// column would come back raw under a name the guard walk cannot follow. A
+// STRUCT column of sel called q is refused with it: the columns of a
+// subquery are not known here.
+func (s *state) outerStar(sel *pg.SelectStmt, outer aliasMap) string {
+	own := map[string]bool{}
+	for _, f := range sel.FromClause {
+		for _, e := range appendFromEntries(nil, f, aliasMap{}, "") {
+			own[e.alias] = true
+		}
+	}
+	for _, t := range sel.TargetList {
+		cr := t.GetResTarget().GetVal().GetColumnRef()
+		if !isStarRef(cr) {
+			continue
+		}
+		if len(cr.Fields) == 1 && len(sel.FromClause) == 0 && s.fromHasPostMask(outer) {
+			return "*"
+		}
+		for _, f := range cr.Fields[:len(cr.Fields)-1] {
+			name := foldName(f.GetString_().GetSval())
+			if ref, ok := outer[name]; ok && !own[name] && s.tableHasPostMask(ref.Catalog+"."+ref.Schema+"."+ref.Table) {
+				return name + ".*"
+			}
+		}
+	}
+	return ""
 }
 
 func (s *state) tableHasMask(tableKey string) bool {

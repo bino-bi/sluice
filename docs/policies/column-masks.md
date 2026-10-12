@@ -92,7 +92,12 @@ Matching rules to know:
   used as a value (`SELECT c FROM customers c`, `to_json(c)`, `(c).name`), the table behind its
   schema (`main.customers`), dotted field access into the masked column, a subquery alias that
   reuses the alias of the outer table for another table, and an unqualified column that two
-  tables in scope both mask (qualify it with the table name).
+  tables in scope both mask (qualify it with the table name). In a subquery, a star that names
+  the table of an outer query (`LATERAL (SELECT c.*)`) and a `SELECT *` without `FROM` are
+  refused as well: list the columns. As the whole select list of `EXISTS` both are fine, as
+  above. The star is refused by its name, so `c.*` is also refused when `c` is a STRUCT column
+  of the subquery. When the subquery reads a table with a post-query mask itself, the code is
+  `ERR_UNSUPPORTED_SYNTAX`.
 - A bare `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME` or `LOCALTIMESTAMP` is
   a function, but DuckDB binds the word to a column, a select alias or a table of that name
   first. So the bare word is refused with the same code when that name is a post-query masked
