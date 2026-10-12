@@ -131,7 +131,7 @@ tar -xzf sluice_0.1.0-rc.2_linux_amd64.tar.gz
 ./sluice version
 ```
 
-Build from source (Go 1.25+; CGO is required because pg_query and DuckDB are C libraries):
+Build from source (Go 1.26+; CGO is required because pg_query and DuckDB are C libraries):
 
 ```bash
 git clone https://github.com/bino-bi/sluice.git

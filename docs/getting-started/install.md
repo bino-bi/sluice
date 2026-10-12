@@ -69,7 +69,7 @@ cosign verify ghcr.io/bino-bi/sluice:${VERSION} \
 
 Requirements:
 
-- Go 1.25 or later.
+- Go 1.26 or later.
 - A C toolchain. Sluice links two cgo libraries — pg_query (the PostgreSQL parser) and DuckDB — so it cannot be built with `CGO_ENABLED=0`.
 
 ```bash

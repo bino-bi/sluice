@@ -5,7 +5,7 @@
 # here. Image labels are supplied by goreleaser via --label flags.
 #
 # For a local-build image (one-shot `docker build .`), use the root
-# Dockerfile, which carries its own golang:1.25-bookworm builder stage.
+# Dockerfile, which carries its own golang:1.26-bookworm builder stage.
 
 # debian13 (trixie, glibc 2.41 / GCC 14 libstdc++), not debian12. goreleaser
 # builds these binaries inside goreleaser-cross, which is Ubuntu noble — they

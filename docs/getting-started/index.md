@@ -17,7 +17,7 @@ Everything else — the default-deny posture, the rewritten SQL, the hash-chaine
 
 One of:
 
-- **Go 1.25 or later plus a C toolchain.** Sluice embeds pg_query and DuckDB, both cgo libraries, so `CGO_ENABLED=1` builds need a working C compiler.
+- **Go 1.26 or later plus a C toolchain.** Sluice embeds pg_query and DuckDB, both cgo libraries, so `CGO_ENABLED=1` builds need a working C compiler.
 - **Docker with Compose.** The example ships a `docker-compose.yaml` that builds the image from the repository root and wires up all secrets.
 
 You will also want `sqlite3` (to seed the demo database) and `curl`.
