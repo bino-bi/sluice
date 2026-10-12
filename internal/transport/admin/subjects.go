@@ -17,23 +17,23 @@ import (
 // engine renders the same decision the live path would produce.
 func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Service == nil {
-		writeAPIError(w, pkgerr.New(pkgerr.CodeInternal).WithMessage("queryservice not configured"))
+		s.writeAPIError(w, r, pkgerr.New(pkgerr.CodeInternal).WithMessage("queryservice not configured"))
 		return
 	}
 	q := r.URL.Query()
 	user := q.Get("user")
 	if user == "" {
-		writeAPIError(w, pkgerr.Newf(pkgerr.CodeSyntax, "user query parameter required"))
+		s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "user query parameter required"))
 		return
 	}
 	table := q.Get("table")
 	if table == "" {
-		writeAPIError(w, pkgerr.Newf(pkgerr.CodeSyntax, "table query parameter required"))
+		s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "table query parameter required"))
 		return
 	}
 	ref, err := parseTableRef(table)
 	if err != nil {
-		writeAPIError(w, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error()))
+		s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error()))
 		return
 	}
 	uc := &identity.UserCtx{
@@ -60,7 +60,7 @@ func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 		Origin:       queryservice.OriginAdmin,
 	})
 	if err != nil {
-		writeAPIError(w, err)
+		s.writeAPIError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

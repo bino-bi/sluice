@@ -1348,6 +1348,123 @@ func TestExecute_ConstantMaskSortKeyIsNotAPosition(t *testing.T) {
 	}
 }
 
+// A masked column in a sort, group, filter or join clause reads the mask
+// output, or the query is refused with a code of its own. Each query probes
+// with a raw value of the column: a clause that read the raw value would
+// return other rows. ERR_INTERNAL is no answer.
+func TestExecute_MaskedColumnInEveryClause(t *testing.T) {
+	type clause struct{ name, sql string }
+	clauses := func(col, probe string) []clause {
+		const from = " FROM shop.main.customers"
+		return []clause{
+			// The reported query. Its row order is not defined.
+			{"ORDER BY", "SELECT id" + from + " ORDER BY " + col},
+			// A sort on the raw value would return 2 before 1.
+			{"ORDER BY DESC", "SELECT id" + from + " ORDER BY " + col + " DESC, id"},
+			{"GROUP BY", "SELECT " + col + ", count(*) AS n" + from + " GROUP BY " + col},
+			{"WHERE =", "SELECT id" + from + " WHERE " + col + " = '" + probe + "'"},
+			{"WHERE LIKE", "SELECT id" + from + " WHERE " + col + " LIKE '" + probe[:1] + "%'"},
+			{"HAVING", "SELECT tenant_id" + from + " GROUP BY tenant_id HAVING min(" + col + ") = '" + probe + "'"},
+			{"DISTINCT", "SELECT DISTINCT " + col + from},
+			{"JOIN ON", "SELECT c.id" + from + " c JOIN (SELECT '" + probe + "' AS v) x ON c." + col + " = x.v"},
+		}
+	}
+
+	masks := []struct {
+		name       string
+		policy     string // "" is the shipped null mask on email
+		col, probe string
+		// want holds the rows per clause, sorted here except for ORDER BY
+		// DESC. Nil: every clause is refused with
+		// ERR_MASK_UNSUPPORTED_CONTEXT before DuckDB runs.
+		want map[string]string
+	}{
+		{"null", "", "email", "alice@acme.test", map[string]string{
+			"ORDER BY": "[[1] [2]]", "ORDER BY DESC": "[[1] [2]]", "GROUP BY": "[[<nil> 2]]", "WHERE =": "[]",
+			"WHERE LIKE": "[]", "HAVING": "[]", "DISTINCT": "[[<nil>]]", "JOIN ON": "[]",
+		}},
+		{"constant", constantEmailPolicy, "email", "alice@acme.test", map[string]string{
+			"ORDER BY": "[[1] [2]]", "ORDER BY DESC": "[[1] [2]]", "GROUP BY": "[[*** 2]]", "WHERE =": "[]",
+			"WHERE LIKE": "[]", "HAVING": "[]", "DISTINCT": "[[***]]", "JOIN ON": "[]",
+		}},
+		{"post-query", fakeNamePolicy, "name", "Alice", nil},
+	}
+	for _, m := range masks {
+		var extra []string
+		if m.policy != "" {
+			extra = append(extra, m.policy)
+		}
+		svc, ex, _ := newHelloSluiceService(t, extra...)
+		for _, c := range clauses(m.col, m.probe) {
+			t.Run(m.name+"/"+c.name, func(t *testing.T) {
+				before := ex.calls
+				rows, err := runRows(svc, c.sql)
+				if err != nil {
+					ae := pkgerr.FromError(err)
+					if m.want != nil || ae.Code != pkgerr.CodeMaskContext {
+						t.Fatalf("code = %s, cause = %v", ae.Code, errors.Unwrap(ae))
+					}
+					if ex.calls != before {
+						t.Fatal("executor was reached")
+					}
+					return
+				}
+				if m.want == nil {
+					t.Fatalf("served %v, want ERR_MASK_UNSUPPORTED_CONTEXT", rows)
+				}
+				if c.name != "ORDER BY DESC" {
+					slices.SortFunc(rows, func(a, b []any) int { return strings.Compare(fmt.Sprint(a), fmt.Sprint(b)) })
+				}
+				if got := fmt.Sprint(rows); got != m.want[c.name] {
+					t.Fatalf("rows = %s, want %s", got, m.want[c.name])
+				}
+			})
+		}
+	}
+}
+
+// DuckDB refuses a statement that does not bind or convert, also when it
+// is the mask output that does not fit. The client gets ERR_QUERY_FAILED
+// with the generic message: DuckDB builds its text from the rewritten SQL
+// and quotes values.
+func TestExecute_StatementRefusedByDuckDB(t *testing.T) {
+	cases := []struct{ name, policy, sql string }{
+		{"unknown column", "", "SELECT nosuch FROM shop.main.customers"},
+		// What rc.2 wrote for ORDER BY on the null-masked email.
+		{"literal sort key", "", "SELECT id FROM shop.main.customers ORDER BY NULL"},
+		{"cast of a raw value", "", "SELECT CAST(name AS INTEGER) AS n FROM shop.main.customers"},
+		{"cast of a constant mask", constantEmailPolicy, "SELECT CAST(email AS INTEGER) AS n FROM shop.main.customers"},
+		{"constant mask parsed as a date", constantEmailPolicy, "SELECT strptime(email, '%Y-%m-%d') AS d FROM shop.main.customers"},
+		{"scalar subquery with two rows", "", "SELECT id FROM shop.main.customers WHERE id = (SELECT id FROM shop.main.customers)"},
+		{"unknown type", "", "SELECT CAST(id AS nosuchtype) AS n FROM shop.main.customers"},
+		{"USING on the null-masked email", "", "SELECT c.id FROM shop.main.customers c JOIN (SELECT 'alice@acme.test' AS email) x USING (email)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var extra []string
+			if tc.policy != "" {
+				extra = append(extra, tc.policy)
+			}
+			svc, _, a := newHelloSluiceService(t, extra...)
+			rows, err := runRows(svc, tc.sql)
+			if err == nil {
+				t.Fatalf("served %v, want ERR_QUERY_FAILED", rows)
+			}
+			ae := pkgerr.FromError(err)
+			if ae.Code != pkgerr.CodeQueryFailed || ae.Status() != 400 || ae.QueryID == "" {
+				t.Fatalf("code = %s, status = %d, query_id = %q, cause = %v", ae.Code, ae.Status(), ae.QueryID, errors.Unwrap(ae))
+			}
+			if ae.Message != pkgerr.Message(pkgerr.CodeQueryFailed) {
+				t.Fatalf("message = %q, want the generic one", ae.Message)
+			}
+			recs := a.all()
+			if len(recs) == 0 || recs[len(recs)-1].ErrorCode != string(pkgerr.CodeQueryFailed) {
+				t.Fatalf("audit records = %+v, want the client code on the last one", recs)
+			}
+		})
+	}
+}
+
 const allowAdminUsersPolicy = `
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SqlAccessPolicy
@@ -1695,6 +1812,8 @@ func TestExecute_FormsDuckDBRefusesReadTheWrapper(t *testing.T) {
 		rows, err := runRows(svc, sql)
 		if err == nil {
 			t.Errorf("%s: served %v, DuckDB refused this form before", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeQueryFailed {
+			t.Errorf("%s: code = %s, want ERR_QUERY_FAILED", sql, ae.Code)
 		}
 		if ex.calls != before+1 {
 			t.Errorf("%s: executor ran %d times, want 1", sql, ex.calls-before)

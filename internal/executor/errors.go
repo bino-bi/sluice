@@ -23,6 +23,11 @@ var (
 	// ErrExecute wraps errors surfaced by DuckDB during query execution.
 	ErrExecute = errors.New("executor: query execution failed")
 
+	// ErrRejected marks an execution error where DuckDB refused the
+	// statement: a name it does not know or a value that does not fit. It
+	// comes with ErrExecute. Maps to ERR_QUERY_FAILED upstream.
+	ErrRejected = errors.New("executor: statement rejected by duckdb")
+
 	// ErrConnUnavailable is returned when a hardened connection cannot be
 	// drawn from the pool for reasons other than the caller's context.
 	// Maps to ERR_DATASOURCE_UNAVAILABLE upstream.

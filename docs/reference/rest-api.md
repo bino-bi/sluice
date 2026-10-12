@@ -158,5 +158,5 @@ from the code — highlights:
 | 413 | `ERR_PAYLOAD_TOO_LARGE` |
 | 429 | `ERR_RATE_LIMITED`, `ERR_BUDGET_EXCEEDED` |
 
-The full 24-code catalogue with canonical messages lives in
+The full 23-code catalogue with canonical messages lives in
 [Error codes](error-codes.md).

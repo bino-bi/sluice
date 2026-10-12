@@ -38,7 +38,7 @@ Matching rules to know:
   catalog is loaded again as a whole on the next lookup that misses one of its tables (a table
   not cached yet, a name that does not exist, an evicted entry). There is no timer. Until that
   load a column added at the source is missing from `*` and a query that names it fails, and a
-  column dropped at the source makes every query on the table fail with `ERR_INTERNAL`. With
+  column dropped at the source makes every query on the table fail with `ERR_QUERY_FAILED`. With
   `cache.rewrite.enabled`, a repeated query keeps the old column list for up to
   `cache.rewrite.ttl` after that load. Do not rely on a new column staying hidden: add its mask
   before you add the column.
@@ -53,7 +53,8 @@ Matching rules to know:
   column's type, which DuckDB reads as `INTEGER`. A `constant` mask has the type of its value, so
   `value: "1900-01-01"` on a date column gives a text column. An expression that needs the
   original type can fail: `birth_date < DATE '2000-01-01'` under that constant, or a `USING`
-  join of a null-masked text column with a text column.
+  join of a null-masked text column with a text column. Such a query returns
+  `ERR_QUERY_FAILED`.
 - `rowid` does not work on a masked table. A column qualified with the table's schema or catalog
   (`main.customers.email`) is refused with `ERR_UNSUPPORTED_SYNTAX`; write `customers.email` or
   use an alias. On a query with a post-query mask the code is `ERR_MASK_UNSUPPORTED_CONTEXT`.

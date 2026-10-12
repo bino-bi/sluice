@@ -175,6 +175,10 @@ type S3SinkConfig struct {
 type LoggingConfig struct {
 	Level  string `mapstructure:"level"`  // debug/info/warn/error
 	Format string `mapstructure:"format"` // json/text
+	// MaxErrorBytes cuts the text of a logged error after this many bytes.
+	// DuckDB quotes values of the statement in its messages, so without a
+	// cut a caller decides how long a log line gets. 0 turns the cut off.
+	MaxErrorBytes int `mapstructure:"maxErrorBytes"`
 }
 
 // TracingConfig controls OpenTelemetry span export. Disabled by default;
@@ -318,8 +322,9 @@ func DefaultServerConfig() ServerConfig {
 			Rebac:     RebacConfig{CacheTTL: 10 * time.Second, CacheSize: 10000},
 		},
 		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "json",
+			Level:         "info",
+			Format:        "json",
+			MaxErrorBytes: 4096,
 		},
 		Tracing: TracingConfig{
 			Protocol:    "grpc",
@@ -446,6 +451,7 @@ func setDefaults(v *viper.Viper, d ServerConfig) {
 
 	v.SetDefault("logging.level", d.Logging.Level)
 	v.SetDefault("logging.format", d.Logging.Format)
+	v.SetDefault("logging.maxErrorBytes", d.Logging.MaxErrorBytes)
 	v.SetDefault("tracing.enabled", d.Tracing.Enabled)
 	v.SetDefault("tracing.endpoint", d.Tracing.Endpoint)
 	v.SetDefault("tracing.protocol", d.Tracing.Protocol)

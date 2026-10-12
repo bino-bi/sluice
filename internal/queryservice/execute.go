@@ -336,11 +336,21 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	resp, execErr := s.opts.Executor.Execute(execCtx, execReq)
 	execSpan.End()
 	if execErr != nil {
-		setErrorCode(rec, execErr)
+		// Map first so the audit record carries the client code.
+		apiErr := execErrToAPI(execErr, qid)
+		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
 		releaseSlot()
-		return nil, execErrToAPI(execErr, qid)
+		if stderrors.Is(execErr, executor.ErrRejected) {
+			// The client only gets the code. The fault can also be in the
+			// SQL sluice wrote, so the cause must be in the log.
+			s.opts.Logger.Warn("query rejected by duckdb",
+				"query_id", qid,
+				"error", execErr.Error(),
+			)
+		}
+		return nil, apiErr
 	}
 
 	// 5b. Post-query mask decorators (FPE, fake, jitter, hmac). Build them
@@ -573,6 +583,8 @@ func execErrToAPI(err error, qid string) error {
 		return pkgerr.Wrap(pkgerr.CodeTimeout, err).WithQueryID(qid)
 	case stderrors.Is(err, executor.ErrAttach), stderrors.Is(err, executor.ErrConnUnavailable):
 		return pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, err).WithQueryID(qid)
+	case stderrors.Is(err, executor.ErrRejected):
+		return pkgerr.Wrap(pkgerr.CodeQueryFailed, err).WithQueryID(qid)
 	}
 	return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
 }

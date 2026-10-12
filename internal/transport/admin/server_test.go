@@ -3,10 +3,12 @@
 package admin_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -347,5 +349,31 @@ func TestRequestIDHeaderAlwaysSet(t *testing.T) {
 	srv.Handler().ServeHTTP(w, r)
 	if got := w.Header().Get("X-Admin-Request-Id"); got == "" {
 		t.Fatalf("missing X-Admin-Request-Id header")
+	}
+}
+
+type failingTailer struct{ err error }
+
+func (f failingTailer) Tail(context.Context, int) ([]*audit.Record, error) { return nil, f.err }
+
+// The client of an ERR_INTERNAL only gets the code, so the cause must be
+// in the log.
+func TestHandleAuditTail_InternalErrorIsLogged(t *testing.T) {
+	t.Parallel()
+	var log bytes.Buffer
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{
+		Audit:  failingTailer{err: errors.New("audit file: permission denied")},
+		Logger: slog.New(slog.NewJSONHandler(&log, nil)),
+	})
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/audit/tail", nil))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "ERR_INTERNAL") || strings.Contains(w.Body.String(), "permission") {
+		t.Fatalf("status = %d, body = %s, want 500 ERR_INTERNAL without the cause", w.Code, w.Body.String())
+	}
+	got := log.String()
+	for _, want := range []string{`"level":"ERROR"`, "audit file: permission denied"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log = %q, want it to contain %q", got, want)
+		}
 	}
 }

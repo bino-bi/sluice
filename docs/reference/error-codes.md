@@ -22,6 +22,7 @@ codes. Codes never change silently; additions require a CHANGELOG entry.
 | `ERR_POLICY_INVALID`            | 400   | policy document invalid                                        |
 | `ERR_TIMEOUT`                   | 504   | request timed out                                              |
 | `ERR_CANCELED`                  | 499   | request canceled                                               |
+| `ERR_QUERY_FAILED`              | 400   | the database rejected the query                                |
 | `ERR_RATE_LIMITED`              | 429   | too many requests                                              |
 | `ERR_BUDGET_EXCEEDED`           | 429   | query budget exceeded                                          |
 | `ERR_PAYLOAD_TOO_LARGE`         | 413   | payload too large                                              |

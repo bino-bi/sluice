@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	duckdb "github.com/duckdb/duckdb-go/v2"
 )
 
 // OutputFormat names the serialisation the caller wants back. MVP
@@ -170,9 +172,29 @@ func wrapRunErr(err error) error {
 		return fmt.Errorf("%w: %w", ErrCanceled, err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%w: %w", ErrExecute, err)
+	case rejectsStatement(err):
+		return fmt.Errorf("%w: %w: %w", ErrExecute, ErrRejected, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrExecute, err)
 	}
+}
+
+// rejectsStatement reports whether DuckDB refused the statement itself:
+// a name it does not know, a value that does not fit. Other types are left
+// out on purpose. Parser: on the rewrite path the caller's text has passed
+// DuckDB's parser, so the fault is in SQL sluice wrote. Permission: a
+// hardening refusal means a gate before DuckDB let the statement through.
+func rejectsStatement(err error) bool {
+	var de *duckdb.Error
+	if !errors.As(err, &de) {
+		return false
+	}
+	switch de.Type {
+	case duckdb.ErrorTypeBinder, duckdb.ErrorTypeCatalog, duckdb.ErrorTypeConversion,
+		duckdb.ErrorTypeInvalidInput, duckdb.ErrorTypeOutOfRange:
+		return true
+	}
+	return false
 }
 
 // sqlRowIterator is the JSON/CSV RowIterator backed by *sql.Rows. Scan

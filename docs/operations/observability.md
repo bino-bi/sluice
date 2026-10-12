@@ -13,13 +13,25 @@ for data (the MCP stdio transport owns it). Tune with:
 ```yaml
 # fragment — server config excerpt
 logging:
-  level: info    # debug | info | warn | error
-  format: json   # json | text
+  level: info          # debug | info | warn | error
+  format: json         # json | text
+  maxErrorBytes: 4096  # cut of a logged error text, 0 = no cut
 ```
 
 Secret values never reach a log line: sensitive material is wrapped in the
 `telemetry.Redacted` helper, which renders as `[redacted]` in every
 handler. This guarantee covers logs, panics, metrics, and audit records.
+
+The cause of a failed query is not redacted. An `ERR_INTERNAL` response is
+logged at `error` and an `ERR_QUERY_FAILED` response at `warn`, each with the
+`query_id` and the underlying error. The client only gets the code. A DuckDB
+message can hold a piece of the rewritten SQL, literals of the query and cell
+values, also of rows a row filter hides. Treat the log as sensitive.
+
+DuckDB quotes values of the statement in its messages, so a caller could write
+log lines of any size. The text of an `error` attribute is therefore cut after
+`logging.maxErrorBytes` bytes (default 4096) in every log line. `0` turns the
+cut off.
 
 ## Metrics
 
@@ -122,7 +134,8 @@ roots.
 
 Attribute policy: spans carry the query id, origin, decision, SQL
 fingerprint, catalog names, and error code — **never raw SQL and never
-secret bytes** (the same redaction posture as logs and metrics). The
+secret bytes** (metrics follow the same rule; a log line can hold SQL in
+the cause of a failed query, see [Logging](#logging)). The
 `query` span ends when the pipeline hands the row stream to the
 transport; row-streaming time is not included — the audit
 `query-result` record remains the source of truth for full duration.

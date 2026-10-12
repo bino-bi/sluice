@@ -63,6 +63,7 @@ audit:
 logging:
   level: info                  # debug | info | warn | error
   format: json                 # json | text
+  maxErrorBytes: 4096          # cut of a logged error text, 0 = no cut
 
 identity:
   apiKeyPepper: secret://env/SLUICE_APIKEY_PEPPER   # HMAC pepper for API keys

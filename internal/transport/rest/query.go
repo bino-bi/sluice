@@ -29,11 +29,11 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if err := dec.Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
 		if stderrors.As(err, &maxErr) {
-			writeError(w, r, pkgerr.New(pkgerr.CodePayloadTooLarge).
+			s.writeError(w, r, pkgerr.New(pkgerr.CodePayloadTooLarge).
 				WithMessage("request body exceeds limit"))
 			return
 		}
-		writeError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "invalid JSON body: %s", err.Error()))
+		s.writeError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "invalid JSON body: %s", err.Error()))
 		return
 	}
 	// Drain any trailing bytes to let keep-alive reuse the connection.
@@ -41,7 +41,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	format, err := negotiateFormat(r, req.Format)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	res, execErr := s.deps.Service.Execute(r.Context(), qreq)
 	if execErr != nil {
-		writeError(w, r, execErr)
+		s.writeError(w, r, execErr)
 		return
 	}
 	defer func() { _ = res.Rows.Close() }()
@@ -80,7 +80,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		// Unreachable because negotiateFormat has already filtered.
-		writeError(w, r, pkgerr.New(pkgerr.CodeInternal).
+		s.writeError(w, r, pkgerr.New(pkgerr.CodeInternal).
 			WithMessage("unsupported output format"))
 	}
 }

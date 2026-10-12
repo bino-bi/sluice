@@ -48,6 +48,7 @@ func (s *Server) handleApprovalDecision(accept bool) http.HandlerFunc {
 				"approval_id": id, "state": string(res.State), "note": "already decided with a different outcome",
 			})
 		case err != nil:
+			s.lg.Error("approval decision failed", "approval_id", id, "error", err.Error())
 			writeApprovalJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		default:
 			note := "recorded"

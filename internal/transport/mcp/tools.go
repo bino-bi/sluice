@@ -102,7 +102,7 @@ func (s *Server) toolCheckApproval(ctx context.Context, _ *sdkmcp.CallToolReques
 	user, _ := userFrom(ctx)
 	v, err := s.deps.Service.ApprovalStatus(ctx, user, in.ApprovalID)
 	if err != nil {
-		return toolErrorResult(err), ApprovalStatusOutput{}, nil
+		return s.toolErrorResult(ctx, err), ApprovalStatusOutput{}, nil
 	}
 	return approvalResult(v), approvalOutput(v), nil
 }
@@ -115,7 +115,7 @@ func (s *Server) toolAwaitApproval(ctx context.Context, _ *sdkmcp.CallToolReques
 	}
 	v, err := s.deps.Service.AwaitApproval(ctx, user, in.ApprovalID, time.Duration(secs)*time.Second)
 	if err != nil {
-		return toolErrorResult(err), ApprovalStatusOutput{}, nil
+		return s.toolErrorResult(ctx, err), ApprovalStatusOutput{}, nil
 	}
 	return approvalResult(v), approvalOutput(v), nil
 }
@@ -206,14 +206,14 @@ func (s *Server) toolExplainAccess(ctx context.Context, _ *sdkmcp.CallToolReques
 	if in.Table != "" {
 		ref, err := parseTableRef(in.Table)
 		if err != nil {
-			return toolErrorResult(pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())), ExplainAccessOutput{}, nil
+			return s.toolErrorResult(ctx, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())), ExplainAccessOutput{}, nil
 		}
 		input.Table = ref
 	}
 	input.SimulatedSQL = in.SQL
 	res, err := s.deps.Service.Explain(ctx, input)
 	if err != nil {
-		return toolErrorResult(err), ExplainAccessOutput{}, nil
+		return s.toolErrorResult(ctx, err), ExplainAccessOutput{}, nil
 	}
 	out := ExplainAccessOutput{
 		Subject:    res.Subject,
@@ -247,11 +247,11 @@ func (s *Server) toolListAccessibleTables(ctx context.Context, _ *sdkmcp.CallToo
 	user, _ := userFrom(ctx)
 	page, err := decodePage(in.Limit, in.Cursor)
 	if err != nil {
-		return toolErrorResult(err), ListTablesOutput{}, nil
+		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
 	tables, next, err := s.deps.Service.AccessibleTables(ctx, user, in.Catalog, page)
 	if err != nil {
-		return toolErrorResult(err), ListTablesOutput{}, nil
+		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
 	out := ListTablesOutput{Tables: make([]string, 0, len(tables))}
 	for _, t := range tables {
@@ -342,7 +342,7 @@ func (s *Server) toolExecuteSQL(ctx context.Context, _ *sdkmcp.CallToolRequest, 
 	}
 	res, err := s.deps.Service.Execute(ctx, qreq)
 	if err != nil {
-		return toolErrorResult(err), ExecuteSQLOutput{}, nil
+		return s.toolErrorResult(ctx, err), ExecuteSQLOutput{}, nil
 	}
 	defer func() { _ = res.Rows.Close() }()
 
@@ -357,7 +357,7 @@ func (s *Server) toolExecuteSQL(ctx context.Context, _ *sdkmcp.CallToolRequest, 
 	}
 	for res.Rows.Next() {
 		if err := res.Rows.Scan(ptrs...); err != nil {
-			return toolErrorResult(err), out, nil
+			return s.toolErrorResult(ctx, withQueryID(err, res.QueryID)), out, nil
 		}
 		row := make([]any, len(scan))
 		for i, v := range scan {
@@ -366,7 +366,7 @@ func (s *Server) toolExecuteSQL(ctx context.Context, _ *sdkmcp.CallToolRequest, 
 		out.Rows = append(out.Rows, row)
 	}
 	if err := res.Rows.Err(); err != nil {
-		return toolErrorResult(err), out, nil
+		return s.toolErrorResult(ctx, withQueryID(err, res.QueryID)), out, nil
 	}
 	if res.RowCount != nil {
 		out.RowCount = *res.RowCount
@@ -398,12 +398,12 @@ type CatalogEntry struct {
 func (s *Server) toolListCatalogs(ctx context.Context, _ *sdkmcp.CallToolRequest, _ ListCatalogsArgs) (*sdkmcp.CallToolResult, ListCatalogsOutput, error) {
 	user, _ := userFrom(ctx)
 	if s.deps.Catalogs == nil {
-		return toolErrorResult(pkgerr.New(pkgerr.CodeInternal).WithMessage("catalog lister not configured")),
+		return s.toolErrorResult(ctx, pkgerr.New(pkgerr.CodeInternal).WithMessage("catalog lister not configured")),
 			ListCatalogsOutput{}, nil
 	}
 	catalogs, err := s.deps.Service.ListCatalogs(ctx, s.deps.Catalogs, user)
 	if err != nil {
-		return toolErrorResult(err), ListCatalogsOutput{}, nil
+		return s.toolErrorResult(ctx, err), ListCatalogsOutput{}, nil
 	}
 	out := ListCatalogsOutput{
 		Catalogs: make([]CatalogEntry, 0, len(catalogs)),
@@ -438,11 +438,11 @@ func (s *Server) toolListTables(ctx context.Context, _ *sdkmcp.CallToolRequest, 
 	user, _ := userFrom(ctx)
 	page, err := decodePage(in.Limit, in.Cursor)
 	if err != nil {
-		return toolErrorResult(err), ListTablesOutput{}, nil
+		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
 	tables, next, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user, page)
 	if err != nil {
-		return toolErrorResult(err), ListTablesOutput{}, nil
+		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
 	out := ListTablesOutput{Tables: make([]string, 0, len(tables))}
 	for _, t := range tables {
@@ -478,12 +478,12 @@ func (s *Server) toolDescribeTable(ctx context.Context, _ *sdkmcp.CallToolReques
 	user, _ := userFrom(ctx)
 	ref, err := parseTableRef(in.Table)
 	if err != nil {
-		return toolErrorResult(pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())),
+		return s.toolErrorResult(ctx, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())),
 			DescribeTableOutput{}, nil
 	}
 	entry, err := s.deps.Service.DescribeTable(ctx, ref, user)
 	if err != nil {
-		return toolErrorResult(err), DescribeTableOutput{}, nil
+		return s.toolErrorResult(ctx, err), DescribeTableOutput{}, nil
 	}
 	out := DescribeTableOutput{
 		Table:   in.Table,

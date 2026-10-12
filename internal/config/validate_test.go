@@ -242,6 +242,15 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"mcp.tokenRef", "parsed but unimplemented"},
 		},
 		{
+			name:   "logged error cut switched off",
+			mutate: func(c *ServerConfig) { c.Logging.MaxErrorBytes = 0 },
+		},
+		{
+			name:    "negative logged error cut",
+			mutate:  func(c *ServerConfig) { c.Logging.MaxErrorBytes = -1 },
+			wantErr: []string{"logging.maxErrorBytes", "negative"},
+		},
+		{
 			name: "multiple violations all reported",
 			mutate: func(c *ServerConfig) {
 				c.Admin.TLS = &TLSConfig{CertFile: "cert.pem"} // missing keyFile

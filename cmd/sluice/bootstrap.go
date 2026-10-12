@@ -107,6 +107,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	})
 	telCfg.Logging.Level = parseLogLevel(scfg.Logging.Level)
 	telCfg.Logging.Format = strings.ToLower(scfg.Logging.Format)
+	telCfg.Logging.MaxErrorBytes = scfg.Logging.MaxErrorBytes
 	telCfg.Metrics.Enabled = scfg.Admin.Enabled
 	telCfg.Tracing = telemetry.TracingConfig{
 		Enabled:     scfg.Tracing.Enabled,

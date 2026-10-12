@@ -174,6 +174,40 @@ SELECT count(*) FROM t
 	}
 }
 
+// A statement DuckDB refuses for a name or a value is the statement's
+// fault and carries ErrRejected: one case per DuckDB error type. A file
+// read stopped by the hardening and a parser error do not: upstream they
+// must stay internal errors.
+func TestExecutorRejectedStatement(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	for sql, rejected := range map[string]bool{
+		"SELECT nosuch FROM (SELECT 1 AS a)":                true,  // binder
+		"SELECT 1 FROM nocat.main.t":                        true,  // binder
+		"SELECT * FROM memory.main.nosuch":                  true,  // catalog
+		"SELECT CAST(1 AS nosuchtype)":                      true,  // catalog
+		"SELECT CAST('x' AS INTEGER)":                       true,  // conversion
+		"SELECT strptime('***', '%Y-%m-%d')":                true,  // invalid input
+		"SELECT 1 = (SELECT a FROM (VALUES (1), (2)) v(a))": true,  // invalid input
+		"SET threads = 1":                                   true,  // invalid input
+		"SELECT 2147483647 + a FROM (SELECT 1 AS a)":        true,  // out of range
+		"SELECT count(*) FROM read_csv('/etc/hostname')":    false, // permission
+		"SELECT 1 +": false, // parser
+	} {
+		resp, err := e.Execute(context.Background(), executor.Request{SQL: sql})
+		if err == nil {
+			_ = resp.Rows.Close()
+			t.Errorf("%s: served, want an error", sql)
+			continue
+		}
+		if !errors.Is(err, executor.ErrExecute) {
+			t.Errorf("%s: err = %v, want ErrExecute", sql, err)
+		}
+		if got := errors.Is(err, executor.ErrRejected); got != rejected {
+			t.Errorf("%s: ErrRejected = %v, want %v (%v)", sql, got, rejected, err)
+		}
+	}
+}
+
 func TestExecutorAttachHookRuns(t *testing.T) {
 	var calls int
 	hook := func(_ context.Context, _ *sql.Conn) error {

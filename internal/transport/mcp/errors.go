@@ -3,12 +3,15 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bino-bi/sluice/internal/telemetry"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -18,7 +21,8 @@ import (
 // authors use to attach remediation hints (masked columns, a required
 // group/scope, a suggested narrower query) — is surfaced so the agent can
 // self-correct rather than only learning that it was denied.
-func toolErrorResult(err error) *sdkmcp.CallToolResult {
+func (s *Server) toolErrorResult(ctx context.Context, err error) *sdkmcp.CallToolResult {
+	telemetry.LogInternal(ctx, s.lg, err)
 	ae := pkgerr.FromError(err)
 	if ae == nil {
 		ae = pkgerr.New(pkgerr.CodeInternal)
@@ -41,6 +45,19 @@ func toolErrorResult(err error) *sdkmcp.CallToolResult {
 		},
 		IsError: true,
 	}
+}
+
+// withQueryID gives a row error the query_id of its result, so the log
+// line of an internal error names the query.
+func withQueryID(err error, qid string) error {
+	var ae *pkgerr.APIError
+	if !errors.As(err, &ae) {
+		return pkgerr.Wrap(pkgerr.CodeInternal, err).WithQueryID(qid)
+	}
+	if ae.QueryID == "" {
+		return ae.WithQueryID(qid)
+	}
+	return err
 }
 
 // renderTextTable produces a human-friendly ASCII table for the MCP

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/bino-bi/sluice/internal/telemetry"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -24,7 +25,7 @@ func (s *Server) handleAuditTail(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("n"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
-			writeAPIError(w, pkgerr.Newf(pkgerr.CodeSyntax, "invalid n=%s", raw))
+			s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "invalid n=%s", raw))
 			return
 		}
 		const maxN = 1000
@@ -35,7 +36,7 @@ func (s *Server) handleAuditTail(w http.ResponseWriter, r *http.Request) {
 	}
 	records, err := s.deps.Audit.Tail(r.Context(), n)
 	if err != nil {
-		writeAPIError(w, pkgerr.Wrap(pkgerr.CodeInternal, err))
+		s.writeAPIError(w, r, pkgerr.Wrap(pkgerr.CodeInternal, err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -50,13 +51,15 @@ func (s *Server) handleAuditTail(w http.ResponseWriter, r *http.Request) {
 
 // writeAPIError serialises an APIError (or a wrapped cause) with the
 // correct HTTP status pulled from pkg/errors.Status.
-func writeAPIError(w http.ResponseWriter, err error) {
+func (s *Server) writeAPIError(w http.ResponseWriter, r *http.Request, err error) {
+	telemetry.LogInternal(r.Context(), s.lg, err)
 	ae := pkgerr.FromError(err)
 	if ae == nil {
 		ae = pkgerr.New(pkgerr.CodeInternal)
 	}
 	body, mErr := json.Marshal(ae)
 	if mErr != nil {
+		telemetry.LogInternal(r.Context(), s.lg, mErr)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"code":"ERR_INTERNAL","message":"admin: error encoding"}`))

@@ -71,7 +71,8 @@ The rewriter wraps every FROM-reference to the matched tables in a
 subquery with `WHERE tenant_id = $1` and binds `$1` to the rendered
 template value. The underlying SQL engine never sees a literal tenant
 string — parameter binding is handled by DuckDB, so injection via the
-tenantId claim is impossible. The rewritten SQL is never logged; to
+tenantId claim is impossible. The rewritten SQL of a served query is not
+logged (the log line of a failed query can hold a piece of it); to
 inspect it, write a policy test with a `rewrittenSqlContains`
 expectation and run `./bin/sluice policy test policies.d`, or use
 `./bin/sluice policy explain`.

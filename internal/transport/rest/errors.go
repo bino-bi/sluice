@@ -6,19 +6,22 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/bino-bi/sluice/internal/telemetry"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 // writeError serialises an APIError into the response. The status is
 // derived from the error's code and the body carries the APIError JSON
 // shape defined in pkg/errors.
-func writeError(w http.ResponseWriter, _ *http.Request, err error) {
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	telemetry.LogInternal(r.Context(), s.lg, err)
 	ae := pkgerr.FromError(err)
 	if ae == nil {
 		ae = pkgerr.New(pkgerr.CodeInternal)
 	}
 	body, mErr := json.Marshal(ae)
 	if mErr != nil {
+		telemetry.LogInternal(r.Context(), s.lg, mErr)
 		writeInternalError(w)
 		return
 	}

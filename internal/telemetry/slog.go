@@ -3,10 +3,13 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	pkgerrors "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -19,6 +22,9 @@ func newSlogHandler(cfg LoggingConfig) slog.Handler {
 		out = os.Stderr
 	}
 	opts := &slog.HandlerOptions{Level: cfg.Level}
+	if cfg.MaxErrorBytes > 0 {
+		opts.ReplaceAttr = cutErrorAttr(cfg.MaxErrorBytes)
+	}
 	switch cfg.Format {
 	case "text":
 		return slog.NewTextHandler(out, opts)
@@ -55,6 +61,37 @@ func AttrError(err error) slog.Attr {
 		)
 	}
 	return slog.Group("error", slog.String("message", err.Error()))
+}
+
+// cutErrorAttr cuts the text of every "error" attribute after limit bytes.
+// DuckDB quotes values of the statement in its messages, so without a cut
+// a caller decides how long a log line gets.
+func cutErrorAttr(limit int) func([]string, slog.Attr) slog.Attr {
+	return func(_ []string, a slog.Attr) slog.Attr {
+		if a.Key != "error" || a.Value.Kind() == slog.KindGroup {
+			return a
+		}
+		if s := a.Value.String(); len(s) > limit {
+			a.Value = slog.StringValue(fmt.Sprintf("%s... (%d more bytes)", strings.ToValidUTF8(s[:limit], ""), len(s)-limit))
+		}
+		return a
+	}
+}
+
+// LogInternal logs err at ERROR when it reaches the client as ERR_INTERNAL.
+// The client only gets the code, so the cause has to be in the log: the
+// error an APIError wraps, else err itself. The cause is not redacted. A
+// DuckDB message can hold a piece of the rewritten SQL and values.
+func LogInternal(ctx context.Context, lg *slog.Logger, err error) {
+	api := pkgerrors.FromError(err)
+	if api == nil || api.Code != pkgerrors.CodeInternal {
+		return
+	}
+	cause := err
+	if c := errors.Unwrap(api); c != nil {
+		cause = c
+	}
+	lg.ErrorContext(ctx, "internal error", AttrQueryID(api.QueryID), slog.String("error", cause.Error()))
 }
 
 // Redacted wraps a sensitive value so its content never reaches a slog handler.

@@ -44,6 +44,11 @@ and the prior snapshot keeps serving. A bad file can therefore never take
 policies down — but it also means your fix isn't live until the *entire*
 directory validates again.
 
+The log line of a rejected reload lists the errors of all manifests. Like
+every logged error text it is cut after `logging.maxErrorBytes` bytes (default
+4096, see [Observability](observability.md)). For the full list run
+`sluice config validate`.
+
 A successful swap updates, atomically:
 
 - the compiled policy set (all kinds, including OPA modules, which are
