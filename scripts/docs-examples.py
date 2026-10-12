@@ -220,17 +220,19 @@ def config_keys(node, prefix=""):
         yield prefix
 
 
-def check_config_keys(example: Path) -> list[str]:
-    """Sluice ignores an unknown config key. Each key must be in the generated reference."""
+def check_config_keys(example: Path, scripts: list[Path]) -> list[str]:
+    """Sluice ignores an unknown config key. Each key must be a row of the generated reference."""
     import yaml  # from docs/requirements.txt
-    known = set(re.findall(r"`([A-Za-z][\w.\[\]]*)`", (ROOT / "docs/reference/configuration.md").read_text()))
+    reference = (ROOT / "docs/reference/configuration.md").read_text()
+    known = set(re.findall(r"^\| `([^`]+)` \|", reference, re.M))
+    named = {m for f in scripts for m in re.findall(r"--config[ =][\"']?([\w./-]+)", f.read_text())}
+    configs = {*example.glob("server*.y*ml"), *(example / n for n in named if (example / n).is_file())}
     errors = []
-    for cfg in sorted(example.glob("server*.yaml")):
+    for cfg in sorted(configs):
         doc = yaml.safe_load(cfg.read_text()) or {}
         for key in sorted(set(config_keys(doc))):
-            parts = key.split(".")
-            # A key is known by itself or as part of a documented map, such as tracing.headers.<name>.
-            if not any(".".join(parts[:i]) in known for i in range(len(parts), 0, -1)):
+            # An empty block has no leaf: accept it when a documented key lies below it.
+            if key not in known and not any(k.startswith(key + ".") for k in known):
                 errors.append(f"{cfg.relative_to(ROOT)}: config key {key!r} is not in reference/configuration.md")
     return errors
 
@@ -267,8 +269,12 @@ def run_example(example: Path, env: dict, update: bool) -> list[str]:
     shutil.rmtree(example / "data", ignore_errors=True)
 
     # Also suites in a folder that a step passes to --tests, such as policy-testing/failing.
-    named = {m for step in steps for m in re.findall(r"--tests[ =]([\w./-]+)", step.read_text())}
-    extra = [f for d in sorted(named - {"tests"}) for f in sorted((example / d).glob("*.y*ml"))]
+    named = {m for step in steps for m in re.findall(r"--tests[ =][\"']?([\w./-]+)", step.read_text())}
+    extra = []
+    for name in sorted(named - {"tests"}):
+        path = example / name
+        extra += [path] if path.is_file() else sorted(path.glob("*.y*ml"))
+    extra = [f for f in extra if f not in suites]
     for suite in [*suites, *extra]:
         errors += check_suite(suite)
     # --strict: a field that Sluice would ignore is an error in a file the docs show.
@@ -282,7 +288,7 @@ def run_example(example: Path, env: dict, update: bool) -> list[str]:
                            cwd=example, env=env, capture_output=True, text=True)
         if r.returncode != 0:
             errors.append("policy test failed:\n" + r.stdout + r.stderr)
-    errors += check_config_keys(example)
+    errors += check_config_keys(example, [f for f in [example / "serve.sh", *steps] if f.is_file()])
 
     keep_file = example / "expected" / "keep"
     keep = set(keep_file.read_text().split()) if keep_file.exists() else set()

@@ -62,7 +62,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A person who controls the host | Nothing. This person can read every secret and change policies | Protect the host |
 | The holder of the admin token | Nothing. The admin API shows policies and audit records | Give the token to operators only |
 | A subject learns about one person from many counts and sums | Nothing | Allow such subjects only tables without personal data |
-| After an accepted `SET`, a query names a table without catalog and gets around policies that name a catalog or schema | Nothing. See [Request lifecycle](../architecture/request-lifecycle.md) | Set `resources` with catalog, schema and table in every allow policy, the catalog without a wildcard |
+| After an accepted `SET`, a query names a table without catalog and gets around policies that name a catalog or schema without a wildcard | Nothing. See [Request lifecycle](../architecture/request-lifecycle.md) | Set `resources` with catalog, schema and table in every allow policy, the catalog without a wildcard |
 
 In most rows, a statement that no allow policy matches gets `ACL_DENIED` instead of the row's code. With `resources` in every allow policy, this covers `BEGIN`, `ATTACH`, `INSTALL`, `LOAD` and most DDL.
 
