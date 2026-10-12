@@ -15,7 +15,7 @@ Base: commit 6f7b99f (`main`). Work: branch `docs/simplify`. The docs describe `
 | Every diagram is still present and renders | Met | Style check compares each diagram with its stored copy |
 | `mkdocs build --strict` passes, no broken links | Met | Part of `make docs-check`. Link and heading checks are turned on in `mkdocs.yml` |
 | The automated style check passes | Met | Part of `make docs-check` |
-| Prose words are down by at least 40% | Met: 45% | Table below |
+| Prose words are down by at least 40% | Met: 41% | Table below |
 | The report lists what was removed, merged, and every mismatch | Met | This file |
 
 ## Prose words before and after
@@ -25,15 +25,15 @@ Counted with `scripts/docs-wordcount.py`. Code blocks are not counted. Tables ar
 | Section | Pages before | Pages after | Words before | Words after | Change |
 |---|---:|---:|---:|---:|---:|
 | home | 1 | 1 | 328 | 180 | -45% |
-| getting-started | 4 | 2 | 1728 | 640 | -63% |
-| architecture | 4 | 3 | 4063 | 1207 | -70% |
-| policies | 13 | 13 | 9887 | 5224 | -47% |
-| operations | 6 | 6 | 3380 | 1922 | -43% |
-| security | 5 | 5 | 3390 | 2239 | -34% |
+| getting-started | 4 | 2 | 1728 | 685 | -60% |
+| architecture | 4 | 3 | 4063 | 1319 | -68% |
+| policies | 13 | 13 | 9887 | 5841 | -41% |
+| operations | 6 | 6 | 3380 | 2006 | -41% |
+| security | 5 | 5 | 3390 | 2487 | -27% |
 | compliance | 4 | 0 | 1443 | 0 | -100% |
-| reference | 9 | 10 | 4945 | 4741 | -4% |
-| cookbook | 7 | 7 | 2670 | 1245 | -53% |
-| **total** | 53 | 47 | 31834 | 17398 | **-45%** |
+| reference | 9 | 10 | 4945 | 4964 | 0% |
+| cookbook | 7 | 7 | 2670 | 1288 | -52% |
+| **total** | 53 | 47 | 31834 | 18770 | **-41%** |
 
 The target was at least 40% less. Reference shrinks least: its tables now list every working field, flag and key, and it holds the new glossary.
 
@@ -290,7 +290,7 @@ Line numbers refer to the pages at commit 6f7b99f.
 
 ## Examples
 
-36 example folders under `examples/`, 28 of them start a local server. 150 steps have golden output, and 26 suites run with `sluice policy test`. `make docs-check` runs all of them in about one minute.
+36 example folders under `examples/`, 28 of them start a local server. 164 steps have golden output. 29 suites with 217 cases run with `sluice policy test`. `make docs-check` runs all of them in about 80 seconds.
 
 Every code block in `docs/` is a snippet include of one of these files. The only exceptions are the four Mermaid diagrams and the ASCII pipeline on the home page. `scripts/docs-style-check.py` enforces this.
 
@@ -326,7 +326,7 @@ Two examples use a stand-in for an outside service: `rebac` has a small stub of 
 
 ### Shown in the docs, not executed
 
-The check cannot run these files. They get a syntax check only (`bash -n`, JSON or YAML parse).
+The check cannot run these files. They get a syntax check only: `bash -n`, or a JSON, YAML or unit file parse.
 
 | File | Why it is not run |
 |---|---|
@@ -392,13 +392,32 @@ The docs task did not change product code. These findings are for the maintainer
 | CLI | `sluice policy test` exits 1 on a policy compile error, the help says 3. `sluice schema export` without `--kind` exits 1. `sluice budget show` deletes old rows |
 | MCP | `list_tables` and `list_accessible_tables` are empty until `describe_table` fills the schema cache. `sluice mcp` over stdio cannot finish an approval |
 | Data sources | A removed SQLite file returns `ERR_INTERNAL`, not `ERR_DATASOURCE_UNAVAILABLE` |
-| REST | `GET /openapi.json` returns a stub |
+| REST | `GET /openapi.json` is public and names paths without describing an operation |
+| MCP over HTTP | The listener on `mcp.listen` has no TLS setting and no rate limit before login |
+| Audit | The hash chain has no secret key. `sluice audit verify` accepts a log whose later hashes were computed again. The help text says a line that is not JSON exits 1, the command exits 4 |
+| Limits | A row limit and `rowsPerDay` count result rows. One aggregate such as `list()` returns a whole table in one row |
+| Reject rules | In a `UNION` the `query.*` values describe only the first SELECT. `query.joins` does not count a comma join |
+| Masks | `sluice policy validate` accepts a `saltRef` or `keyRef` that is not a secret reference. Queries on the table then return 500 |
+| Approvals | A link preview that sends a plain `GET` decides the approval. Only `HEAD` and prefetch headers are ignored |
+| Statements | `SET` reaches DuckDB for a subject with an allow policy without `resources` |
 | Docker examples | The container runs as uid 65532 and may not be able to write to the `./data` mount. Not checked, Docker was not available |
 
 One more finding was reported to the maintainer directly and is not described here.
+
+## Independent review
+
+Fresh agents that wrote no page checked the work against the task rules and the code. They ran the examples, sent their own queries to scratch servers and compared each page with its old version.
+
+| Round | Scope | Serious | Minor | Result |
+|---|---|---:|---:|---|
+| 1 | All pages, examples, scripts and this report | 26 | 78 | All serious findings were real and are fixed. 76 minor findings are fixed, 2 are open points below |
+| 2 | The fixes of round 1 | ROUND2 | ROUND2 | ROUND2 |
+
+Most serious findings of round 1 were limits or security claims that were stated too broadly, and refused SQL forms that the first rewrite had cut. Each such fix is pinned by a test case or a step.
 
 ## Open points
 
 - CI: `.github/workflows/docs-check.yaml` runs `make docs-check` on pull requests and on pushes to `main`. It has not run yet, because no pull request exists for this branch.
 - The Docker paths in the docs and the compose files were not run.
+- The Quickstart shows `git clone`, `make build` and the start script from files under `examples/install/manual/`. The maintainer agreed to `manual/` for docker, cosign, systemd and client config. This use is wider and needs a decision.
 - No `CLAUDE.md` or `AGENTS.md` exists in the repository, so nothing links to `docs-style.md` from such a file. `examples/README.md` and the Makefile name it.
