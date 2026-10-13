@@ -146,6 +146,7 @@ func TestLoadServer_EnvSetsKeyWithoutDefault(t *testing.T) {
 	t.Setenv("SLUICE_AUDIT__S3__INSECURE", "true")
 	t.Setenv("SLUICE_POLICIES__COMPOSITE__MEMBERS", "yaml,opa")
 	t.Setenv("SLUICE_LIMITS__QUERYTIMEOUT", "7s")
+	t.Setenv("SLUICE_LIMITS__MAXRESULTBYTES", "1024")
 
 	cfg, err := LoadServer("", nil)
 	if err != nil {
@@ -170,6 +171,12 @@ func TestLoadServer_EnvSetsKeyWithoutDefault(t *testing.T) {
 	}
 	if got := strings.Join(cfg.Policies.Composite.Members, ","); got != "yaml,opa" {
 		t.Errorf("policies.composite.members = %q, want yaml,opa", got)
+	}
+	if cfg.Limits.MaxResultBytes != 1024 {
+		t.Errorf("limits.maxResultBytes = %d, want 1024", cfg.Limits.MaxResultBytes)
+	}
+	if def := DefaultServerConfig(); def.Limits.MaxResultBytes != 64<<20 {
+		t.Errorf("default limits.maxResultBytes = %d, want 64 MiB", def.Limits.MaxResultBytes)
 	}
 	if cfg.Limits.QueryTimeout != 7*time.Second {
 		t.Errorf("limits.queryTimeout = %v, want 7s", cfg.Limits.QueryTimeout)

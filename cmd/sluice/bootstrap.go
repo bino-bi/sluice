@@ -331,6 +331,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Limits: queryservice.Limits{
 			DefaultMaxRows:         scfg.Limits.MaxRows,
 			MaxRowsCeiling:         scfg.Limits.MaxRowsCeiling,
+			MaxResultBytes:         scfg.Limits.MaxResultBytes,
 			DefaultTimeout:         scfg.Limits.QueryTimeout,
 			MaxTimeout:             scfg.Limits.MaxQueryTimeout,
 			MaxSQLBytes:            scfg.Limits.MaxSQLBytes,

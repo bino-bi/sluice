@@ -98,6 +98,10 @@ type Limits struct {
 	// than the default row count.
 	MaxRowsCeiling int64
 
+	// MaxResultBytes caps the size of a result, see executor.Request.
+	// Zero means no cap.
+	MaxResultBytes int64
+
 	// DefaultTimeout is applied when QueryRequest.Timeout is zero.
 	DefaultTimeout time.Duration
 

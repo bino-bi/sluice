@@ -148,6 +148,15 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"admin.tls", "certFile and keyFile"},
 		},
 		{
+			name:    "negative result size cap rejected",
+			mutate:  func(c *ServerConfig) { c.Limits.MaxResultBytes = -1 },
+			wantErr: []string{"limits.maxResultBytes"},
+		},
+		{
+			name:   "result size cap turned off",
+			mutate: func(c *ServerConfig) { c.Limits.MaxResultBytes = 0 },
+		},
+		{
 			name: "mcp.tls with cert and key is valid",
 			mutate: func(c *ServerConfig) {
 				c.MCP.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}

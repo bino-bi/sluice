@@ -86,6 +86,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `identity.apiKeyPepper` |  | Secret reference: pepper for API key hashes. |
 | `limits.maxRows` | `100000` | Row limit when the request sets none. |
 | `limits.maxRowsCeiling` | `100000` | Highest row limit a request can set. |
+| `limits.maxResultBytes` | `67108864` | Size limit of a result in bytes. Sluice cuts the result before the row that crosses it. `0` means no limit. |
 | `limits.maxSqlBytes` | `1048576` | Largest SQL text. |
 | `limits.queryTimeout` | `30s` | Timeout when the request sets none. |
 | `limits.maxQueryTimeout` | `30s` | Longest timeout a request can set. |

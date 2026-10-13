@@ -211,6 +211,7 @@ type IdentityConfig struct {
 type LimitsConfig struct {
 	MaxRows             int64         `mapstructure:"maxRows"`
 	MaxRowsCeiling      int64         `mapstructure:"maxRowsCeiling"`
+	MaxResultBytes      int64         `mapstructure:"maxResultBytes"`
 	MaxSQLBytes         int           `mapstructure:"maxSqlBytes"`
 	QueryTimeout        time.Duration `mapstructure:"queryTimeout"`
 	MaxQueryTimeout     time.Duration `mapstructure:"maxQueryTimeout"`
@@ -340,6 +341,7 @@ func DefaultServerConfig() ServerConfig {
 		Limits: LimitsConfig{
 			MaxRows:         100_000,
 			MaxRowsCeiling:  100_000,
+			MaxResultBytes:  64 << 20,
 			MaxSQLBytes:     1 << 20,
 			QueryTimeout:    30 * time.Second,
 			MaxQueryTimeout: 30 * time.Second,

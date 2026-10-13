@@ -130,6 +130,7 @@ var meaning = map[string]string{
 
 	"limits.maxRows":             "Row limit when the request sets none.",
 	"limits.maxRowsCeiling":      "Highest row limit a request can set.",
+	"limits.maxResultBytes":      "Size limit of a result in bytes. Sluice cuts the result before the row that crosses it. `0` means no limit.",
 	"limits.maxSqlBytes":         "Largest SQL text.",
 	"limits.queryTimeout":        "Timeout when the request sets none.",
 	"limits.maxQueryTimeout":     "Longest timeout a request can set.",

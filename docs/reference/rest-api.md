@@ -50,7 +50,7 @@ The table has 4 rows, so `truncated` is `true`.
 | `columns` | array | Column names. |
 | `rows` | array | One array per row. |
 | `row_count` | int | Number of returned rows. |
-| `truncated` | bool | `true` when the row limit cut the result. |
+| `truncated` | bool | `true` when the row limit or `limits.maxResultBytes` cut the result. |
 | `warning` | object | Set when truncated, with `code` `ERR_RESULT_TRUNCATED`. |
 
 With `format: csv` the body is CSV:

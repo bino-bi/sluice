@@ -344,12 +344,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 
 	// 5. Execute.
 	execReq := executor.Request{
-		QueryID: qid,
-		SQL:     rewriteResp.SQL,
-		Params:  rewriteResp.Params,
-		MaxRows: req.MaxRows,
-		Timeout: req.Timeout,
-		Format:  req.Format,
+		QueryID:  qid,
+		SQL:      rewriteResp.SQL,
+		Params:   rewriteResp.Params,
+		MaxRows:  req.MaxRows,
+		MaxBytes: s.opts.Limits.MaxResultBytes,
+		Timeout:  req.Timeout,
+		Format:   req.Format,
 	}
 	execCtx, execSpan := s.tracer.Start(ctx, "query.execute")
 	resp, execErr := s.opts.Executor.Execute(execCtx, execReq)

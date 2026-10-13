@@ -294,6 +294,7 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 			MaxRowsCeiling: 10,
 			DefaultTimeout: 30 * time.Second,
 			MaxTimeout:     5 * time.Second,
+			MaxResultBytes: 4096,
 		},
 	})
 	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
@@ -308,6 +309,9 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 	_ = res.Rows.Close()
 	if ex.lastReq.MaxRows != 10 {
 		t.Errorf("MaxRows = %d, want clamped to 10", ex.lastReq.MaxRows)
+	}
+	if ex.lastReq.MaxBytes != 4096 {
+		t.Errorf("MaxBytes = %d, want the limit 4096", ex.lastReq.MaxBytes)
 	}
 	if ex.lastReq.Timeout != 5*time.Second {
 		t.Errorf("Timeout = %s, want clamped to 5s", ex.lastReq.Timeout)
