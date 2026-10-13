@@ -315,6 +315,7 @@ func TestExecutorMaxBytes(t *testing.T) {
 		{"one row that holds a whole table", "SELECT list(i) FROM range(100000) AS t(i)", 1000, 0, 0, true},
 		{"a list of NULLs has a size too", "SELECT list(NULL) FROM range(100000)", 1000, 0, 0, true},
 		{"nested values count their parts", "SELECT {'a': [repeat('x', 600)], 'b': MAP {'k': repeat('y', 600)}}", 1000, 0, 0, true},
+		{"a big number counts its digits", "SELECT ('1' || repeat('0', 100000))::BIGNUM", 1000, 0, 0, true},
 		{"0 turns the cap off", "SELECT list(i) FROM range(100000) AS t(i)", 0, 0, 1, false},
 		{"the row cap still applies", "SELECT i FROM range(100) AS t(i)", 1 << 20, 10, 10, true},
 	} {

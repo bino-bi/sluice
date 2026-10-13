@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -241,8 +242,10 @@ type sqlRowIterator struct {
 }
 
 // valueBytes estimates the size of a value in a result: 8 bytes per value
-// plus the length of a text or byte value, and the sum of the parts for a
-// nested value. Every value counts, so a list of NULLs has a size too.
+// plus the length of a text, byte or big number value, and the sum of the
+// parts for a nested value. Every value counts, so a list of NULLs has a
+// size too. It is no wire size: JSON can need a few times more for a
+// number or a control character.
 func valueBytes(v any) int64 {
 	n := int64(8)
 	switch x := v.(type) {
@@ -267,6 +270,15 @@ func valueBytes(v any) int64 {
 		}
 	case duckdb.Union:
 		n += int64(len(x.Tag)) + valueBytes(x.Value)
+	case *big.Int:
+		// A BIGNUM has no fixed size. Three bits give at most one digit.
+		if x != nil {
+			n += int64(x.BitLen() / 3)
+		}
+	case duckdb.Decimal:
+		if x.Value != nil {
+			n += int64(x.Value.BitLen() / 3)
+		}
 	}
 	return n
 }
