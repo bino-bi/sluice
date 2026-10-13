@@ -49,8 +49,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	defer func() { endQuerySpan(span, finalRec) }()
 
 	// 0. Concurrency + input caps.
-	if err := s.acquireSlot(ctx); err != nil {
-		return nil, err
+	if !s.acquireSlot(ctx) {
+		rec := s.buildAuditBase(req, qid, nil)
+		finalRec = rec
+		rec.Decision = audit.DecisionError
+		rec.ErrorCode = string(pkgerr.CodeRateLimited)
+		rec.Message = "service saturated"
+		s.emit(ctx, rec, start)
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).
+			WithQueryID(qid).
+			WithMessage("service saturated")
 	}
 	releaseSlot := s.releaseFn()
 
@@ -431,6 +439,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		start:    start,
 		parent:   qr,
 		truncSrc: &resp.Truncated,
+		subject:  rec.Subject,
+		origin:   rec.Origin,
+		remoteIP: rec.RemoteIP,
 	}
 	// Budget usage: capture the execute duration now (excludes client
 	// streaming so a slow reader does not burn budget); rows are known at
@@ -454,13 +465,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 // acquireSlot grabs a semaphore token when MaxConcurrent is set. Returns
 // ERR_RATE_LIMITED when the limit is reached and the context's deadline
 // fires (or immediately when no deadline is set).
-func (s *Service) acquireSlot(ctx context.Context) error {
+func (s *Service) acquireSlot(ctx context.Context) bool {
 	if s.sem == nil {
-		return nil
+		return true
 	}
 	select {
 	case s.sem <- struct{}{}:
-		return nil
+		return true
 	default:
 	}
 	// Wait up to ctx or a short grace period.
@@ -468,11 +479,11 @@ func (s *Service) acquireSlot(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case s.sem <- struct{}{}:
-		return nil
+		return true
 	case <-ctx.Done():
-		return pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+		return false
 	case <-timer.C:
-		return pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+		return false
 	}
 }
 

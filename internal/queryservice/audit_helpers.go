@@ -242,6 +242,11 @@ type auditedRows struct {
 	// the row iterator flips during iteration — after the QueryResult
 	// was constructed. Synced onto parent at stream end / Close.
 	truncSrc *bool
+	// Who got the rows, copied from the access record. That record is
+	// already enqueued and must not be shared.
+	subject  audit.Subject
+	origin   string
+	remoteIP string
 	// Budget write-back (set only when a budget manager is configured).
 	recordBudget  bool
 	budgetSubject string
@@ -301,6 +306,9 @@ func (r *auditedRows) Close() error {
 		EventType: audit.EventQueryResult,
 		QueryID:   r.qid,
 		Decision:  audit.DecisionAllow,
+		Subject:   r.subject,
+		Origin:    r.origin,
+		RemoteIP:  r.remoteIP,
 	}
 	if r.parent != nil {
 		if r.parent.RowCount != nil {

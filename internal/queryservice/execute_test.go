@@ -231,6 +231,7 @@ func TestExecute_HappyPath(t *testing.T) {
 	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
 		SQL:    "SELECT id, name FROM pg.public.orders",
 		Origin: queryservice.OriginREST,
+		User:   &identity.UserCtx{Subject: "alice", RemoteAddr: "10.1.2.3"},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -270,6 +271,11 @@ func TestExecute_HappyPath(t *testing.T) {
 	}
 	if result.RowCount != 2 {
 		t.Fatalf("result row_count = %d, want 2", result.RowCount)
+	}
+	// The result record names who got the rows, like the access record.
+	if result.Subject.ID != access.Subject.ID || result.Subject.ID == "" || result.Origin != access.Origin || result.RemoteIP != access.RemoteIP {
+		t.Fatalf("result record: subject %+v origin %q remote_ip %q, want those of the access record (%+v, %q, %q)",
+			result.Subject, result.Origin, result.RemoteIP, access.Subject, access.Origin, access.RemoteIP)
 	}
 }
 
@@ -311,6 +317,61 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 type denyingRateLimiter struct{}
 
 func (denyingRateLimiter) Allow(_, _ string) bool { return false }
+
+// blockingExecutor holds every call until release is closed.
+type blockingExecutor struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingExecutor) Execute(context.Context, executor.Request) (*executor.Response, error) {
+	e.started <- struct{}{}
+	<-e.release
+	return nil, errors.New("released")
+}
+
+// A request refused because every concurrency slot is in use leaves an
+// audit record, and the client gets a query id for it.
+func TestExecute_SlotFullIsAudited(t *testing.T) {
+	a := &fakeAudit{}
+	ex := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    a,
+		Limits:   queryservice.Limits{MaxConcurrent: 1},
+	})
+	req := queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+		User:   &identity.UserCtx{Subject: "alice", RemoteAddr: "10.1.2.3"},
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.Execute(context.Background(), req)
+	}()
+	<-ex.started // the first request holds the only slot
+
+	_, err := svc.Execute(context.Background(), req)
+	ae := pkgerr.FromError(err)
+	if err == nil || ae.Code != pkgerr.CodeRateLimited || ae.QueryID == "" {
+		t.Fatalf("err = %v (query id %q), want ERR_RATE_LIMITED with a query id", err, ae.QueryID)
+	}
+	var refused []*audit.Record
+	for _, rec := range a.all() {
+		if rec.ErrorCode == string(pkgerr.CodeRateLimited) {
+			refused = append(refused, rec)
+		}
+	}
+	if len(refused) != 1 || refused[0].QueryID != ae.QueryID || refused[0].Subject.ID != "alice" || refused[0].Message != "service saturated" {
+		t.Fatalf("records of the refused request = %+v, want one with its query id, the subject and the message", refused)
+	}
+	close(ex.release)
+	<-done
+}
 
 func TestExecute_RateLimitedSubject(t *testing.T) {
 	a := &fakeAudit{}

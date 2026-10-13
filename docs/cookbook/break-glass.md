@@ -62,7 +62,7 @@ The `sre` group alone gives no access. This suite case proves it.
 
 - The audit record does not say that the mask was lifted. `policies_applied` still lists `mask-email`, and Sluice writes no separate record.
 - The only sign is that `rewritten_fingerprint` equals `sql_fingerprint`: Sluice ran the SQL unchanged.
-- To find such queries, search the `query` records for the group. The `query-result` records have an empty `subject`.
+- To find such queries, search the `query` records for the group.
 - The `exclude` is always on. For access that a person accepts each time, use an [approval](approval-workflow.md).
 
 ## See also

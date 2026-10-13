@@ -146,7 +146,7 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 
 - Parse and rewrite errors show only if the policies allow the statement. A deny or reject comes first.
 - `ERR_SYNTAX` also covers a table alias that is a DuckDB keyword and an unquoted identifier with a non-letter Unicode character.
-- A request stopped by the transport limits, the login or `limits.maxConcurrent` leaves no audit record.
+- A request stopped by the transport limits or the login leaves no audit record.
 - With `cache.rewrite.enabled`, a cached rewrite keeps the old column list of a masked table until `cache.rewrite.ttl` ends or a reload.
 
 ## See also
