@@ -306,3 +306,36 @@ func TestListTables_VisibilityIsCheckedAsSelect(t *testing.T) {
 		t.Errorf("tables = %v, want shop.main.orders", got)
 	}
 }
+
+// recordingPolicy keeps the input of the last Explain call.
+type recordingPolicy struct {
+	denyingPolicy
+	explained policy.Input
+}
+
+func (p *recordingPolicy) Explain(_ context.Context, in policy.Input) (*pkgapi.ExplainResult, error) {
+	p.explained = in
+	return &pkgapi.ExplainResult{}, nil
+}
+
+// Explain for a table without SQL asks about a read, like the list tools.
+func TestExplain_TableOnlyIsARead(t *testing.T) {
+	pol := &recordingPolicy{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   pol,
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    &fakeAudit{},
+		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+	})
+	_, err := svc.Explain(context.Background(), queryservice.ExplainInput{
+		Table: parser.TableRef{Catalog: "shop", Schema: "main", Table: "orders"},
+	})
+	if err != nil {
+		t.Fatalf("Explain: %v", err)
+	}
+	if got := policy.ActionOf(pol.explained); got != pkgapi.ActionSelect {
+		t.Errorf("action = %q, want SELECT", got)
+	}
+}

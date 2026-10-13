@@ -101,7 +101,7 @@ A lookup of a missing claim is an error, not `false`. Sluice then denies the who
 - No variable holds the current time.
 - Most `query.*` values do not read subqueries. See [Rejects and rewrites](guardrails.md).
 - The client sets its headers and its user agent. Trust them only when a proxy that you control sets them.
-- Only queries carry `request.*` values. The MCP tools that list or describe tables, `explain_access` and the admin API see empty values.
+- Only queries carry `request.*` values. The MCP tools that list or describe tables, `explain_access` and the admin API see empty values. So a condition on `request.*` can hide a table from the lists that a query may read.
 - A row filter has its own CEL form. See [Row filters](row-filters.md).
 
 ## See also

@@ -49,8 +49,10 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 		tables = append(tables, in.Table)
 	}
 
+	// Without SQL the question is about a read of the table.
 	result, err := s.opts.Policy.Explain(ctx, policy.Input{
 		User: in.User, AST: ast, Shape: shape, Tables: tables, Now: start,
+		Action: pkgapi.ActionSelect,
 	})
 	rec := &audit.Record{
 		EventType: audit.EventAdminAction,

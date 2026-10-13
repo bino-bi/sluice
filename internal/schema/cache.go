@@ -4,6 +4,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -182,12 +183,15 @@ func (c *lruCache) Get(ctx context.Context, key Key) (*Entry, error) {
 	// re-check make concurrent misses a true singleflight: the first
 	// loader populates the catalog, and the rest see that a load ended
 	// while they waited and skip the redundant introspection.
-	if err := c.loadCatalogForKey(ctx, key, c.loadCount(key.Catalog)); err != nil {
+	err := c.loadCatalogForKey(ctx, key, c.loadCount(key.Catalog))
+	// The name comes from the caller. One that is no catalog gets no
+	// label: a series per made-up name would grow without bound.
+	if !errors.Is(err, ErrUnknownCatalog) {
+		c.metrics.miss(key.Catalog)
+	}
+	if err != nil {
 		return nil, err
 	}
-	// Counted only for a catalog that loads. The name comes from the
-	// caller, and a label per made-up name would grow without bound.
-	c.metrics.miss(key.Catalog)
 	if e, ok := c.entries.Get(key); ok {
 		return e, nil
 	}
@@ -251,9 +255,17 @@ func (c *lruCache) Load(ctx context.Context, catalogs []string) {
 		lock.Lock()
 		// Another caller may have read the catalog while this one waited.
 		if c.needsLoad(cat) {
+			c.mu.Lock()
+			gen := c.gen
+			c.mu.Unlock()
 			if err := c.reloadCatalogLocked(ctx, cat); err != nil {
+				// No retry wait when the caller went away, which is no
+				// failure of the data source, or when an invalidation
+				// during the load asked for a fresh read.
 				c.mu.Lock()
-				c.failed[cat] = c.opts.Clock()
+				if ctx.Err() == nil && c.gen == gen {
+					c.failed[cat] = c.opts.Clock()
+				}
 				c.mu.Unlock()
 				c.opts.Logger.WarnContext(ctx, "schema: load failed",
 					slog.String("catalog", cat),
@@ -364,7 +376,9 @@ func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) erro
 	c.mu.Unlock()
 	start := c.opts.Clock()
 	sch, err := c.opts.Loader.Load(ctx, catalog)
-	c.metrics.observeRefresh(c.opts.Clock().Sub(start).Seconds())
+	if !errors.Is(err, ErrUnknownCatalog) {
+		c.metrics.observeRefresh(c.opts.Clock().Sub(start).Seconds())
+	}
 	if err != nil {
 		c.markCatalogStale(catalog)
 		return fmt.Errorf("%w: %w", ErrLoadFailed, err)
