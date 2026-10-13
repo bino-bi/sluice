@@ -83,7 +83,9 @@ type DuckDBConfig struct {
 	ConnMaxIdle time.Duration `mapstructure:"connMaxIdle"`
 }
 
-// DataSourcesConfig locates the directory of DataSource YAML manifests.
+// DataSourcesConfig controls how data sources are attached. Directory is
+// not read: DataSource manifests load from policies.directory, and Validate
+// refuses the key.
 type DataSourcesConfig struct {
 	Directory string `mapstructure:"directory"`
 	FailFast  bool   `mapstructure:"failFast"`
@@ -311,8 +313,7 @@ func DefaultServerConfig() ServerConfig {
 			ConnMaxIdle: 5 * time.Minute,
 		},
 		DataSources: DataSourcesConfig{
-			Directory: "./datasources.d",
-			FailFast:  true,
+			FailFast: true,
 		},
 		Policies: PoliciesConfig{
 			Directory: "./policies.d",

@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/bino-bi/sluice/internal/secrets"
 )
@@ -32,6 +33,17 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.Logging.MaxErrorBytes < 0 {
 		errs = append(errs, fmt.Errorf("logging.maxErrorBytes: %d is negative (0 turns the cut off)", c.Logging.MaxErrorBytes))
+	}
+	errs = append(errs, validatePolicyEngine(c.Policies)...)
+	if c.DataSources.Directory != "" {
+		errs = append(errs, errors.New(
+			"datasources.directory: not read: DataSource manifests load from policies.directory, remove the key"))
+	}
+	// A plain text is the token itself.
+	if strings.HasPrefix(c.Admin.Token, "secret://") {
+		if err := checkSecretRef("admin.token", c.Admin.Token); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if c.DataSources.Reload {
 		errs = append(errs, errors.New(
@@ -102,6 +114,35 @@ func (c *ServerConfig) Validate() error {
 			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
 	}
 	return errors.Join(errs...)
+}
+
+// validatePolicyEngine checks the engine names and what an engine needs.
+// The start would fail on the same faults, `sluice config validate` must
+// find them first.
+func validatePolicyEngine(p PoliciesConfig) []error {
+	needsModuleDir := false
+	var errs []error
+	switch p.Engine {
+	case "", "yaml":
+	case "opa":
+		needsModuleDir = true
+	case "composite":
+		for i, m := range p.Composite.Members {
+			switch m {
+			case "yaml", "rebac":
+			case "opa":
+				needsModuleDir = true
+			default:
+				errs = append(errs, fmt.Errorf("policies.composite.members[%d]: unknown member %q (yaml, opa, rebac)", i, m))
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf("policies.engine: unknown engine %q (yaml, opa, composite)", p.Engine))
+	}
+	if needsModuleDir && p.OPA.ModuleDir == "" {
+		errs = append(errs, errors.New("policies.opa.moduleDir: required when the opa engine is used"))
+	}
+	return errs
 }
 
 // checkSecretRef parses ref so unimplemented providers (vault/aws-sm/

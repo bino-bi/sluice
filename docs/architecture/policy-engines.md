@@ -12,7 +12,7 @@ The engine decides on each query: allow, deny or reject, and which row filters a
 
 A member of `composite` is `yaml`, `opa` or `rebac`. The member `rebac` checks `RelationshipPolicy` objects against OpenFGA. See [ReBAC](../policies/rebac.md).
 
-Sluice checks these names at start. `sluice config validate` does not check them.
+Sluice checks these names at start, and so does `sluice config validate`. The `opa` engine and an `opa` member need `policies.opa.moduleDir`.
 
 ## Example
 

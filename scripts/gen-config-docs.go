@@ -25,7 +25,7 @@ import (
 // skip lists keys that the code declares but never uses. walk sets an
 // entry to false when it meets the key.
 var skip = map[string]bool{
-	"datasources.directory": true, // no reader: DataSource objects load from policies.directory
+	"datasources.directory": true, // Validate rejects it: DataSource objects load from policies.directory
 	"datasources.reload":    true, // Validate rejects true
 }
 

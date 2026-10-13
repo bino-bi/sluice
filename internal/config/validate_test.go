@@ -18,6 +18,70 @@ func TestServerConfigValidate(t *testing.T) {
 			mutate: func(*ServerConfig) {},
 		},
 		{
+			name:    "unknown policy engine",
+			mutate:  func(c *ServerConfig) { c.Policies.Engine = "rego" },
+			wantErr: []string{`policies.engine: unknown engine "rego"`},
+		},
+		{
+			name:    "opa engine without a module directory",
+			mutate:  func(c *ServerConfig) { c.Policies.Engine = "opa" },
+			wantErr: []string{"policies.opa.moduleDir: required"},
+		},
+		{
+			name: "opa engine with a module directory",
+			mutate: func(c *ServerConfig) {
+				c.Policies.Engine = "opa"
+				c.Policies.OPA.ModuleDir = "./rego"
+			},
+		},
+		{
+			name: "unknown composite member",
+			mutate: func(c *ServerConfig) {
+				c.Policies.Engine = "composite"
+				c.Policies.Composite.Members = []string{"yaml", "spicedb"}
+			},
+			wantErr: []string{`policies.composite.members[1]: unknown member "spicedb"`},
+		},
+		{
+			name: "composite with opa and no module directory",
+			mutate: func(c *ServerConfig) {
+				c.Policies.Engine = "composite"
+				c.Policies.Composite.Members = []string{"yaml", "opa"}
+			},
+			wantErr: []string{"policies.opa.moduleDir: required"},
+		},
+		{
+			name: "composite of yaml and rebac",
+			mutate: func(c *ServerConfig) {
+				c.Policies.Engine = "composite"
+				c.Policies.Composite.Members = []string{"yaml", "rebac"}
+			},
+		},
+		{
+			name: "members are not read for the yaml engine",
+			mutate: func(c *ServerConfig) {
+				c.Policies.Composite.Members = []string{"spicedb"}
+			},
+		},
+		{
+			name:    "datasources.directory is not read",
+			mutate:  func(c *ServerConfig) { c.DataSources.Directory = "./datasources.d" },
+			wantErr: []string{"datasources.directory: not read"},
+		},
+		{
+			name:   "admin.token as plain text",
+			mutate: func(c *ServerConfig) { c.Admin.Token = "s3cret" },
+		},
+		{
+			name:   "admin.token as a secret reference",
+			mutate: func(c *ServerConfig) { c.Admin.Token = "secret://env/ADMIN_TOKEN" },
+		},
+		{
+			name:    "admin.token with a reference that cannot resolve",
+			mutate:  func(c *ServerConfig) { c.Admin.Token = "secret://vault/admin" },
+			wantErr: []string{"admin.token:"},
+		},
+		{
 			name: "server-only TLS is valid",
 			mutate: func(c *ServerConfig) {
 				c.REST.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}
