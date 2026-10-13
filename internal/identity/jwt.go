@@ -69,7 +69,6 @@ type JWTIdentifier struct {
 	opts     JWTOptions
 	bindings *BindingRegistry
 	jwks     *JWKSClient
-	parser   *jwt.Parser
 	algSet   map[string]struct{}
 	log      *slog.Logger
 	clock    func() time.Time
@@ -106,17 +105,10 @@ func NewJWTIdentifier(opts JWTOptions) (*JWTIdentifier, error) {
 		clock = time.Now
 	}
 
-	parser := jwt.NewParser(
-		jwt.WithValidMethods(algs),
-		jwt.WithIssuedAt(),
-		jwt.WithExpirationRequired(),
-	)
-
 	j := &JWTIdentifier{
 		opts:     opts,
 		bindings: opts.Bindings,
 		jwks:     jwks,
-		parser:   parser,
 		algSet:   algSet,
 		log:      log,
 		clock:    clock,
@@ -183,7 +175,8 @@ func (j *JWTIdentifier) VerifyToken(ctx context.Context, raw string) (*UserCtx, 
 		return nil, err
 	}
 
-	// Second pass: verify signature + claims (exp/nbf handled by parser).
+	// Second pass: verify signature + claims (exp, nbf and iat handled by
+	// the parser).
 	claims := jwt.MapClaims{}
 	skew := time.Duration(binding.Spec.ClockSkew)
 	if skew <= 0 {
@@ -196,6 +189,7 @@ func (j *JWTIdentifier) VerifyToken(ctx context.Context, raw string) (*UserCtx, 
 		jwt.WithValidMethods(j.allowedAlgs()),
 		jwt.WithLeeway(skew),
 		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
 		jwt.WithTimeFunc(j.clock),
 	)
 	parsed, err := parser.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
@@ -205,7 +199,7 @@ func (j *JWTIdentifier) VerifyToken(ctx context.Context, raw string) (*UserCtx, 
 		switch {
 		case errors.Is(err, jwt.ErrTokenExpired):
 			return nil, fmt.Errorf("%w: %w", ErrJWTExpired, err)
-		case errors.Is(err, jwt.ErrTokenNotValidYet):
+		case errors.Is(err, jwt.ErrTokenNotValidYet), errors.Is(err, jwt.ErrTokenUsedBeforeIssued):
 			return nil, fmt.Errorf("%w: %w", ErrJWTNotYetValid, err)
 		case errors.Is(err, jwt.ErrTokenSignatureInvalid):
 			return nil, fmt.Errorf("%w: %w", ErrJWTBadSignature, err)
@@ -300,6 +294,19 @@ func (j *JWTIdentifier) buildUserCtx(claims jwt.MapClaims, binding *apitypes.Sub
 	copied := maps.Clone(map[string]any(claims))
 	if copied == nil {
 		copied = make(map[string]any)
+	}
+	// claims.tenantId and claims.allowedRegions name a path in the token.
+	// The value goes under the name of the mapping, where policies read
+	// it. A token without the path does not get the claim, also when it
+	// declares one of that name itself.
+	for name, path := range map[string]string{"tenantId": cp.TenantID, "allowedRegions": cp.AllowedRegions} {
+		if path == "" {
+			continue
+		}
+		delete(copied, name)
+		if v, err := ExtractClaim(claims, path); err == nil {
+			copied[name] = v
+		}
 	}
 	return &UserCtx{
 		Subject:    subject,

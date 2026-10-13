@@ -195,8 +195,8 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `claims.subjectId` | string |  | JWT: claim path, default `sub`. API key: the subject id. |
 | `claims.email` | string |  | JWT: claim path. API key: the email. |
 | `claims.groups` | string |  | JWT: claim path. API key: one group. |
-| `claims.tenantId` | string |  | API key only: the `tenantId` claim. |
-| `claims.allowedRegions` | string |  | API key only: the `allowedRegions` claim. |
+| `claims.tenantId` | string |  | JWT: path to the value. API key: the value. Policies read it as the `tenantId` claim. |
+| `claims.allowedRegions` | string |  | JWT: path to the value. API key: the value. Policies read it as the `allowedRegions` claim. |
 | `rateLimit.rps` | float |  | Requests per second for each subject. |
 | `rateLimit.burst` | int |  | Burst. Default 1. |
 | `budget.cpuSecondsPerDay` | int |  | Query seconds per subject and UTC day. |

@@ -43,11 +43,11 @@ Store this value where `hashRef` points. The client sends the key.
 | `hmacSecretRef` | string | Secret for HS256, HS384. | |
 | `jwksUrl` | string | Keys for RS256, RS384, ES256, ES384. Needs `issuer` and `audience`. | |
 | `jwksCacheTtl` | duration | Cache time of these keys. Default 10m. | |
-| `clockSkew` | duration | Tolerance for `exp` and `nbf`. Default 60s. | |
+| `clockSkew` | duration | Tolerance for `exp`, `nbf` and `iat`. Default 60s. | |
 | `claims.subjectId` | string | Path to the id. Default `sub`. | The id. Default: key id. |
 | `claims.email` | string | Path to the email. Default `email`. | The email. |
 | `claims.groups` | string | Path to a list or comma-separated string. Without it, the subject has no groups. | One group, for keys without `groups`. |
-| `claims.tenantId`, `claims.allowedRegions` | string | | Values for `{{ subject.tenantId }}`, `{{ subject.allowedRegions }}`. |
+| `claims.tenantId`, `claims.allowedRegions` | string | Paths to the values for `{{ subject.tenantId }}`, `{{ subject.allowedRegions }}`. | The values themselves. |
 | `apiKeys[]` | list | | `id`, `hashRef`, `groups` per key. |
 | `rateLimit` | object | `rps`: requests per second. `burst`: requests at once, default 1. | Same. |
 | `budget` | object | `rowsPerDay`, `cpuSecondsPerDay`: rows and wall-clock seconds per UTC day. 0: no limit. | Same. |
@@ -78,9 +78,9 @@ Goal: clients log in with a token from your identity provider.
 --8<-- "examples/subjects/expected/03-jwt.txt"
 ```
 
-**What happened:** Sluice checked the signature, `iss`, `aud`, `exp` and `nbf`. The list at `realm.roles` became the groups.
+**What happened:** Sluice checked the signature, `iss`, `aud`, `exp`, `nbf` and `iat`. The list at `realm.roles` became the groups.
 
-A token needs `exp`. Sluice accepts only the algorithms from the table, never `none`. A binding maps only the subject id, the email and the groups. Templates and CEL read the other claims by their token names.
+A token needs `exp`. Sluice accepts only the algorithms from the table, never `none`. A binding maps the subject id, the email, the groups, `tenantId` and `allowedRegions`. Templates and CEL read the other claims by their token names. A token with an `iat` in the future is refused.
 
 ### Rate limit and budget
 

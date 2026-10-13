@@ -397,3 +397,88 @@ func TestJWTBindingRegistryReload(t *testing.T) {
 		t.Fatal("duplicate issuer should error")
 	}
 }
+
+// A token issued in the future is refused, with the clock skew as leeway.
+// A token without iat is still accepted: the claim is optional.
+func TestJWTIssuedAt(t *testing.T) {
+	f := newJWTFixture(t)
+	identify := func(overrides func(*jwt.MapClaims)) error {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+f.mint(t, overrides))
+		_, err := f.verifier.Identify(context.Background(), r)
+		return err
+	}
+	if err := identify(func(c *jwt.MapClaims) { (*c)["iat"] = f.now.Add(2 * time.Hour).Unix() }); !errors.Is(err, identity.ErrJWTNotYetValid) {
+		t.Errorf("iat two hours ahead: err = %v; want ErrJWTNotYetValid", err)
+	}
+	if err := identify(func(c *jwt.MapClaims) { (*c)["iat"] = f.now.Add(30 * time.Second).Unix() }); err != nil {
+		t.Errorf("iat inside the clock skew: %v", err)
+	}
+	if err := identify(func(c *jwt.MapClaims) { delete(*c, "iat") }); err != nil {
+		t.Errorf("no iat: %v", err)
+	}
+}
+
+// claims.tenantId and claims.allowedRegions are claim paths in JWT mode.
+// The subject gets the value under the name of the mapping, as an API key
+// subject does. A token that lacks the path does not get the claim, also
+// when it has a claim with that name at the top level.
+func TestJWTMappedTenantAndRegions(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen rsa: %v", err)
+	}
+	js := newJWKSServer(t, &priv.PublicKey)
+	reg, err := identity.NewBindingRegistry([]apitypes.SubjectBinding{{
+		Metadata: apitypes.ObjectMeta{Name: "default"},
+		Spec: apitypes.SubjectBindingSpec{
+			Issuer: "https://issuer.example", Audience: "sluice-api", JWKSURL: js.URL,
+			Claims: apitypes.ClaimPaths{TenantID: "org.tenant", AllowedRegions: "org.regions"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	verifier, err := identity.NewJWTIdentifier(identity.JWTOptions{Bindings: reg, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("new verifier: %v", err)
+	}
+	identify := func(extra jwt.MapClaims) map[string]any {
+		t.Helper()
+		claims := jwt.MapClaims{
+			"iss": "https://issuer.example", "aud": "sluice-api", "sub": "alice",
+			"iat": now.Unix(), "exp": now.Add(10 * time.Minute).Unix(),
+		}
+		for k, v := range extra {
+			claims[k] = v
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = "key-0"
+		raw, err := tok.SignedString(priv)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+raw)
+		uc, err := verifier.Identify(context.Background(), r)
+		if err != nil {
+			t.Fatalf("Identify: %v", err)
+		}
+		return uc.Claims
+	}
+
+	got := identify(jwt.MapClaims{"org": map[string]any{"tenant": "acme", "regions": []string{"eu", "us"}}})
+	if got["tenantId"] != "acme" {
+		t.Errorf("tenantId = %v, want acme", got["tenantId"])
+	}
+	if regions, ok := got["allowedRegions"].([]any); !ok || len(regions) != 2 || regions[0] != "eu" {
+		t.Errorf("allowedRegions = %#v, want [eu us]", got["allowedRegions"])
+	}
+
+	// The token names tenantId itself, but not at the mapped path.
+	got = identify(jwt.MapClaims{"tenantId": "self-declared"})
+	if v, ok := got["tenantId"]; ok {
+		t.Errorf("tenantId = %v, want no claim without the mapped path", v)
+	}
+}
