@@ -26,7 +26,7 @@ In each case the client gets an error and no rows.
 | No policy allows a table | `ACL_DENIED` |
 | A CEL condition fails with an error | `ACL_DENIED` |
 | OPA returns no decision | `ACL_DENIED` |
-| OPA returns an unknown field, or OpenFGA returns an error | `ERR_INTERNAL` |
+| OPA returns an unknown field, or OpenFGA returns an error | `ERR_POLICY_UNAVAILABLE` |
 | A policy template uses a claim the subject lacks | `ACL_DENIED` |
 | The audit queue does not take the record | `ERR_AUDIT_UNAVAILABLE` |
 | The approval queue is full | `ERR_RATE_LIMITED` |

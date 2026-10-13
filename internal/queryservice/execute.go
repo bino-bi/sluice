@@ -201,11 +201,22 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		})
 		polSpan.End()
 		if polErr != nil {
-			setErrorCode(rec, polErr)
+			// Map first so the audit record carries the client code. An
+			// engine that cannot decide, such as a ReBAC or OPA backend
+			// that is down, is an outage: no deny, and no ERR_INTERNAL.
+			apiErr := toAPIError(polErr, qid)
+			if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal {
+				apiErr = pkgerr.Wrap(pkgerr.CodePolicyUnavailable, polErr).WithQueryID(qid)
+				s.opts.Logger.Error("policy engine failed",
+					"query_id", qid,
+					"error", polErr.Error(),
+				)
+			}
+			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
 			releaseSlot()
-			return nil, toAPIError(polErr, qid)
+			return nil, apiErr
 		}
 	}
 	applyDecisionToAudit(rec, dec)

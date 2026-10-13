@@ -122,7 +122,7 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 | | Parameter such as `$1` | `ERR_UNSUPPORTED_SYNTAX` |
 | Policy | No allow, or a deny policy | `ACL_DENIED` or the policy's code |
 | | Reject rule | `ACL_REJECTED` or the rule's code |
-| | Engine error | `ERR_INTERNAL`, `ERR_TIMEOUT` |
+| | Engine error | `ERR_POLICY_UNAVAILABLE`, `ERR_TIMEOUT` |
 | Approval | Waiting for a person | `ERR_APPROVAL_PENDING` |
 | | Rejected or expired | `ERR_APPROVAL_REJECTED`, `ERR_APPROVAL_EXPIRED` |
 | | Queue full | `ERR_RATE_LIMITED` |

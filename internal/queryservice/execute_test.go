@@ -762,6 +762,52 @@ func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
 	}
 }
 
+// A policy engine that cannot decide (a ReBAC or OPA backend is down) is
+// an outage: 503 with its own code, not a deny and not ERR_INTERNAL. The
+// audit record carries the code the client gets, and the cause is logged.
+func TestExecute_PolicyErrorCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		code   pkgerr.Code
+		logged bool
+	}{
+		{"backend down", errors.New("openfga: dial tcp: connection refused"), pkgerr.CodePolicyUnavailable, true},
+		{"timeout", fmt.Errorf("openfga check: %w", context.DeadlineExceeded), pkgerr.CodeTimeout, false},
+		{"canceled", context.Canceled, pkgerr.CodeCanceled, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var log bytes.Buffer
+			a := &fakeAudit{}
+			ex := &fakeExecutor{}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{err: tc.err},
+				Rewriter: &fakeRewriter{},
+				Executor: ex,
+				Audit:    a,
+				Logger:   telemetry.NewLogger(&log, telemetry.LoggingConfig{Format: "json", MaxErrorBytes: 4096}),
+			})
+			_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+			ae := pkgerr.FromError(err)
+			if ae == nil || ae.Code != tc.code {
+				t.Fatalf("err = %v, want %s", err, tc.code)
+			}
+			if strings.Contains(ae.Message, "openfga") {
+				t.Errorf("client message %q holds the cause", ae.Message)
+			}
+			if recs := a.all(); len(recs) != 1 || recs[0].ErrorCode != string(tc.code) || recs[0].Decision != audit.DecisionError {
+				t.Fatalf("audit records = %+v, want one error record with %s", recs, tc.code)
+			}
+			got := log.String()
+			if tc.logged != (strings.Contains(got, `"level":"ERROR"`) && strings.Contains(got, "connection refused") && strings.Contains(got, ae.QueryID)) {
+				t.Errorf("log = %q, logged want %v", got, tc.logged)
+			}
+		})
+	}
+}
+
 // A row filter that needs a value the subject does not have denies the
 // query. The audit record says deny and holds the reason, the client gets
 // the plain code.

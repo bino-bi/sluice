@@ -66,11 +66,11 @@ What happened: for one table the module abstains (gives no opinion), so the YAML
 | Approval | yes | no | no |
 | Abstain (no opinion) | no allow matches | `abstain: true` | no check fails |
 
-A Rego module that returns no result denies the query. An unknown field in its result fails the request with `ERR_INTERNAL`.
+A Rego module that returns no result denies the query. An unknown field in its result fails the request with `ERR_POLICY_UNAVAILABLE`.
 
 ## How `composite` merges
 
-1. An error in one member fails the request, mostly with `ERR_INTERNAL`. An OpenFGA server that does not answer within the policy's `backend.timeout` gives `ERR_TIMEOUT`.
+1. An error in one member fails the request with `ERR_POLICY_UNAVAILABLE`. An OpenFGA server that does not answer within the policy's `backend.timeout` gives `ERR_TIMEOUT`.
 2. A deny from any member wins.
 3. Then a reject from any member wins.
 4. One member must allow. An allow from Rego is enough, also for a table that no YAML policy allows. If all members abstain, Sluice denies the query.
