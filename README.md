@@ -186,7 +186,7 @@ Every source file carries an SPDX header; see [NOTICE](NOTICE) for attribution.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions are accepted under the DCO (`git commit -s`); run `make all` (fmt → vet → lint → test → build) before opening a PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The project is in an early stage, so please open an issue or a discussion before you open a PR.
 
 ## AI usage disclaimer
 

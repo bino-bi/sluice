@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: release
 
-# Cutting a release is a two-step, human-initiated flow (see CONTRIBUTING.md
-# "Cutting a release"): draft a release on the GitHub Releases page against a
+# Cutting a release is a two-step, human-initiated flow (see RELEASING.md):
+# draft a release on the GitHub Releases page against a
 # new `vX.Y.Z` tag — GitHub creates the tag on publish — and publishing it
 # fires this workflow, which builds the archives, pushes the ghcr.io images,
 # and uploads everything onto that same release.
