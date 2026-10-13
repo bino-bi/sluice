@@ -19,6 +19,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // newMCPCmd returns the `sluice mcp` subcommand: a Model Context Protocol
@@ -58,6 +59,10 @@ Authentication:
   HTTP Authorization / X-Api-Key header instead, and each request is
   authenticated (fail-closed) rather than pinned.
 
+Approvals:
+  This command serves no approval link, so it does not start when an
+  ApprovalPolicy is loaded. Run "sluice serve" with mcp.enabled instead.
+
 Exit codes:
   0  clean shutdown
   1  startup / auth failure`,
@@ -78,6 +83,12 @@ Exit codes:
 				defer cancel()
 				deps.Close(shutdownCtx)
 			}()
+
+			// An approver decides over the REST API, which this command
+			// does not start. A held query could never be released.
+			if len(deps.registry.Current().ByKind[apitypes.KindApprovalPolicy]) > 0 {
+				return &exitError{Code: 1, Err: errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")}
+			}
 
 			mode := mcp.TransportMode(transport)
 

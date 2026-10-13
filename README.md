@@ -145,6 +145,8 @@ Or run the containerized example — the compose file pulls the published image 
 ```bash
 cd examples/hello-sluice
 python3 ../seed.py seed.sql data/shop.db
+# The container runs as another user and writes the audit log to data/.
+chmod -R a+rwX data
 docker compose up
 ```
 

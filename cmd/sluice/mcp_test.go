@@ -7,11 +7,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/secrets"
 )
 
@@ -98,4 +101,62 @@ func TestResolveMCPPinnedUser(t *testing.T) {
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// An approver decides over the REST API. `sluice mcp` does not start it,
+// so a held query could never be released: the command refuses to start.
+func TestMCPCmd_RefusesApprovalPolicies(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	if err := os.MkdirAll(policyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	const policyYAML = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata: { name: approve-pii-reads, priority: 100 }
+spec:
+  match:
+    any:
+      - resources: { tables: [people] }
+  when:
+    columnsAccessed: ["ssn"]
+  reason: "needs a data steward"
+`
+	if err := os.WriteFile(filepath.Join(policyDir, "approval.yaml"), []byte(policyYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := `
+policies:
+  reload: false
+approval:
+  publicBaseUrl: https://sluice.example
+audit:
+  file:
+    path: ` + filepath.Join(dir, "audit") + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newMCPCmd()
+	cmd.SetArgs([]string{"--config", cfgPath, "--policies-dir", policyDir, "--allow-anonymous"})
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("sluice mcp started with an ApprovalPolicy loaded")
+	}
+	for _, want := range []string{"ApprovalPolicy", "sluice serve", "mcp.enabled"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
 }

@@ -40,8 +40,8 @@ an unrelated chain.
 
 Exit codes:
   0  chain intact
-  1  I/O error (directory unreadable, malformed JSON)
-  4  chain broken (tampering, missing record, or anchor mismatch)`,
+  1  I/O error (directory unreadable)
+  4  chain broken (tampering, missing record, a line that is not JSON, or anchor mismatch)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rep, err := audit.Verify(args[0], anchor)

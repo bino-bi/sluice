@@ -29,22 +29,3 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 		ParserVersion: version.PgQueryVersion(),
 	})
 }
-
-// handleOpenAPI returns a stub OpenAPI document. The generator landing in
-// Slice 10 will replace this with a proper spec; for MVP we at least
-// advertise the endpoint so clients can feature-detect it.
-func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"openapi": "3.1.0",
-		"info": map[string]any{
-			"title":   "Sluice",
-			"version": version.Current().Version,
-		},
-		"paths": map[string]any{
-			"/v1/query":   map[string]any{},
-			"/v1/health":  map[string]any{},
-			"/v1/ready":   map[string]any{},
-			"/v1/version": map[string]any{},
-		},
-	})
-}

@@ -57,7 +57,7 @@ The answer holds the rows as text and as `structuredContent`.
 --8<-- "examples/mcp-tools/server.yaml:mcp"
 ```
 
-`sluice mcp --transport streamable_http` listens on `mcp.listen` too. Stdio without a credential does not start. With `--allow-anonymous` or `mcp.allowAnonymous`, a client without a credential runs as an anonymous subject. Default deny still applies.
+`sluice mcp --transport streamable_http` listens on `mcp.listen` too. `sluice mcp` does not start when an `ApprovalPolicy` is loaded, see [Approvals](../policies/approvals.md). Stdio without a credential does not start. With `--allow-anonymous` or `mcp.allowAnonymous`, a client without a credential runs as an anonymous subject. Default deny still applies.
 
 Over HTTP, Sluice keeps no session state. A tool call runs as the subject of its own request. The value of the `Mcp-Session-Id` header has no effect on a tool call. A `GET` that asks for an event stream gets 405. A `notifications/cancelled` message has no effect. Close the request to stop a running call.
 

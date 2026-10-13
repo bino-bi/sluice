@@ -393,3 +393,14 @@ func decodeError(t *testing.T, r io.Reader) *pkgerr.APIError {
 
 var _ apitypes.QueryRequest
 var _ executor.OutputFormat
+
+// The route served a stub that named four paths and described none.
+func TestOpenAPI_NotServed(t *testing.T) {
+	t.Parallel()
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{Identifier: &stubIdentifier{}})
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d want 404", w.Code)
+	}
+}

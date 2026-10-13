@@ -15,7 +15,6 @@ Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `re
 | `GET` | `/v1/health` | none | Returns 200 with `status` and `version` while the server runs. |
 | `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
 | `GET` | `/v1/version` | none | Returns `version`, `commit`, `build_time`, `go` and `parser_version` of the build. |
-| `GET` | `/openapi.json` | none | Returns an OpenAPI document that names paths but describes no operation. |
 
 Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
 

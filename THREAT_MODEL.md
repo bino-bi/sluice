@@ -154,7 +154,6 @@ Same threat profile as REST plus: MCP errors are returned as `CallToolResult{IsE
 | REST `/v1/query`                      | Operator-controlled network  | Identity required; body cap; timeout.             |
 | REST `/v1/health`, `/v1/ready`        | Operator-controlled network  | No identity; returns liveness only.               |
 | REST `/v1/version`                    | Operator-controlled network  | No identity; returns build identity.              |
-| REST `/openapi.json`                  | Operator-controlled network  | Static stub in MVP.                               |
 | MCP stdio                             | Local process                | Parent process supplies the identity context.     |
 | MCP Streamable HTTP                   | Operator-controlled network  | Identity bridged into request context.            |
 | Admin `/admin/*`                      | Private network only         | Static token; constant-time compare.              |

@@ -22,7 +22,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
 	mux.HandleFunc("GET /v1/ready", s.handleReady)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
-	mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 
 	// Protected data-plane endpoint.
 	authMW := identity.Middleware(identity.MiddlewareOptions{

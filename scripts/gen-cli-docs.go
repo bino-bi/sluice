@@ -57,7 +57,7 @@ var notes = map[string]string{
 
 	"datasource check": `The command does not connect to the data sources.`,
 
-	"mcp": `Without ~--jwt~, the command reads the token from ~SLUICE_MCP_TOKEN~. With ~http~, ~streamable-http~ or ~streamablehttp~, the command also needs ~--api-key~, ~--jwt~ or ~--allow-anonymous~ at start. See [MCP tools](mcp.md).`,
+	"mcp": `Without ~--jwt~, the command reads the token from ~SLUICE_MCP_TOKEN~. With ~http~, ~streamable-http~ or ~streamablehttp~, the command also needs ~--api-key~, ~--jwt~ or ~--allow-anonymous~ at start. The command does not start when an ~ApprovalPolicy~ is loaded. See [MCP tools](mcp.md).`,
 
 	"policy explain": `You need ~--user~ and at least one of ~--table~ and ~--sql~. This call asks which policies apply when ~alice~ reads one table:
 

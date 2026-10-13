@@ -106,7 +106,7 @@ Run the MCP server for AI agents (stdio by default).
 | `--policies-dir` | string |  | policy directory (overrides policies.directory) |
 | `--transport` | string | `stdio` | transport: stdio or streamable_http (also http, streamable-http, streamablehttp) |
 
-Without `--jwt`, the command reads the token from `SLUICE_MCP_TOKEN`. With `http`, `streamable-http` or `streamablehttp`, the command also needs `--api-key`, `--jwt` or `--allow-anonymous` at start. See [MCP tools](mcp.md).
+Without `--jwt`, the command reads the token from `SLUICE_MCP_TOKEN`. With `http`, `streamable-http` or `streamablehttp`, the command also needs `--api-key`, `--jwt` or `--allow-anonymous` at start. The command does not start when an `ApprovalPolicy` is loaded. See [MCP tools](mcp.md).
 
 ## policy explain
 

@@ -144,6 +144,7 @@ MCP clients use `check_approval` and `await_approval`. The operator lists pendin
 - Without `approval.persist`, a restart drops all approvals and grants. A query that waits never survives a restart. Run one instance: instances do not share approvals.
 - A link needs no login, only its token. A `GET` of a link shows a page with one button and changes nothing, also for a wrong id or token. Only the `POST` that the button sends decides.
 - A `POST` with a wrong id or token gets 404. A `POST` to the other link after a decision gets 409. After the query ran, a `POST` to each link gets 200 with state `consumed`. After `approval.requestTtl`, Sluice forgets a decided approval and a `POST` gets 404.
+- `sluice mcp` serves no approval link, so it does not start when an `ApprovalPolicy` is loaded. Use `sluice serve` with `mcp.enabled`.
 
 ## See also
 
