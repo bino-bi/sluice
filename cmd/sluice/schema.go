@@ -40,11 +40,11 @@ var kindSchemas = map[apitypes.Kind]reflect.Type{
 // because the inference adds "null" to the type of a pointer field: next
 // to a bare reference that would allow nothing but null.
 //
-// A duration is written as text ("10s") or as a number of seconds, not as
-// the integer of its Go type.
+// A duration is written as text ("10s") or as a number of seconds (1.5),
+// not as the integer of its Go type.
 var schemaOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
 	reflect.TypeFor[apitypes.Predicate](): {Type: "object", Ref: "#/$defs/Predicate"},
-	reflect.TypeFor[apitypes.Duration]():  {Types: []string{"string", "integer"}},
+	reflect.TypeFor[apitypes.Duration]():  {Types: []string{"string", "number"}},
 }}
 
 // predicateBody has the fields of a predicate under another type name, so

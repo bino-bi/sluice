@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -176,11 +175,11 @@ func resolveMCPCredential(ctx context.Context, r *secrets.Resolver, field, ref s
 	if ref == "" {
 		return "", nil
 	}
-	sec, err := r.Resolve(ctx, ref)
+	sec, err := r.ResolveString(ctx, ref)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", field, err)
 	}
-	return strings.TrimRight(string(sec), "\r\n"), nil
+	return sec, nil
 }
 
 // resolveStaticIdentity verifies a static credential through the composite

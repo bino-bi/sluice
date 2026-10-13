@@ -92,3 +92,10 @@ func CheckRef(raw string) error {
 	}
 	return nil
 }
+
+// IsRef reports whether raw is written as a secret reference. The scheme
+// matches without regard to case and to spaces around it, as Parse reads
+// it, so a value such as "Secret://env/X" is never taken for a plain text.
+func IsRef(raw string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "secret://")
+}

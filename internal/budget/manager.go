@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -160,9 +161,10 @@ func (m *Manager) Record(subject, issuer string, cpu time.Duration, rows int64) 
 }
 
 // ReadUsage reads the stored usage of a subject for a UTC day (default
-// today) from the store at path. It only reads: it creates no file, deletes
-// no old row and writes no counter, so it is safe next to a running server.
-// The numbers of today are those of the last flush of that server.
+// today) from the store at path. It only reads: it creates no store,
+// deletes no old row and writes no counter, so it is safe next to a
+// running server. The numbers of today are those of the last flush of that
+// server.
 func ReadUsage(ctx context.Context, path, subject, day string) (Spec, error) {
 	// sql.Open does not touch the file, and a read-only open of a missing
 	// file gives an error that says little.
@@ -172,7 +174,15 @@ func ReadUsage(ctx context.Context, path, subject, day string) (Spec, error) {
 	if day == "" {
 		day = time.Now().UTC().Format("2006-01-02")
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	// The path is part of a URI: "?" and "#" would end it and drop mode=ro.
+	uri := "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path) +
+		"?mode=ro&_pragma=busy_timeout(5000)"
+	// Without a write-ahead log no server has the store open. immutable
+	// then reads without the lock files, also in a read-only directory.
+	if _, err := os.Stat(path + "-wal"); err != nil {
+		uri += "&immutable=1"
+	}
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return Spec{}, err
 	}

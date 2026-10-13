@@ -128,12 +128,14 @@ func TestResolveAdminToken(t *testing.T) {
 		token, want string
 		fail        bool
 	}{
-		"plain text":           {token: "s3cret", want: "s3cret"},
-		"empty":                {token: "", want: ""},
-		"from the environment": {token: "secret://env/ADMIN_TOKEN_SET", want: "from-env"},
-		"from a file, trimmed": {token: "secret://file/" + file, want: "from-file"},
-		"empty secret":         {token: "secret://env/ADMIN_TOKEN_EMPTY", fail: true},
-		"missing variable":     {token: "secret://env/ADMIN_TOKEN_MISSING", fail: true},
+		"plain text":                 {token: "s3cret", want: "s3cret"},
+		"empty":                      {token: "", want: ""},
+		"from the environment":       {token: "secret://env/ADMIN_TOKEN_SET", want: "from-env"},
+		"from a file, trimmed":       {token: "secret://file/" + file, want: "from-file"},
+		"empty secret":               {token: "secret://env/ADMIN_TOKEN_EMPTY", fail: true},
+		"scheme in another case":     {token: "Secret://env/ADMIN_TOKEN_SET", want: "from-env"},
+		"space before the reference": {token: " secret://env/ADMIN_TOKEN_SET", want: "from-env"},
+		"missing variable":           {token: "secret://env/ADMIN_TOKEN_MISSING", fail: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := resolveAdminToken(context.Background(), r, tc.token)
@@ -162,6 +164,13 @@ func TestPepperAndGenesisAreTrimmed(t *testing.T) {
 	pepper, err := resolvePepper(context.Background(), "secret://file/"+filepath.Join(dir, "pepper"))
 	if err != nil || string(pepper) != "pep" {
 		t.Errorf("pepper from a reference = %q, %v; want %q", pepper, err, "pep")
+	}
+	// A pepper of nothing but a line end would be an empty pepper.
+	if err := os.WriteFile(filepath.Join(dir, "blank"), []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolvePepper(context.Background(), "secret://file/"+filepath.Join(dir, "blank")); err == nil {
+		t.Error("an empty pepper secret gave no error")
 	}
 	// A pepper typed on the command line stays as typed.
 	if raw, err := resolvePepper(context.Background(), "pep\n"); err != nil || string(raw) != "pep\n" {

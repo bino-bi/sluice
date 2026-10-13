@@ -71,7 +71,7 @@ const (
 // The Expression string is not parsed here; internal/policy interprets it
 // (CEL or plain boolean SQL, depending on version).
 type Condition struct {
-	Name       string `yaml:"name" json:"name"`
+	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
 	Expression string `yaml:"expression" json:"expression"`
 }
 

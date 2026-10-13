@@ -39,7 +39,7 @@ type ClaimPaths struct {
 // RateLimitSpec caps request frequency for a subject.
 type RateLimitSpec struct {
 	RPS   float64 `yaml:"rps" json:"rps"`
-	Burst int     `yaml:"burst" json:"burst"`
+	Burst int     `yaml:"burst,omitempty" json:"burst,omitempty"`
 }
 
 // BudgetSpec caps resource consumption per day. v2 wiring.

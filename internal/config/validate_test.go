@@ -77,6 +77,11 @@ func TestServerConfigValidate(t *testing.T) {
 			mutate: func(c *ServerConfig) { c.Admin.Token = "secret://env/ADMIN_TOKEN" },
 		},
 		{
+			name:    "admin.token with a reference in another case that cannot resolve",
+			mutate:  func(c *ServerConfig) { c.Admin.Token = " Secret://vault/admin" },
+			wantErr: []string{"admin.token:"},
+		},
+		{
 			name:    "admin.token with a reference that cannot resolve",
 			mutate:  func(c *ServerConfig) { c.Admin.Token = "secret://vault/admin" },
 			wantErr: []string{"admin.token:"},

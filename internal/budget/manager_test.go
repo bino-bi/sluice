@@ -130,6 +130,22 @@ func TestReadUsage(t *testing.T) {
 		t.Error("a read deleted the old row")
 	}
 
+	// The server is stopped: the read leaves no lock or log file behind.
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("the read left files next to the store: %v", entries)
+	}
+	// A path with URI characters is the path, not a URI with options.
+	odd := filepath.Join(dir, "a#b?c%20d")
+	if err := os.Mkdir(odd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := budget.ReadUsage(context.Background(), filepath.Join(odd, "budget.db"), "carol", ""); err == nil {
+		t.Error("a missing store under an odd path gave no error")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 2 {
+		t.Errorf("a read with URI characters in the path created a file: %v", entries)
+	}
+
 	missing := filepath.Join(dir, "nope", "budget.db")
 	if _, err := budget.ReadUsage(context.Background(), missing, "carol", ""); err == nil {
 		t.Error("a missing store gave no error")

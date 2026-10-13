@@ -5,9 +5,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"sigs.k8s.io/yaml"
 )
 
 func exportSchema(t *testing.T, args ...string) *jsonschema.Schema {
@@ -83,6 +87,41 @@ func TestSchemaExport(t *testing.T) {
 		}
 		if err := rewrite.Validate(doc); err != nil {
 			t.Errorf("timeout %v does not validate: %v", timeout, err)
+		}
+	}
+}
+
+// Every manifest of the examples loads in Sluice, so it must validate
+// against the exported schema of its kind. A field that the Go type marks
+// as required while the decoder takes it as optional would fail here.
+func TestSchemaExport_AcceptsTheExampleManifests(t *testing.T) {
+	files, err := filepath.Glob("../../examples/*/policies.d/*.yaml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no example manifests found: %v", err)
+	}
+	schemas := map[string]*jsonschema.Resolved{}
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, doc := range strings.Split(string(raw), "\n---") {
+			var obj map[string]any
+			if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
+				t.Fatalf("%s document %d: %v", file, i+1, err)
+			}
+			kind, _ := obj["kind"].(string)
+			if kind == "" {
+				continue
+			}
+			if schemas[kind] == nil {
+				if schemas[kind], err = exportSchema(t, "--kind", kind).Resolve(nil); err != nil {
+					t.Fatalf("%s schema does not resolve: %v", kind, err)
+				}
+			}
+			if err := schemas[kind].Validate(obj); err != nil {
+				t.Errorf("%s document %d (%s): %v", file, i+1, kind, err)
+			}
 		}
 	}
 }

@@ -5,7 +5,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/bino-bi/sluice/internal/secrets"
 )
@@ -40,7 +39,7 @@ func (c *ServerConfig) Validate() error {
 			"datasources.directory: not read: DataSource manifests load from policies.directory, remove the key"))
 	}
 	// A plain text is the token itself.
-	if strings.HasPrefix(c.Admin.Token, "secret://") {
+	if secrets.IsRef(c.Admin.Token) {
 		if err := checkSecretRef("admin.token", c.Admin.Token); err != nil {
 			errs = append(errs, err)
 		}

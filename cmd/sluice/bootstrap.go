@@ -616,7 +616,7 @@ func resolveGenesisSeed(ctx context.Context, r *secrets.Resolver, file *config.F
 // "secret://" is a reference, anything else is the token itself. An empty
 // secret is an error: an empty token turns the check of the admin API off.
 func resolveAdminToken(ctx context.Context, r *secrets.Resolver, token string) (string, error) {
-	if !strings.HasPrefix(token, "secret://") {
+	if !secrets.IsRef(token) {
 		return token, nil
 	}
 	resolved, err := r.ResolveString(ctx, token)
@@ -676,6 +676,9 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 		pepperText, err := r.ResolveString(ctx, scfg.Identity.APIKeyPepper)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("resolve apiKeyPepper: %w", err)
+		}
+		if pepperText == "" {
+			return identityStack{}, fmt.Errorf("identity.apiKeyPepper: the secret is empty")
 		}
 		pepper := []byte(pepperText)
 		bindings, err := buildAPIKeyBindings(ctx, r, snap, log)

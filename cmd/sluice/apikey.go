@@ -80,5 +80,8 @@ func resolvePepper(ctx context.Context, v string) ([]byte, error) {
 	}
 	r := secrets.NewResolver(secrets.ResolverOptions{})
 	pepper, err := r.ResolveString(ctx, v)
+	if err == nil && pepper == "" {
+		err = fmt.Errorf("pepper %s: the secret is empty", v)
+	}
 	return []byte(pepper), err
 }
