@@ -256,6 +256,10 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		if err != nil {
 			return nil, fmt.Errorf("audit.chainKeyRef: %w", err)
 		}
+		// An empty secret would silently mean a chain without a key.
+		if key == "" {
+			return nil, fmt.Errorf("audit.chainKeyRef: the secret %s is empty", ref)
+		}
 		chainKey = []byte(key)
 	}
 	host, _ := os.Hostname()

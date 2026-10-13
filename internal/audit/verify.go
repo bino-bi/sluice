@@ -54,7 +54,9 @@ func (e *VerifyError) Is(target error) bool {
 // record without a key gives ErrKeyRequired. A plain record after a keyed
 // one breaks the chain: a writer without the key would add such records.
 // A directory without any record is a broken chain too, an emptied
-// directory must not verify.
+// directory must not verify. So is a chain without any keyed record when
+// a key is given: a writer without the key can turn a keyed chain into
+// such a chain.
 func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -152,6 +154,9 @@ func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 	}
 	if rep.Records == 0 {
 		return nil, &VerifyError{File: dir, Msg: "no audit record"}
+	}
+	if len(key) > 0 && rep.Keyed == 0 {
+		return nil, &VerifyError{File: dir, Msg: "no keyed record: the key does not protect this chain"}
 	}
 	rep.LastHash = prior
 	return rep, nil

@@ -314,8 +314,8 @@ func (s *FileSink) openLatest() error {
 	// If the newest file is from an earlier UTC day, start a new file for
 	// today; otherwise append to the same one.
 	if s.daily && !day.Equal(today) {
-		// Prime lastHash from the previous file, then open today's 0-seq.
-		if err := s.primeLastHash(filepath.Join(s.dir, latest)); err != nil {
+		// Prime lastHash from the files before, then open today's 0-seq.
+		if err := s.primeLastHash(picks); err != nil {
 			return err
 		}
 		s.day = today
@@ -329,7 +329,7 @@ func (s *FileSink) openLatest() error {
 	if err != nil {
 		return fmt.Errorf("audit: stat %s: %w", path, err)
 	}
-	if err := s.primeLastHash(path); err != nil {
+	if err := s.primeLastHash(picks); err != nil {
 		return err
 	}
 	if s.rotateMB > 0 && info.Size() >= s.rotateMB {
@@ -395,17 +395,23 @@ func (s *FileSink) closeActive() error {
 	return firstErr
 }
 
-// primeLastHash reads the tail of path and extracts the final record's
-// hash so the dispatcher chains the next record correctly. An empty file
-// leaves lastHash at the zero value (caller handles genesis bootstrap).
-func (s *FileSink) primeLastHash(path string) error {
-	last, err := readLastRecord(path)
-	if err != nil {
-		return err
-	}
-	if last != nil {
-		s.lastHash = last.Hash
-		s.lastAtOpen = last
+// primeLastHash takes the chain tip from the newest record in names, which
+// are in chain order. Without any record it leaves lastHash at the zero
+// value (caller handles genesis bootstrap).
+func (s *FileSink) primeLastHash(names []string) error {
+	// The newest file can be empty: a start that failed after it created
+	// the file, or a rotation without a record yet. The chain tip is then
+	// in a file before it.
+	for i := len(names) - 1; i >= 0; i-- {
+		last, err := readLastRecord(filepath.Join(s.dir, names[i]))
+		if err != nil {
+			return err
+		}
+		if last != nil {
+			s.lastHash = last.Hash
+			s.lastAtOpen = last
+			return nil
+		}
 	}
 	return nil
 }

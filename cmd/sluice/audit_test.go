@@ -73,7 +73,7 @@ func TestAuditVerify_ExitStatus(t *testing.T) {
 		text string
 	}{
 		{"plain chain", []string{plain}, 0, "not keyed"},
-		{"plain chain with a key", []string{plain, "--key-ref", ref}, 0, "not keyed"},
+		{"plain chain with a key", []string{plain, "--key-ref", ref}, 4, "no keyed record"},
 		{"keyed chain with its key", []string{keyed, "--key-ref", ref}, 0, "2 keyed"},
 		{"keyed chain without a key", []string{keyed}, 1, ""},
 		{"keyed chain with another key", []string{keyed, "--key-ref", other}, 4, "hash mismatch"},
@@ -97,6 +97,10 @@ func TestBuildRuntime_ChainKeyIsWired(t *testing.T) {
 	}
 	t.Setenv("SLUICE_TEST_CHAIN_KEY", testChainKey)
 	t.Setenv("SLUICE_TEST_SHORT_KEY", "short")
+	t.Setenv("SLUICE_TEST_EMPTY_KEY", "\n")
+	if _, err := buildMCPRuntime(t, "  chainKeyRef: secret://env/SLUICE_TEST_EMPTY_KEY\n"); err == nil || !strings.Contains(err.Error(), "audit.chainKeyRef") {
+		t.Errorf("start with an empty key: %v, want a refusal", err)
+	}
 	deps, err := buildMCPRuntime(t, "  chainKeyRef: secret://env/SLUICE_TEST_CHAIN_KEY\n")
 	if err != nil {
 		t.Fatalf("buildRuntime: %v", err)

@@ -100,13 +100,13 @@ Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the recor
 |---|---|
 | 0 | Chain intact |
 | 1 | Directory or file not readable, or a keyed chain without `--key-ref` |
-| 4 | Chain broken, a line that is not JSON, another anchor, a wrong key, or no record at all |
+| 4 | Chain broken, a line that is not JSON, another anchor, a wrong key, or no record at all. Also `--key-ref` on a chain without a keyed record |
 
 ### Chain key
 
 Without a key, anyone who can write the files can change a record and compute all later hashes again. Set `audit.chainKeyRef` to a secret of 32 bytes or more. Each new `hash` is then an HMAC-SHA256 with that key, and the record has `hash_alg: hmac-sha256`. Verify needs the same secret: `sluice audit verify <dir> --key-ref secret://env/SLUICE_AUDIT_CHAIN_KEY`.
 
-You can add a key to an existing directory: the first keyed record follows the last record without a key. After that the key must stay. Sluice does not start without it, or with another key. Verify treats a record without a key after a keyed one as a broken chain. Keep the key away from the host that holds the log.
+You can add a key to an existing directory: the first keyed record follows the last record without a key. Sluice logs a warning at that start. After that the key must stay. Sluice does not start without it, or with another key, as a guard against a config mistake. With `--key-ref`, verify fails on a record without a key after a keyed one, and on a chain without any keyed record. So always verify a keyed chain with `--key-ref`. Keep the key away from the host that holds the log.
 
 ## Sinks
 
@@ -134,7 +134,7 @@ Syslog and S3 get copies. Their failures never stop a query. See [Configuration]
 ## Limits
 
 - No record for a reload, other admin calls, or a request over `limits.globalRps` or `limits.perIpRps`. In a flood of failed logins, only a part gets a record.
-- Without `audit.chainKeyRef`, verify does not detect a change when the later hashes are computed again. With or without a key, it does not detect missing newest records or a replaced directory. Store each `last_hash` on another host. `--json` prints it in full.
+- Without `audit.chainKeyRef`, verify does not detect a change when the later hashes are computed again. With or without a key, it does not detect missing newest records or a replaced directory. The records before the first keyed one are only as safe as a chain without a key. Store each `last_hash` on another host. `--json` prints it in full.
 - A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
 - On shutdown, Sluice waits up to 10 seconds to write queued records.

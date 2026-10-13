@@ -112,7 +112,7 @@ Every terminal path emits exactly one audit record. The policy decision, the rew
 
 ### 4.6 Audit (`internal/audit`)
 
-- **Tampering:** the hash chain (`hash_i = sha256(hash_{i-1} || "\n" || canonical_i)`) makes a single-record or mid-chain modification detectable, as long as the later hashes are not computed again. With `audit.chainKeyRef` the hash is `hmac-sha256(key, ...)`, and a writer without the key cannot compute it again. Neither form detects removed newest records or a replaced directory, so keep each `last_hash` on another host. `VerifyError.Is(ErrChainBroken)` is the standard way callers detect tampering.
+- **Tampering:** the hash chain (`hash_i = sha256(hash_{i-1} || "\n" || canonical_i)`) makes a single-record or mid-chain modification detectable, as long as the later hashes are not computed again. With `audit.chainKeyRef` the hash is `hmac-sha256(key, ...)`, and a writer without the key cannot compute it again. `sluice audit verify --key-ref` then also fails on a chain whose key marks were removed. Neither form detects removed newest records or a replaced directory, so keep each `last_hash` on another host. The start guard for a missing or wrong key reads only the newest record: it catches a config mistake, not a writer. `VerifyError.Is(ErrChainBroken)` is the standard way callers detect tampering.
 - **Spoofing:** the genesis seed anchors the chain. A replay attacker with a different seed produces a chain whose first record's `prior_hash` mismatches what the verifier expects. Operators should store the seed in `secret://` and rotate only at a formal boundary.
 - **Repudiation:** every terminal outcome emits exactly one record; the wrapped `RowIterator` emits on Close with the final row count.
 - **Information disclosure:** records contain the rewritten SQL, the parameter values, the applied policies, and the caller's identity. The file sink enforces mode `0640` and the directory must be access-controlled by the operator.
@@ -167,7 +167,7 @@ Same threat profile as REST plus: MCP errors are returned as `CallToolResult{IsE
 - **Parameterised rewriting.** Templates render to positional `$N`; no user data flows into SQL literals.
 - **Function allowlist.** Function calls are default-deny in FROM and in expressions. A DuckDB upgrade cannot add a callable function without a review of the allowlist.
 - **Hardened executor.** External file access off, community extensions off, configuration locked after init.
-- **Hash-chained audit.** Tamper-evident against a writer without the chain key (`audit.chainKeyRef`); genesis-seed anchor prevents replay from a different installation.
+- **Hash-chained audit.** With `audit.chainKeyRef`, and verified with `--key-ref`, tamper-evident against a writer without the key, except for removed newest records; genesis-seed anchor prevents replay from a different installation.
 - **Signed-and-pinned dependencies.** `go.sum` checked in; `go mod tidy` is CI-enforced; `govulncheck` runs on every PR.
 - **SPDX headers + license separation.** Every source file carries a header; `scripts/check-spdx.sh` enforces in CI; `pkg/` cannot import `internal/` (depguard).
 - **Constant-time comparisons** for admin token and API-key HMAC.

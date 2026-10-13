@@ -181,7 +181,15 @@ func checkChainKey(primary Sink, key []byte) error {
 		return nil
 	}
 	last := lr.LastRecord()
-	if last == nil || last.HashAlg == "" {
+	if last == nil {
+		return nil
+	}
+	if last.HashAlg == "" {
+		if len(key) > 0 {
+			// Visible on purpose: this happens once per directory. A
+			// second time means that someone removed the key marks.
+			slog.Default().Warn("audit: the newest record has no key, the chain is keyed from here on")
+		}
 		return nil
 	}
 	if len(key) == 0 {
@@ -192,7 +200,7 @@ func checkChainKey(primary Sink, key []byte) error {
 		return err
 	}
 	if !hmac.Equal([]byte(h), []byte(last.Hash)) {
-		return errors.New("audit: audit.chainKeyRef is not the key of the newest record in the audit directory")
+		return errors.New("audit: the newest record does not verify with audit.chainKeyRef: another key, or the record was changed")
 	}
 	return nil
 }

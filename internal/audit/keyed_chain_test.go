@@ -88,8 +88,8 @@ func writeRecords(t *testing.T, path string, recs []*audit.Record) {
 // were written with the code of v0.1.0-rc.2 plus two commits (3e4b483).
 func TestVerify_LegacyChain(t *testing.T) {
 	const anchor = "70881bcaf9d44ab08866cc1655f1ceaeb0a27f67caac8d8d55934272826e1aee"
-	for _, key := range [][]byte{nil, chainKey} {
-		rep, err := audit.Verify("testdata/legacy-chain", anchor, key)
+	{
+		rep, err := audit.Verify("testdata/legacy-chain", anchor, nil)
 		if err != nil {
 			t.Fatalf("verify: %v", err)
 		}
@@ -211,5 +211,72 @@ func TestKeyedChain_SwitchAndStartGuard(t *testing.T) {
 func TestVerify_NoRecordIsABrokenChain(t *testing.T) {
 	if _, err := audit.Verify(t.TempDir(), "", nil); !errors.Is(err, audit.ErrChainBroken) {
 		t.Errorf("verify of an empty directory: %v, want a broken chain", err)
+	}
+}
+
+// A writer without the key can strip hash_alg from every record and
+// compute a plain chain. With a key, verify must not call that intact.
+func TestKeyedChain_FullDowngradeFailsWithAKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeChain(t, dir, chainKey, 3); err != nil {
+		t.Fatal(err)
+	}
+	recs, path := readRecords(t, dir)
+	recs[1].SQLSample = "SELECT secret FROM vault"
+	for i, r := range recs {
+		r.HashAlg = ""
+		if i > 0 {
+			r.PriorHash = recs[i-1].Hash
+		}
+		h, err := audit.ComputeHash(r.PriorHash, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Hash = h
+	}
+	writeRecords(t, path, recs)
+	if _, err := audit.Verify(dir, "", chainKey); !errors.Is(err, audit.ErrChainBroken) {
+		t.Errorf("verify with the key: %v, want a broken chain", err)
+	}
+	// Without a key it is a plain chain like any other.
+	if _, err := audit.Verify(dir, "", nil); err != nil {
+		t.Errorf("verify without a key: %v", err)
+	}
+}
+
+func TestVerify_UnknownHashAlg(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeChain(t, dir, chainKey, 1); err != nil {
+		t.Fatal(err)
+	}
+	recs, path := readRecords(t, dir)
+	recs[1].HashAlg = "md5"
+	writeRecords(t, path, recs)
+	if _, err := audit.Verify(dir, "", chainKey); !errors.Is(err, audit.ErrChainBroken) {
+		t.Errorf("verify: %v, want a broken chain", err)
+	}
+}
+
+// The first refused start leaves an empty file for the new day. The
+// second start must still find the keyed record in the file before it.
+func TestKeyedChain_StartGuardSurvivesAnEmptyNewestFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeChain(t, dir, chainKey, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "audit-2999-01-01.jsonl"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if err := writeChain(t, dir, nil, 1); err == nil {
+			t.Fatalf("start %d without the key was accepted", i+1)
+		}
+	}
+	// With the key the chain goes on, it does not start a new genesis.
+	if err := writeChain(t, dir, chainKey, 1); err != nil {
+		t.Fatalf("start with the key: %v", err)
+	}
+	if _, err := audit.Verify(dir, audit.GenesisPriorHash([]byte("keyed-seed")), chainKey); err != nil {
+		t.Errorf("verify: %v", err)
 	}
 }
