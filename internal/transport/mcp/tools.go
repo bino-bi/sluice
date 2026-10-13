@@ -13,7 +13,6 @@ import (
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/executor"
-	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
@@ -340,7 +339,7 @@ func (s *Server) toolExecuteSQL(ctx context.Context, req *sdkmcp.CallToolRequest
 		MaxRows: in.RowLimit,
 		Format:  executor.FormatJSON,
 		User:    user,
-		Facts:   requestFacts(req, user),
+		Facts:   requestFacts(ctx, req),
 		Origin:  queryservice.OriginMCP,
 	}
 	res, err := s.deps.Service.Execute(ctx, qreq)
@@ -547,15 +546,11 @@ func jsonSafe(v any) any {
 }
 
 // requestFacts builds the facts of a tool call over HTTP. Stdio has no
-// HTTP request and gives nil. The address comes from the subject: the
-// identifier took it from the same request.
-func requestFacts(req *sdkmcp.CallToolRequest, user *identity.UserCtx) *policy.RequestFacts {
+// HTTP request and gives nil.
+func requestFacts(ctx context.Context, req *sdkmcp.CallToolRequest) *policy.RequestFacts {
 	if req == nil || req.Extra == nil || req.Extra.Header == nil {
 		return nil
 	}
-	remote := ""
-	if user != nil {
-		remote = user.RemoteAddr
-	}
+	remote, _ := ctx.Value(remoteIPKey{}).(string)
 	return policy.NewRequestFacts(req.Extra.Header, remote)
 }

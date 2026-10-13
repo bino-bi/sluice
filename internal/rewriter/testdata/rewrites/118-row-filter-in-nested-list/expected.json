@@ -1,0 +1,12 @@
+{
+  "outcome": "allow",
+  "changed": false,
+  "error_code": "ACL_DENIED",
+  "applied_policies": [
+    "RowFilterPolicy/by-subject",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "filters": [
+    "pg.public.orders"
+  ]
+}

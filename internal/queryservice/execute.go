@@ -6,6 +6,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -201,17 +202,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		})
 		polSpan.End()
 		if polErr != nil {
-			// Map first so the audit record carries the client code. An
-			// engine that cannot decide, such as a ReBAC or OPA backend
-			// that is down, is an outage: no deny, and no ERR_INTERNAL.
-			apiErr := toAPIError(polErr, qid)
-			if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal {
-				apiErr = pkgerr.Wrap(pkgerr.CodePolicyUnavailable, polErr).WithQueryID(qid)
-				s.opts.Logger.Error("policy engine failed",
-					"query_id", qid,
-					"error", polErr.Error(),
-				)
-			}
+			// Map first so the audit record carries the client code.
+			apiErr := s.policyErrToAPI(polErr, qid)
 			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
@@ -301,14 +293,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			// Never cache error paths. Map first so the audit record
 			// carries the client code.
 			apiErr := toAPIError(reErr, qid)
-			rec.Decision = audit.DecisionError
 			if stderrors.Is(reErr, policy.ErrTemplateVarMissing) {
 				// A row filter value the subject lacks is a deny, not a
-				// fault. The reason goes to the record, not to the client.
+				// fault. Like a policy deny, the record has no error code.
+				// The reason goes to the record, not to the client.
 				rec.Decision = audit.DecisionDeny
 				rec.Message = reErr.Error()
+			} else {
+				setErrorCode(rec, apiErr)
+				rec.Decision = audit.DecisionError
 			}
-			setErrorCode(rec, apiErr)
 			s.emit(ctx, rec, start)
 			releaseSlot()
 			return nil, apiErr
@@ -361,7 +355,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			apiErr = pkgerr.Wrap(pkgerr.CodeSyntax, execErr).WithQueryID(qid).
 				WithMessage("DuckDB cannot parse the statement")
 		}
-		if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal && s.sourceDown(ctx, rec.Catalogs) {
+		if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal && s.sourceDown(rec.Catalogs) {
 			apiErr = pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, execErr).WithQueryID(qid)
 		}
 		setErrorCode(rec, apiErr)
@@ -598,20 +592,30 @@ func endQuerySpan(span trace.Span, rec *audit.Record) {
 	span.End()
 }
 
-// sourceDown probes the data sources of a query that failed in DuckDB.
-// DuckDB reports a source that went away with an error type that says
-// nothing: a removed SQLite file gives "Invalid Error". So the health
-// probe decides whether the failure is an outage.
-func (s *Service) sourceDown(ctx context.Context, catalogs []string) bool {
-	if s.opts.ProbeCatalog == nil || ctx.Err() != nil {
+// policyErrToAPI maps an error of the policy engine. An engine that cannot
+// decide, such as a ReBAC or OPA backend that is down, is an outage: no
+// deny, and no ERR_INTERNAL. The client gets no cause, so it is logged.
+func (s *Service) policyErrToAPI(err error, qid string) error {
+	apiErr := toAPIError(err, qid)
+	if pkgerr.FromError(apiErr).Code != pkgerr.CodeInternal {
+		return apiErr
+	}
+	s.opts.Logger.Error("policy engine failed",
+		"query_id", qid,
+		"error", err.Error(),
+	)
+	return pkgerr.Wrap(pkgerr.CodePolicyUnavailable, err).WithQueryID(qid)
+}
+
+// sourceDown reports whether a data source of a failed query is known to
+// be down. DuckDB reports a source that went away with an error type that
+// says nothing: a removed SQLite file gives "Invalid Error". So the result
+// of the periodic health test decides whether the failure is an outage.
+func (s *Service) sourceDown(catalogs []string) bool {
+	if s.opts.SourceDown == nil {
 		return false
 	}
-	for _, c := range catalogs {
-		if s.opts.ProbeCatalog(ctx, c) != nil {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(catalogs, s.opts.SourceDown)
 }
 
 func execErrToAPI(err error, qid string) error {

@@ -190,13 +190,19 @@ func (s *Server) httpHandler() http.Handler {
 	return h
 }
 
-type requestCtxKey struct{}
+type (
+	requestCtxKey struct{}
+	remoteIPKey   struct{}
+)
 
-// withRequestCtx stores the request context as a context value. The SDK
-// detaches the call context from the request but keeps its values.
+// withRequestCtx stores the request context and the address of the client
+// as context values. The SDK detaches the call context from the request
+// but keeps its values.
 func withRequestCtx(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestCtxKey{}, r.Context())))
+		ctx := context.WithValue(r.Context(), requestCtxKey{}, r.Context())
+		ctx = context.WithValue(ctx, remoteIPKey{}, identity.RemoteIP(r))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

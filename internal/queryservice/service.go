@@ -80,10 +80,10 @@ type Options struct {
 	// catalog.table. Nil skips the check.
 	Catalogs func() []string
 
-	// ProbeCatalog runs the health check of one data source. The service
-	// calls it for the catalogs of a query that failed in DuckDB without
-	// a known cause. Nil skips the check.
-	ProbeCatalog func(ctx context.Context, catalog string) error
+	// SourceDown reports whether the last health test of a data source
+	// failed. The service asks it for the catalogs of a query that failed
+	// in DuckDB without a known cause. Nil skips the check.
+	SourceDown func(catalog string) bool
 }
 
 // Limits controls request-level bounds the service enforces before it

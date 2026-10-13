@@ -307,8 +307,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Keys:            secrets.NewKeyStore(deps.resolver),
 		Salts:           secrets.NewSaltStore(deps.resolver),
 		Catalogs:        deps.sourceReg.Catalogs,
-		ProbeCatalog: func(ctx context.Context, catalog string) error {
-			return deps.sourceReg.Probe(ctx, catalog, datasource.NewSQLPool(deps.exec.DB()))
+		SourceDown: func(catalog string) bool {
+			for _, st := range deps.sourceReg.Statuses() {
+				if strings.EqualFold(st.Name, catalog) {
+					return !st.Healthy
+				}
+			}
+			return false
 		},
 		Limits: queryservice.Limits{
 			DefaultMaxRows:         scfg.Limits.MaxRows,

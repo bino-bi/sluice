@@ -540,7 +540,7 @@ func compileMaskArgs(spec apitypes.MaskSpec) (pkgmask.Args, error) {
 			if ref == "" {
 				continue
 			}
-			if _, err := secrets.Parse(ref); err != nil {
+			if err := secrets.CheckRef(ref); err != nil {
 				return pkgmask.Args{}, fmt.Errorf("mask %q: %s: %w", spec.Type, name, err)
 			}
 		}

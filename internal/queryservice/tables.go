@@ -62,6 +62,7 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 		Message:   "policy explain",
 	}
 	if err != nil {
+		err = s.policyErrToAPI(err, qid)
 		setErrorCode(rec, err)
 		rec.Decision = audit.DecisionError
 	} else if result != nil {
@@ -69,7 +70,7 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 	}
 	s.emit(ctx, rec, start)
 	if err != nil {
-		return nil, toAPIError(err, qid)
+		return nil, err
 	}
 	return result, nil
 }

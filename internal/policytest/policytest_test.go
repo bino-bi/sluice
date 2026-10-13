@@ -355,3 +355,84 @@ func TestRunner_ErrorCodeOfRewriteSentinels(t *testing.T) {
 		}
 	}
 }
+
+// The server denies an allowed query whose row filter needs a value the
+// subject does not have. A suite expects that as a deny, with or without
+// the error code.
+func TestRunner_MissingTemplateValueIsDeny(t *testing.T) {
+	requireRealParser(t)
+	runner := newRunner(t, writePolicies(t))
+	noTenant := policytest.Identity{Subject: "alice", Groups: []string{"analysts"}}
+	sql := "SELECT id FROM pg.public.orders"
+
+	rep, err := runner.Run(context.Background(), &policytest.Suite{Cases: []policytest.Case{
+		{Name: "deny", Identity: noTenant, SQL: sql, Expect: policytest.Expect{Outcome: "deny"}},
+		{Name: "deny with code", Identity: noTenant, SQL: sql, Expect: policytest.Expect{Outcome: "deny", ErrorCode: "ACL_DENIED"}},
+		{Name: "code alone", Identity: noTenant, SQL: sql, Expect: policytest.Expect{ErrorCode: "ACL_DENIED"}},
+		// These two expectations are wrong and must fail.
+		{Name: "allow", Identity: noTenant, SQL: sql, Expect: policytest.Expect{Outcome: "allow"}},
+		{
+			Name:     "deny for a subject with the value",
+			Identity: policytest.Identity{Subject: "bob", Groups: []string{"analysts"}, Claims: map[string]any{"tenant_id": "acme"}},
+			SQL:      sql,
+			Expect:   policytest.Expect{Outcome: "deny"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for i, wantPass := range []bool{true, true, true, false, false} {
+		if rep.Cases[i].Passed != wantPass {
+			t.Errorf("case %q: passed = %v, want %v (%v)", rep.Cases[i].Name, rep.Cases[i].Passed, wantPass, rep.Cases[i].Failures)
+		}
+	}
+}
+
+// request.remoteIp is the address subjects.ipRanges and request.remote_ip
+// see. Header names reach the policy in lower case, as on the server.
+func TestRunner_RequestFacts(t *testing.T) {
+	requireRealParser(t)
+	dir := t.TempDir()
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata: { name: allow-office, priority: 0 }
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { ipRanges: ["10.20.0.0/16"] }
+        resources: { tables: ["door_log"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata: { name: allow-eu, priority: 0 }
+spec:
+  effect: allow
+  match:
+    any:
+      - resources: { tables: ["eu_sales"] }
+  conditions:
+    - name: eu-header
+      expression: '"x-region" in request.headers && request.headers["x-region"] == "eu" && request.remote_ip == "10.20.3.4"'
+`
+	if err := os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(policies), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := newRunner(t, dir)
+	who := policytest.Identity{Subject: "dora"}
+	office := &policytest.Request{RemoteIP: "10.20.3.4", Headers: map[string]string{"X-Region": "eu"}}
+
+	rep, err := runner.Run(context.Background(), &policytest.Suite{Cases: []policytest.Case{
+		{Name: "inside the range", Identity: who, Request: office, SQL: "SELECT id FROM pg.public.door_log", Expect: policytest.Expect{Outcome: "allow"}},
+		{Name: "outside the range", Identity: who, Request: &policytest.Request{RemoteIP: "192.168.1.9"}, SQL: "SELECT id FROM pg.public.door_log", Expect: policytest.Expect{Outcome: "deny"}},
+		{Name: "no address", Identity: who, SQL: "SELECT id FROM pg.public.door_log", Expect: policytest.Expect{Outcome: "deny"}},
+		{Name: "header and address in a condition", Identity: who, Request: office, SQL: "SELECT id FROM pg.public.eu_sales", Expect: policytest.Expect{Outcome: "allow"}},
+	}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("report = %+v", rep.Cases)
+	}
+}

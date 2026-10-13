@@ -173,3 +173,20 @@ func TestNewRequestFacts(t *testing.T) {
 		t.Errorf("empty address gave %v", f.RemoteIP)
 	}
 }
+
+// An empty issuer, email or user agent is a value the subject lacks. As a
+// bound text it would match every row in StartsWith, EndsWith, Contains
+// and Matches.
+func TestTemplateRender_EmptyValueIsMissing(t *testing.T) {
+	user := &identity.UserCtx{Subject: "key-1"}
+	facts := NewRequestFacts(http.Header{}, "10.0.0.7")
+	for _, input := range []string{"{{ subject.email }}", "{{ subject.issuer }}", "{{ request.user_agent }}"} {
+		tpl, err := CompileTemplate(input)
+		if err != nil {
+			t.Fatalf("compile %q: %v", input, err)
+		}
+		if got, err := tpl.Render(user, facts); !errors.Is(err, ErrTemplateVarMissing) {
+			t.Errorf("%s: got %v, err %v, want ErrTemplateVarMissing", input, got, err)
+		}
+	}
+}

@@ -14,7 +14,6 @@ import (
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
-	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/pgquery"
 	"github.com/bino-bi/sluice/internal/policy"
@@ -105,7 +104,8 @@ func TestToolExecuteSQL_FillsRequestFacts(t *testing.T) {
 		Executor: unreachableExecutor{},
 		Audit:    discardAudit{},
 	})}}
-	ctx := identity.WithUser(context.Background(), &identity.UserCtx{Subject: "agent", RemoteAddr: "10.1.2.3"})
+	// No subject: the address must not depend on one (mcp.allowAnonymous).
+	ctx := context.WithValue(context.Background(), remoteIPKey{}, "10.1.2.3")
 	req := &sdkmcp.CallToolRequest{Extra: &sdkmcp.RequestExtra{Header: http.Header{
 		"User-Agent": {"agent/1"},
 		"X-Region":   {"eu"},

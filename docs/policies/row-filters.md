@@ -44,7 +44,7 @@ Shared fields: [Policies](index.md). Selectors: [Matching](matching.md). Table n
 
 ### Predicate
 
-A check has a `column`, an `op` and a `value` or `values`. `IsNull` and `IsNotNull` take neither. Group checks with `all`, `any` and `not`.
+A check has a `column`, an `op` and a `value` or `values`. `IsNull` and `IsNotNull` take neither. Group checks with `all`, `any` and `not`. One node holds one of these or one check, or the policy does not load.
 
 | `op` | Takes | SQL |
 |---|---|---|
@@ -65,13 +65,15 @@ A `value` can be a template that Sluice fills for each request.
 | Template | Value |
 |---|---|
 | `{{ subject.sub }}` | Subject id |
-| `{{ subject.issuer }}`, `{{ subject.email }}` | Issuer and email. Empty text when not set. |
+| `{{ subject.issuer }}`, `{{ subject.email }}` | Issuer and email. A subject without it is denied. |
 | `{{ subject.auth_method }}` | `jwt` or `api_key` |
 | `{{ subject.groups }}` | The groups, as a list. For `In` and `NotIn` only. |
 | `{{ subject.claims.<path> }}`, `{{ subject.jwt.<path> }}` | A claim. Dots reach nested claims. |
 | `{{ subject.<name> }}` | Short form for a claim, for example `{{ subject.tenantId }}` |
 | `{{ request.remote_ip }}`, `{{ request.user_agent }}` | IP address and user agent of the client |
 | `{{ request.headers.<name> }}` | A request header, for example `{{ request.headers.x-region }}` |
+
+The client sets its headers and its user agent. Filter on them only when a proxy that you control sets them.
 
 A template must be the whole value, or the policy does not load. In `In` and `NotIn`, a template that gives a list stands for one value per element. This also holds for a claim that is a list. With an empty list, `In` matches no row and `NotIn` matches every row.
 

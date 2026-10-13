@@ -832,8 +832,9 @@ func TestExecute_MissingTemplateValueIsDeny(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("audit records = %d, want 1", len(recs))
 	}
-	if recs[0].Decision != audit.DecisionDeny || recs[0].ErrorCode != string(pkgerr.CodeACLDenied) || !strings.Contains(recs[0].Message, "tenant_id") {
-		t.Errorf("record = decision %q code %q message %q, want deny, ACL_DENIED and the reason", recs[0].Decision, recs[0].ErrorCode, recs[0].Message)
+	// As for a policy deny, the record has no error code.
+	if recs[0].Decision != audit.DecisionDeny || recs[0].ErrorCode != "" || !strings.Contains(recs[0].Message, "tenant_id") {
+		t.Errorf("record = decision %q code %q message %q, want deny, no code and the reason", recs[0].Decision, recs[0].ErrorCode, recs[0].Message)
 	}
 }
 
@@ -910,37 +911,37 @@ func TestExecute_ParserErrorOnRewrittenSQLStaysInternal(t *testing.T) {
 }
 
 // DuckDB reports a source that went away with an error that says nothing
-// about the cause (a removed SQLite file gives "Invalid Error"). The health
-// probe of the catalogs of the query decides between ERR_INTERNAL and
-// ERR_DATASOURCE_UNAVAILABLE.
-func TestExecute_ExecErrorProbesTheDataSource(t *testing.T) {
+// about the cause (a removed SQLite file gives "Invalid Error"). The last
+// health test of the data sources of the query decides between
+// ERR_INTERNAL and ERR_DATASOURCE_UNAVAILABLE.
+func TestExecute_ExecErrorChecksTheDataSourceHealth(t *testing.T) {
 	for name, tc := range map[string]struct {
-		probeErr error
-		want     pkgerr.Code
+		down bool
+		want pkgerr.Code
 	}{
-		"source down": {errors.New("sqlite: health: file is gone"), pkgerr.CodeDataSourceUnavailable},
-		"source fine": {nil, pkgerr.CodeInternal},
+		"source down": {true, pkgerr.CodeDataSourceUnavailable},
+		"source fine": {false, pkgerr.CodeInternal},
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := &fakeAudit{}
-			var probed []string
+			var asked []string
 			svc := queryservice.New(queryservice.Options{
 				Parser:   &fakeParser{},
 				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
 				Rewriter: &fakeRewriter{},
 				Executor: &fakeExecutor{err: fmt.Errorf("%w: %w", executor.ErrExecute, errors.New("Invalid Error: unable to open database file"))},
 				Audit:    a,
-				ProbeCatalog: func(_ context.Context, catalog string) error {
-					probed = append(probed, catalog)
-					return tc.probeErr
+				SourceDown: func(catalog string) bool {
+					asked = append(asked, catalog)
+					return tc.down
 				},
 			})
 			_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
 			if ae := pkgerr.FromError(err); err == nil || ae.Code != tc.want {
 				t.Fatalf("err = %v, want %s", err, tc.want)
 			}
-			if fmt.Sprint(probed) != "[pg]" {
-				t.Errorf("probed %v, want the catalog of the query", probed)
+			if fmt.Sprint(asked) != "[pg]" {
+				t.Errorf("asked for %v, want the catalog of the query", asked)
 			}
 			if recs := a.all(); len(recs) != 1 || recs[0].ErrorCode != string(tc.want) {
 				t.Errorf("audit records = %+v, want one with %s", recs, tc.want)

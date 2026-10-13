@@ -71,6 +71,17 @@ func compilePredicate(p *apitypes.Predicate) (*CompiledPredicate, error) {
 	if p == nil {
 		return nil, nil
 	}
+	// The rewriter renders one form of a node. A second one would drop out
+	// of the filter without a word.
+	forms := 0
+	for _, set := range []bool{len(p.All) > 0, len(p.Any) > 0, p.Not != nil, p.Column != "" || p.Op != ""} {
+		if set {
+			forms++
+		}
+	}
+	if forms > 1 {
+		return nil, fmt.Errorf("predicate: set only one of all, any, not, or a column check in one node")
+	}
 	// Internal node.
 	if len(p.All) > 0 || len(p.Any) > 0 || p.Not != nil {
 		out := &CompiledPredicate{}

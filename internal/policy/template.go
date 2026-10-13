@@ -128,9 +128,17 @@ func renderSubject(user *identity.UserCtx, path []string) (any, error) {
 			return nil, fmt.Errorf("%w: subject.sub does not have sub-fields", ErrTemplateVarMissing)
 		}
 		return user.Subject, nil
+	// An empty text would match every row in StartsWith, EndsWith,
+	// Contains and Matches. A subject without the value lacks it.
 	case "issuer":
+		if user.Issuer == "" {
+			return nil, fmt.Errorf("%w: subject has no issuer", ErrTemplateVarMissing)
+		}
 		return user.Issuer, nil
 	case "email":
+		if user.Email == "" {
+			return nil, fmt.Errorf("%w: subject has no email", ErrTemplateVarMissing)
+		}
 		return user.Email, nil
 	case "groups":
 		return user.Groups, nil
@@ -165,6 +173,9 @@ func renderRequest(facts *RequestFacts, path []string) (any, error) {
 	case "user_agent":
 		if len(path) != 1 {
 			return nil, fmt.Errorf("%w: request.user_agent is a leaf", ErrTemplateVarMissing)
+		}
+		if facts.UserAgent == "" {
+			return nil, fmt.Errorf("%w: request has no user agent", ErrTemplateVarMissing)
 		}
 		return facts.UserAgent, nil
 	case "headers":

@@ -74,3 +74,21 @@ func Parse(raw string) (URI, error) {
 func (u URI) Name() string {
 	return strings.TrimPrefix(u.Path, "/")
 }
+
+// CheckRef reports whether raw is a reference the built-in providers
+// resolve: secret://env/NAME or secret://file/path. Use it for a reference
+// that is only resolved later, so a typo fails when the config or policy
+// loads.
+func CheckRef(raw string) error {
+	u, err := Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Provider != "env" && u.Provider != "file" {
+		return fmt.Errorf("secrets: unknown provider %q (use env or file)", u.Provider)
+	}
+	if u.Name() == "" {
+		return fmt.Errorf("secrets: %q names no secret", raw)
+	}
+	return nil
+}
