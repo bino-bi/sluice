@@ -117,6 +117,7 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	srv := sdkmcp.NewServer(impl, nil)
 	s := &Server{cfg: cfg, deps: deps, mcp: srv, lg: lg}
 	s.registerTools()
+	srv.AddReceivingMiddleware(cancelWithRequest)
 	return s, nil
 }
 
@@ -167,26 +168,58 @@ func pinnedIdentityLabel(u *identity.UserCtx) string {
 	return "authenticated"
 }
 
-func (s *Server) runStreamable(ctx context.Context) error {
+// httpHandler builds the Streamable HTTP handler chain.
+func (s *Server) httpHandler() http.Handler {
+	// Stateless: the SDK connects a stateful session once, with the context
+	// of the request that opened it, so every later tool call in that
+	// session would run as the subject of the first request. Stateless
+	// mode connects per request, and a tool runs as its own caller.
 	handler := sdkmcp.NewStreamableHTTPHandler(
 		func(_ *http.Request) *sdkmcp.Server { return s.mcp },
-		nil,
+		&sdkmcp.StreamableHTTPOptions{Stateless: true},
 	)
 	mux := http.NewServeMux()
-	// Authenticate every HTTP request before it reaches the SDK handler.
-	// This closes the session-pinning gap: a leaked session ID alone does
-	// not grant access because each request must still present a valid
-	// credential, and an expired/revoked token is rejected with 401 rather
-	// than silently downgraded to anonymous.
-	mux.Handle("/", s.authMiddleware(handler))
+	// Authenticate every HTTP request before it reaches the SDK handler:
+	// an expired or revoked credential gets 401, not an anonymous call.
+	mux.Handle("/", s.authMiddleware(withRequestCtx(handler)))
 
 	var h http.Handler = mux
 	if s.cfg.Tracing {
 		h = telemetry.HTTPMiddleware("mcp")(h)
 	}
+	return h
+}
+
+type requestCtxKey struct{}
+
+// withRequestCtx stores the request context as a context value. The SDK
+// detaches the call context from the request but keeps its values.
+func withRequestCtx(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestCtxKey{}, r.Context())))
+	})
+}
+
+// cancelWithRequest ends a call when the HTTP request that carries it ends.
+// In stateless mode a notifications/cancelled message arrives on another
+// connection and cannot stop the call. Stdio has no request context.
+func cancelWithRequest(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+	return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+		rc, ok := ctx.Value(requestCtxKey{}).(context.Context)
+		if !ok {
+			return next(ctx, method, req)
+		}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer context.AfterFunc(rc, cancel)()
+		return next(ctx, method, req)
+	}
+}
+
+func (s *Server) runStreamable(ctx context.Context) error {
 	s.http = &http.Server{
 		Addr:              s.cfg.HTTPListen,
-		Handler:           h,
+		Handler:           s.httpHandler(),
 		ReadTimeout:       s.cfg.ReadTimeout,
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
 		WriteTimeout:      s.cfg.WriteTimeout,

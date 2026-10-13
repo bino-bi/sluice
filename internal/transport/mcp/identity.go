@@ -18,9 +18,10 @@ import (
 // allowed through as anonymous only when Config.AllowAnonymous is set;
 // a request that presents an *invalid* credential (bad signature, expired,
 // unknown key) is always rejected with 401, matching the REST data plane.
-// Running auth on every request — not just the session-init request — means
-// a leaked Mcp-Session-Id cannot be replayed without the credential and a
-// token's expiry is enforced on each call.
+// Auth runs on every request and the handler is stateless (see
+// httpHandler), so an Mcp-Session-Id grants nothing: a tool call runs as
+// the subject of its own request, and a token's expiry is enforced on
+// each call.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.deps.Identifier == nil {
