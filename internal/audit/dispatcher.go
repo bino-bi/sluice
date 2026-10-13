@@ -4,6 +4,8 @@ package audit
 
 import (
 	"context"
+	"crypto/hmac"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -46,6 +48,10 @@ type DispatcherOptions struct {
 	// LastHash (first boot in a fresh directory). Required — the
 	// resolver caller provides a secret://-sourced value.
 	GenesisSeed []byte
+
+	// ChainKey, when set, keys the hash of every new record (HashAlgHMAC).
+	// At least MinChainKeyBytes long. Empty keeps the plain chain.
+	ChainKey []byte
 
 	// Origin names the installation (e.g. hostname); embedded in the
 	// genesis record for operator diagnostics.
@@ -103,6 +109,13 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		opts.Clock = time.Now
 	}
 
+	if n := len(opts.ChainKey); n > 0 && n < MinChainKeyBytes {
+		return nil, fmt.Errorf("audit: the chain key has %d bytes, it needs at least %d", n, MinChainKeyBytes)
+	}
+	if err := checkChainKey(opts.Sinks[0], opts.ChainKey); err != nil {
+		return nil, err
+	}
+
 	d := &Dispatcher{
 		opts:    opts,
 		queue:   make(chan *Record, opts.QueueSize),
@@ -121,7 +134,7 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		}
 		gen := newGenesisRecord(opts)
 		gen.PriorHash = GenesisPriorHash(opts.GenesisSeed)
-		h, err := ComputeHash(gen.PriorHash, gen)
+		h, err := sealRecord(opts.ChainKey, gen.PriorHash, gen)
 		if err != nil {
 			return nil, err
 		}
@@ -148,6 +161,40 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		go d.flushLoop()
 	}
 	return d, nil
+}
+
+// sealRecord computes the hash of a new record, keyed when key is set.
+func sealRecord(key []byte, prior string, r *Record) (string, error) {
+	if len(key) > 0 {
+		r.HashAlg = HashAlgHMAC
+	}
+	return chainHash(key, prior, r)
+}
+
+// checkChainKey refuses a start that would break a keyed chain: the
+// newest record is keyed and the key is missing or another one. A plain
+// chain may get a key: the first keyed record chains onto the last plain
+// hash.
+func checkChainKey(primary Sink, key []byte) error {
+	lr, ok := primary.(interface{ LastRecord() *Record })
+	if !ok {
+		return nil
+	}
+	last := lr.LastRecord()
+	if last == nil || last.HashAlg == "" {
+		return nil
+	}
+	if len(key) == 0 {
+		return errors.New("audit: the newest record is keyed, set audit.chainKeyRef to the key of this audit directory")
+	}
+	h, err := chainHash(key, last.PriorHash, last)
+	if err != nil {
+		return err
+	}
+	if !hmac.Equal([]byte(h), []byte(last.Hash)) {
+		return errors.New("audit: audit.chainKeyRef is not the key of the newest record in the audit directory")
+	}
+	return nil
 }
 
 // primaryLastHash reads LastHash off the first sink that supports it.
@@ -244,7 +291,7 @@ func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 		r.SluiceVersion = version.Current().Version
 	}
 	r.PriorHash = d.lastHash
-	h, err := ComputeHash(d.lastHash, r)
+	h, err := sealRecord(d.opts.ChainKey, d.lastHash, r)
 	if err != nil {
 		return err
 	}

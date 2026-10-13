@@ -57,7 +57,7 @@ func TestVerify_HappyPathAcrossRotations(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	rep, err := audit.Verify(dir, audit.GenesisPriorHash(seed))
+	rep, err := audit.Verify(dir, audit.GenesisPriorHash(seed), nil)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestVerify_DetectsTamperedRecord(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	_, err = audit.Verify(dir, audit.GenesisPriorHash(seed))
+	_, err = audit.Verify(dir, audit.GenesisPriorHash(seed), nil)
 	if err == nil {
 		t.Fatalf("verify should fail on tampered record")
 	}
@@ -139,7 +139,7 @@ func TestVerify_DetectsAnchorMismatch(t *testing.T) {
 	_ = d.Close(context.Background())
 
 	// Wrong anchor → mismatch on first record.
-	_, err = audit.Verify(dir, audit.GenesisPriorHash([]byte("wrong-seed")))
+	_, err = audit.Verify(dir, audit.GenesisPriorHash([]byte("wrong-seed")), nil)
 	if err == nil {
 		t.Fatalf("expected anchor mismatch error")
 	}

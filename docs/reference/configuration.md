@@ -75,6 +75,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `audit.s3.maxBufferBytes` | `8388608` | Buffer size. More records are dropped. |
 | `audit.failClosed` | `true` | Refuse queries when the audit log fails. |
 | `audit.sqlSampleBytes` | `2048` | SQL bytes in an audit record. |
+| `audit.chainKeyRef` |  | Secret reference: key of the hash chain, 32 bytes or more. Empty means a chain without a key. |
 | `logging.level` | `info` | `debug`, `info`, `warn` or `error`. |
 | `logging.format` | `json` | `json` or `text`. |
 | `logging.maxErrorBytes` | `4096` | Cut logged errors at this size. `0` means no cut. |

@@ -1,1 +1,1 @@
-chain OK (1 file(s), 6 record(s), last_hash=<hash>)
+chain OK (1 file(s), 6 record(s), not keyed, last_hash=<hash>)

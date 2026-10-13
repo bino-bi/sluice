@@ -1,0 +1,1 @@
+{"event_type":"genesis","extras":{"origin":"fixture-host"},"message":"audit chain initialised","parser_version":"pg_query","prior_hash":"70881bcaf9d44ab08866cc1655f1ceaeb0a27f67caac8d8d55934272826e1aee","sluice_version":"dev","subject":{},"timestamp":"2026-09-30T23:51:00Z","hash":"8abd844f7bed54c423b52f0f7b096502d473cd89892c2defd5222e8809f0dd28"}

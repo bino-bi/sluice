@@ -4,6 +4,7 @@ package audit
 
 import (
 	"bufio"
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +18,8 @@ type VerifyReport struct {
 	Files    int
 	Records  int
 	LastHash string
+	// Keyed counts the records with a keyed hash. 0 means a plain chain.
+	Keyed int
 }
 
 // VerifyError describes a broken link. File and Line pinpoint where the
@@ -46,7 +49,13 @@ func (e *VerifyError) Is(target error) bool {
 // An optional anchor lets callers pin the genesis event's prior_hash
 // (sha256(seed) in the common case). Pass "" to accept whatever the first
 // record reports as its prior_hash.
-func Verify(dir, anchor string) (*VerifyReport, error) {
+//
+// key is the chain key for records with hash_alg hmac-sha256. A keyed
+// record without a key gives ErrKeyRequired. A plain record after a keyed
+// one breaks the chain: a writer without the key would add such records.
+// A directory without any record is a broken chain too, an emptied
+// directory must not verify.
+func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("audit: read dir %s: %w", dir, err)
@@ -106,12 +115,26 @@ func Verify(dir, anchor string) (*VerifyReport, error) {
 					Msg: fmt.Sprintf("prior_hash %q does not chain; expected %q", r.PriorHash, prior),
 				}
 			}
-			computed, herr := ComputeHash(r.PriorHash, &r)
+			switch {
+			case r.HashAlg == "" && rep.Keyed > 0:
+				_ = f.Close()
+				return nil, &VerifyError{File: name, Line: line, Msg: "record without a key after a keyed record"}
+			case r.HashAlg == HashAlgHMAC && len(key) == 0:
+				_ = f.Close()
+				return nil, fmt.Errorf("%w: %s:%d", ErrKeyRequired, name, line)
+			case r.HashAlg != "" && r.HashAlg != HashAlgHMAC:
+				_ = f.Close()
+				return nil, &VerifyError{File: name, Line: line, Msg: fmt.Sprintf("unknown hash_alg %q", r.HashAlg)}
+			}
+			computed, herr := chainHash(key, r.PriorHash, &r)
 			if herr != nil {
 				_ = f.Close()
 				return nil, fmt.Errorf("audit: hash %s:%d: %w", name, line, herr)
 			}
-			if computed != r.Hash {
+			if r.HashAlg != "" {
+				rep.Keyed++
+			}
+			if !hmac.Equal([]byte(computed), []byte(r.Hash)) {
 				_ = f.Close()
 				return nil, &VerifyError{
 					File: name, Line: line,
@@ -126,6 +149,9 @@ func Verify(dir, anchor string) (*VerifyReport, error) {
 			return nil, fmt.Errorf("audit: scan %s: %w", name, scanErr)
 		}
 		_ = f.Close()
+	}
+	if rep.Records == 0 {
+		return nil, &VerifyError{File: dir, Msg: "no audit record"}
 	}
 	rep.LastHash = prior
 	return rep, nil

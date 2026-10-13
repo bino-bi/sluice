@@ -250,10 +250,19 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if err != nil {
 		return nil, fmt.Errorf("audit genesis: %w", err)
 	}
+	var chainKey []byte
+	if ref := scfg.Audit.ChainKeyRef; ref != "" {
+		key, err := deps.resolver.ResolveString(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("audit.chainKeyRef: %w", err)
+		}
+		chainKey = []byte(key)
+	}
 	host, _ := os.Hostname()
 	deps.auditDisp, err = audit.NewDispatcher(audit.DispatcherOptions{
 		Sinks:       deps.auditSinks,
 		GenesisSeed: genesis,
+		ChainKey:    chainKey,
 		Origin:      host,
 		Logger:      deps.log,
 	})

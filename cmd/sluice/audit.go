@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/secrets"
 )
 
 // newAuditCmd groups the audit-related subcommands. `audit verify` is the
@@ -26,6 +27,7 @@ func newAuditCmd() *cobra.Command {
 func newAuditVerifyCmd() *cobra.Command {
 	var (
 		anchor string
+		keyRef string
 		asJSON bool
 	)
 
@@ -38,13 +40,27 @@ boundaries. The optional --anchor pins the genesis record's prior_hash
 so a replay attacker with a different installation seed cannot splice in
 an unrelated chain.
 
+A chain written with audit.chainKeyRef has keyed hashes. Pass the same
+secret reference as --key-ref. A chain without a key verifies as before,
+and the output says "not keyed".
+
 Exit codes:
   0  chain intact
-  1  I/O error (directory unreadable)
-  4  chain broken (tampering, missing record, a line that is not JSON, or anchor mismatch)`,
+  1  I/O error (directory unreadable), or a keyed chain without --key-ref
+  4  chain broken (tampering, missing record, a line that is not JSON,
+     anchor mismatch, wrong key, a record without a key after a keyed one,
+     or no record at all)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rep, err := audit.Verify(args[0], anchor)
+			var key []byte
+			if keyRef != "" {
+				k, err := secrets.NewResolver(secrets.ResolverOptions{}).ResolveString(cmd.Context(), keyRef)
+				if err != nil {
+					return &exitError{Code: 1, Err: fmt.Errorf("--key-ref: %w", err)}
+				}
+				key = []byte(k)
+			}
+			rep, err := audit.Verify(args[0], anchor, key)
 			if err != nil {
 				var ve *audit.VerifyError
 				if errors.As(err, &ve) {
@@ -69,17 +85,23 @@ Exit codes:
 					"files":     rep.Files,
 					"records":   rep.Records,
 					"last_hash": rep.LastHash,
+					"keyed":     rep.Keyed,
 				})
 			}
+			keyed := "not keyed"
+			if rep.Keyed > 0 {
+				keyed = fmt.Sprintf("%d keyed", rep.Keyed)
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"chain OK (%d file(s), %d record(s), last_hash=%s)\n",
-				rep.Files, rep.Records, short(rep.LastHash),
+				"chain OK (%d file(s), %d record(s), %s, last_hash=%s)\n",
+				rep.Files, rep.Records, keyed, short(rep.LastHash),
 			)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&anchor, "anchor", "", "pin the genesis record's prior_hash (sha256(seed))")
+	cmd.Flags().StringVar(&keyRef, "key-ref", "", "secret reference of the chain key (audit.chainKeyRef)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the report as JSON")
 	return cmd
 }

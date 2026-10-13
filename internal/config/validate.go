@@ -113,6 +113,11 @@ func (c *ServerConfig) Validate() error {
 		errs = append(errs, errors.New(
 			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
 	}
+	if c.Audit.ChainKeyRef != "" {
+		if err := checkSecretRef("audit.chainKeyRef", c.Audit.ChainKeyRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if c.Limits.MaxResultBytes < 0 {
 		errs = append(errs, errors.New("limits.maxResultBytes: must not be negative (0 turns the cap off)"))
 	}

@@ -40,6 +40,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 | `rest.tls.clientCA` | Adds a client certificate check. Login stays required | Your CA bundle |
 | `identity.apiKeyPepper` | API keys do not work without the [pepper](../reference/glossary.md) | A `secret://` reference |
 | Secret files | Sluice refuses files that group or others can write | `chmod 0600` |
+| `audit.chainKeyRef` | Without a key, a writer of the audit files can compute the hash chain again | A `secret://` reference to 32 bytes or more, stored away from the log |
 | `audit.file.path`, `audit.file.genesis` | Defaults: a temp directory, a [genesis](../reference/glossary.md) built from host name and build commit | A fixed directory, a `secret://` reference |
 | JWT subject binding: `issuer`, `audience`, `jwksUrl` | The audience is checked only when set | Set all three |
 | Subject binding: `rateLimit`, `budget` | Both need `claims.subjectId` or `issuer`. Budgets also need `budget.enabled: true` | See the example |

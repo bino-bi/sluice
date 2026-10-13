@@ -115,6 +115,7 @@ var meaning = map[string]string{
 	"audit.s3.maxBufferBytes": "Buffer size. More records are dropped.",
 	"audit.failClosed":        "Refuse queries when the audit log fails.",
 	"audit.sqlSampleBytes":    "SQL bytes in an audit record.",
+	"audit.chainKeyRef":       "Secret reference: key of the hash chain, 32 bytes or more. Empty means a chain without a key.",
 
 	"logging.level":         "`debug`, `info`, `warn` or `error`.",
 	"logging.format":        "`json` or `text`.",

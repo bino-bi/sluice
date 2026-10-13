@@ -113,6 +113,9 @@ type FileSink struct {
 	// lastHash is the hash of the most recently written record in this
 	// sink, used by the dispatcher as the PriorHash for the next record.
 	lastHash string
+
+	// lastAtOpen is the newest record found when the sink opened.
+	lastAtOpen *Record
 }
 
 const (
@@ -402,9 +405,14 @@ func (s *FileSink) primeLastHash(path string) error {
 	}
 	if last != nil {
 		s.lastHash = last.Hash
+		s.lastAtOpen = last
 	}
 	return nil
 }
+
+// LastRecord returns the newest record that was in the directory when the
+// sink opened it, or nil for an empty directory.
+func (s *FileSink) LastRecord() *Record { return s.lastAtOpen }
 
 // parseName extracts (day, seq) from an audit filename. Seq is 0 when the
 // name omits the trailing `-N`.

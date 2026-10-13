@@ -138,6 +138,11 @@ type AuditConfig struct {
 	// SQLSampleBytes caps the leading bytes of request SQL copied into
 	// each audit record's sql_sample. 0 disables sampling entirely.
 	SQLSampleBytes int `mapstructure:"sqlSampleBytes"`
+
+	// ChainKeyRef is a secret:// reference to the key of the hash chain,
+	// at least 32 bytes. With it every new record has a keyed hash. Empty
+	// keeps the plain chain.
+	ChainKeyRef string `mapstructure:"chainKeyRef"`
 }
 
 // FileSinkConfig configures the append-only audit log file.

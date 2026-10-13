@@ -91,6 +91,9 @@ type Record struct {
 	// mode, and a column mask of a composite member that lost to the mask
 	// of an earlier member. They did not shape the decision.
 	PoliciesShadow []apitypes.AppliedPolicy `json:"policies_shadow,omitempty"`
+	// HashAlg is HashAlgHMAC when Hash is keyed. Empty means the plain
+	// SHA-256 chain, as in every record written before the key existed.
+	HashAlg string `json:"hash_alg,omitempty"`
 
 	PriorHash string `json:"prior_hash"`
 	Hash      string `json:"hash,omitempty"`
@@ -285,6 +288,11 @@ func canonicalFields(r *Record) ([]canonicalField, error) {
 	}
 	if len(r.PoliciesShadow) > 0 {
 		if err := addJSON("policies_shadow", r.PoliciesShadow); err != nil {
+			return nil, err
+		}
+	}
+	if r.HashAlg != "" {
+		if err := addJSON("hash_alg", r.HashAlg); err != nil {
 			return nil, err
 		}
 	}

@@ -230,7 +230,7 @@ func TestFileSink_SameDaySizeRotationOrdering(t *testing.T) {
 	}
 
 	// Verify must chain across the rotation, not falsely report tampering.
-	rep, verr := audit.Verify(dir, anchor)
+	rep, verr := audit.Verify(dir, anchor, nil)
 	if verr != nil {
 		t.Fatalf("verify falsely reported a broken chain across same-day rotation: %v", verr)
 	}

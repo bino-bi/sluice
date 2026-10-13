@@ -148,6 +148,15 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"admin.tls", "certFile and keyFile"},
 		},
 		{
+			name:    "audit.chainKeyRef must be a secret reference",
+			mutate:  func(c *ServerConfig) { c.Audit.ChainKeyRef = "plain-text-key" },
+			wantErr: []string{"audit.chainKeyRef"},
+		},
+		{
+			name:   "audit.chainKeyRef as a secret reference",
+			mutate: func(c *ServerConfig) { c.Audit.ChainKeyRef = "secret://env/SLUICE_AUDIT_KEY" },
+		},
+		{
 			name:    "negative result size cap rejected",
 			mutate:  func(c *ServerConfig) { c.Limits.MaxResultBytes = -1 },
 			wantErr: []string{"limits.maxResultBytes"},

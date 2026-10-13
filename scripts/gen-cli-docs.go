@@ -41,7 +41,8 @@ Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also ha
 | 2 | ~datasource check~ | The directory holds no ~DataSource~ object. |
 | 3 | ~config validate~, ~policy validate~, ~policy explain~ | A policy or the server config is not valid. |
 | 3 | ~policy test~ | A policy file is not valid or does not compile, a case failed, or no case ran. |
-| 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, or the anchor differs. |
+| 1 | ~audit verify~ | The chain is keyed and ~--key-ref~ is missing. |
+| 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, the anchor or the key differs, or the directory has no record. |
 `
 
 // notes holds the hand-written text of a command section, keyed by the
