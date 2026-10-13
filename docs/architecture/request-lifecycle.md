@@ -95,8 +95,8 @@ What happened: each request stopped at a different stage. Several stages share t
 |---|---|
 | `SELECT` | Runs |
 | `EXPLAIN` of a `SELECT` | Runs. `ERR_UNSUPPORTED_SYNTAX` if a row filter or column mask applies |
-| `INSERT`, `UPDATE`, `DELETE` | `ACL_REJECTED` |
-| DDL, `COPY`, `SET`, `RESET`, `SHOW` | `ERR_UNSUPPORTED_SYNTAX` |
+| `INSERT`, `UPDATE`, `DELETE`, also inside a `WITH` | `ACL_REJECTED` |
+| DDL, `COPY`, `SELECT ... INTO`, `SET`, `RESET`, `SHOW` | `ERR_UNSUPPORTED_SYNTAX` |
 | `ATTACH` | `ERR_SYNTAX` |
 
 Policies see no table in `SET` and `SHOW`. An allow policy that names a table does not match them, so the answer is `ACL_DENIED`. The code in the table shows under an allow policy without `resources`.

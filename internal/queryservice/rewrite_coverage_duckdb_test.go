@@ -1923,6 +1923,32 @@ func TestExecute_SetAndShowNotExecuted(t *testing.T) {
 	}
 }
 
+// A SELECT can write: SELECT ... INTO creates a table, and a CTE can hold
+// an INSERT or DELETE. DuckDB refuses both today, but the statement gate
+// must stop them itself.
+func TestExecute_WritingSelectNotExecuted(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowWithoutTables)
+	for sql, want := range map[string]pkgerr.Code{
+		"SELECT 1 INTO t":                 pkgerr.CodeUnsupportedSyntax,
+		"EXPLAIN ANALYZE SELECT 1 INTO t": pkgerr.CodeUnsupportedSyntax,
+		"SELECT 1 UNION SELECT 2 INTO t":  pkgerr.CodeUnsupportedSyntax,
+		"WITH x AS (INSERT INTO memory.main.t VALUES (1) RETURNING *) SELECT * FROM x":               pkgerr.CodeACLRejected,
+		"SELECT * FROM (WITH x AS (DELETE FROM shop.main.orders RETURNING *) SELECT * FROM x) s":     pkgerr.CodeACLRejected,
+		"EXPLAIN ANALYZE WITH x AS (UPDATE shop.main.orders SET id = 1 RETURNING *) SELECT * FROM x": pkgerr.CodeACLRejected,
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want %s", sql, rows, want)
+		} else if ae := pkgerr.FromError(err); ae.Code != want {
+			t.Errorf("%s: code = %s (%s), want %s", sql, ae.Code, ae.Message, want)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+}
+
 // orders has a row filter and no mask. A post-query mask on a table read
 // only in a subquery must not refuse a star over orders.
 func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {
