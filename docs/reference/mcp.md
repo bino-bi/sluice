@@ -63,28 +63,19 @@ Over HTTP, Sluice keeps no session state. A tool call runs as the subject of its
 
 ## Which tables an agent sees
 
-`list_tables` and `list_accessible_tables` show a table only when both are true:
-
-- A policy allows the subject to read the table.
-- Sluice has loaded the schema of its data source. `describe_table` on one table that the subject can read does that. A query does it only for a table with a column mask.
-
-A fresh server lists nothing. A reload empties the list again. So call `describe_table` first:
+`list_tables` and `list_accessible_tables` show every table that a policy allows the subject to read. The data source has a third table, `customers`, that no policy allows:
 
 ```bash
---8<-- "examples/mcp-tools/steps/06-describe-table.sh"
-```
-
-Then `list_tables` shows every table that the subject can read:
-
-```bash
---8<-- "examples/mcp-tools/steps/07-list-tables-again.sh"
+--8<-- "examples/mcp-tools/steps/03-list-tables.sh"
 ```
 
 ```text
---8<-- "examples/mcp-tools/expected/07-list-tables-again.txt"
+--8<-- "examples/mcp-tools/expected/03-list-tables.txt"
 ```
 
-`describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its loaded tables. A catalog without loaded tables stays visible.
+Sluice reads the tables of a data source on the first call, and again after a reload. A data source that is down is left out.
+
+`describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its tables. A catalog that is empty or down stays visible.
 
 ## Audit records
 

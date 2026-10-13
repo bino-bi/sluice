@@ -13,6 +13,7 @@ import (
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
 
 // fakeSchemaCache serves a fixed entry set; only All is exercised by the
@@ -179,5 +180,94 @@ func TestAccessibleTables_CatalogFilterAndPaging(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Fatalf("unknown catalog returned %d refs", len(none))
+	}
+}
+
+// catalogLoader serves the same two tables for every catalog and counts
+// the loads of each.
+type catalogLoader struct {
+	loads map[string]int
+}
+
+func (l *catalogLoader) Load(_ context.Context, catalog string) (pkgds.Schema, error) {
+	l.loads[catalog]++
+	return pkgds.Schema{Catalog: catalog, Schemas: []pkgds.SchemaNS{{
+		Name:   "main",
+		Tables: []pkgds.Table{{Name: "customers"}, {Name: "orders"}},
+	}}}, nil
+}
+
+type fixedCatalogs []queryservice.CatalogInfo
+
+func (f fixedCatalogs) List(context.Context) []queryservice.CatalogInfo { return f }
+
+// newColdService has the catalogs shop and crm attached and an empty
+// schema cache, as a server has after its start and after a reload.
+func newColdService(t *testing.T, pol *denyingPolicy, down string) (*queryservice.Service, *catalogLoader) {
+	t.Helper()
+	loader := &catalogLoader{loads: map[string]int{}}
+	return queryservice.New(queryservice.Options{
+		Parser:     &fakeParser{},
+		Policy:     pol,
+		Rewriter:   &fakeRewriter{},
+		Executor:   &fakeExecutor{},
+		Audit:      &fakeAudit{},
+		Schema:     schema.New(schema.Options{Loader: loader}),
+		Catalogs:   func() []string { return []string{"shop", "crm"} },
+		SourceDown: func(catalog string) bool { return catalog == down },
+		Clock:      func() time.Time { return time.Unix(1713600000, 0) },
+	}), loader
+}
+
+// The listing tools read the schema cache. Nothing fills it for a plain
+// query, so they load a catalog themselves, once.
+func TestListTables_LoadsTheCatalog(t *testing.T) {
+	svc, loader := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true}}, "")
+	ctx := context.Background()
+	for range 2 {
+		got, _, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{})
+		if err != nil {
+			t.Fatalf("ListTables: %v", err)
+		}
+		if len(got) != 1 || got[0].Table != "orders" {
+			t.Fatalf("tables = %v, want only shop.main.orders", got)
+		}
+	}
+	if loader.loads["shop"] != 1 || loader.loads["crm"] != 0 {
+		t.Errorf("loads = %v, want one load of shop only", loader.loads)
+	}
+	// A name that is no attached catalog reaches no data source.
+	if got, _, err := svc.ListTables(ctx, "nope", "", nil, queryservice.Page{}); err != nil || len(got) != 0 {
+		t.Errorf("ListTables(nope) = %v, %v, want no table", got, err)
+	}
+	if loader.loads["nope"] != 0 {
+		t.Errorf("an unknown catalog name was loaded %d time(s)", loader.loads["nope"])
+	}
+}
+
+func TestAccessibleTables_LoadsEveryCatalogThatIsUp(t *testing.T) {
+	svc, loader := newColdService(t, &denyingPolicy{}, "crm")
+	got, _, err := svc.AccessibleTables(context.Background(), nil, "", queryservice.Page{})
+	if err != nil {
+		t.Fatalf("AccessibleTables: %v", err)
+	}
+	if len(got) != 2 || got[0].Catalog != "shop" || got[1].Catalog != "shop" {
+		t.Errorf("tables = %v, want the two tables of shop", got)
+	}
+	if loader.loads["crm"] != 0 {
+		t.Errorf("the data source that is down was loaded %d time(s)", loader.loads["crm"])
+	}
+}
+
+func TestListCatalogs_HidesADeniedCatalogOnAColdCache(t *testing.T) {
+	svc, _ := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true, "orders": true}}, "crm")
+	got, err := svc.ListCatalogs(context.Background(),
+		fixedCatalogs{{Name: "shop"}, {Name: "crm"}}, nil)
+	if err != nil {
+		t.Fatalf("ListCatalogs: %v", err)
+	}
+	// shop: every table denied. crm: down, so nothing is known about it.
+	if len(got) != 1 || got[0].Name != "crm" {
+		t.Errorf("catalogs = %v, want only crm", got)
 	}
 }

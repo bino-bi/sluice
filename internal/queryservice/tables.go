@@ -104,6 +104,7 @@ func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *
 	if s.opts.Schema == nil {
 		return all, nil
 	}
+	s.loadCatalogs(ctx, "")
 	known := map[string]bool{}
 	visible := map[string]bool{}
 	for _, e := range s.opts.Schema.All() {
@@ -146,6 +147,7 @@ const (
 // The second return value is the cursor for the next page ("" when the
 // listing is exhausted).
 func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx, page Page) ([]parser.TableRef, string, error) {
+	s.loadCatalogs(ctx, catalog)
 	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
 		if e.Key.Catalog != catalog {
 			return false
@@ -240,9 +242,40 @@ func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *
 // it may query without probing by trial and error. The second return
 // value is the next-page cursor ("" when exhausted).
 func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, catalog string, page Page) ([]parser.TableRef, string, error) {
+	s.loadCatalogs(ctx, catalog)
 	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
 		return catalog == "" || e.Key.Catalog == catalog
 	})
+}
+
+// loadCatalogs reads the tables of every attached catalog that the schema
+// cache holds no table of, or only of catalog when that is set. A query
+// loads a schema only for a filtered or masked table, so without this a
+// listing shows nothing after a start or a reload. A data source that is
+// down is left out. So is one that fails to load: Refresh logs it.
+func (s *Service) loadCatalogs(ctx context.Context, catalog string) {
+	if s.opts.Schema == nil || s.opts.Catalogs == nil {
+		return
+	}
+	loaded := map[string]bool{}
+	for _, e := range s.opts.Schema.All() {
+		if e != nil {
+			loaded[e.Key.Catalog] = true
+		}
+	}
+	var missing []string
+	for _, c := range s.opts.Catalogs() {
+		if catalog != "" && c != catalog {
+			continue
+		}
+		if loaded[c] || (s.opts.SourceDown != nil && s.opts.SourceDown(c)) {
+			continue
+		}
+		missing = append(missing, c)
+	}
+	if len(missing) > 0 {
+		_ = s.opts.Schema.Refresh(ctx, missing)
+	}
 }
 
 // tableVisible reports whether user may read ref — i.e. the policy engine

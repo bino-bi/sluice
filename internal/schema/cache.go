@@ -83,8 +83,9 @@ type Options struct {
 	Loader Loader
 
 	// TTL is the age at which Refresh loads a catalog again. Get does not
-	// check it, and nothing calls Refresh today, so an entry stays until
-	// it is invalidated. Zero means DefaultTTL.
+	// check it, and the query service calls Refresh only for a catalog
+	// without entries, so an entry stays until it is invalidated. Zero
+	// means DefaultTTL.
 	TTL time.Duration
 
 	// Capacity is the maximum number of entries retained in the LRU.
