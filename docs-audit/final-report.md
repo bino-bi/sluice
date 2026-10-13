@@ -10,7 +10,7 @@ Base: commit 6f7b99f (`main`). Work: branch `docs/simplify`. The docs describe `
 | The Compliance section is gone, no page links to it | Met | Style check, strict build |
 | Security and the threat model are kept and list only protections in the code | Met | `docs-audit/security.md` has file and line for each row of the threat table |
 | Every documented feature maps to code, nothing unimplemented is documented | Met | Audit files, plus six rounds of independent review against the code |
-| Every code block comes from a tested file, `make docs-check` passes | Met locally. CI has not run yet | Style check, `make docs-check` |
+| Every code block comes from a tested file, `make docs-check` passes | Met, locally and in CI | Style check, `make docs-check`, job `docs-check` on pull request 11 |
 | Every policy kind and every cookbook recipe has a runnable example with real output | Met | Tables under "Examples" |
 | Every diagram is still present and renders | Met | Style check compares each diagram with its stored copy |
 | `mkdocs build --strict` passes, no broken links | Met | Part of `make docs-check`. Link and heading checks are turned on in `mkdocs.yml` |
@@ -425,7 +425,7 @@ Most serious findings of round 1 were limits or security claims that were stated
 
 - The style check is a set of text rules. It misses a count when the noun is not in its list or a word stands between, a long sentence with an end mark inside, word forms of banned words, and rare forms of indented code. It flags a few fine sentences, for example one with the word "planned". A reviewer still has to read a new page.
 
-- CI: `.github/workflows/docs-check.yaml` runs `make docs-check` on pull requests and on pushes to `main`. It has not run yet, because no pull request exists for this branch.
+- CI: the job `docs-check` passes on pull request 11. The lint job fails there on `internal/queryservice/execute_test.go:810` (staticcheck QF1001). It fails on `main` in the same way, and this branch does not change that file.
 - The Docker paths in the docs and the compose files were not run.
 - The Quickstart shows `git clone`, `make build` and the start script from files under `examples/install/manual/`. The maintainer agreed to `manual/` for docker, cosign, systemd and client config. This use is wider and needs a decision.
 - No `CLAUDE.md` or `AGENTS.md` exists in the repository, so nothing links to `docs-style.md` from such a file. `examples/README.md` and the Makefile name it.
