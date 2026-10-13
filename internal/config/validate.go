@@ -113,9 +113,16 @@ func (c *ServerConfig) Validate() error {
 		errs = append(errs, errors.New(
 			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
 	}
-	// net/http binds port 80 on every interface for an empty address.
-	if c.MCP.Enabled && c.MCP.Transport != "" && c.MCP.Transport != "stdio" && c.MCP.Listen == "" {
-		errs = append(errs, errors.New("mcp.listen: required with mcp.transport "+c.MCP.Transport))
+	// The names that the MCP transport accepts (mcp.ParseTransport).
+	switch c.MCP.Transport {
+	case "", "stdio":
+	case "streamable_http", "http", "streamable-http", "streamablehttp":
+		// net/http binds port 80 on every interface for an empty address.
+		if c.MCP.Enabled && c.MCP.Listen == "" {
+			errs = append(errs, errors.New("mcp.listen: required with mcp.transport "+c.MCP.Transport))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("mcp.transport: unknown transport %q (stdio or streamable_http)", c.MCP.Transport))
 	}
 	return errors.Join(errs...)
 }

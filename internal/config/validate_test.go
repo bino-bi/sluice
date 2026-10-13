@@ -169,6 +169,15 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"mcp.listen"},
 		},
 		{
+			name: "unknown mcp transport rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "sse"
+				c.MCP.Listen = ":8081"
+			},
+			wantErr: []string{"mcp.transport", `"sse"`},
+		},
+		{
 			name: "mcp over http with an address is valid",
 			mutate: func(c *ServerConfig) {
 				c.MCP.Enabled = true

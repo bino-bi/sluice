@@ -19,6 +19,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/secrets"
+	"github.com/bino-bi/sluice/internal/transport/mcp"
 )
 
 // headerCheckingIdentifier resolves any request carrying the expected
@@ -261,5 +262,101 @@ func TestMCPCmd_UnknownTransport(t *testing.T) {
 	var exit *exitError
 	if !errors.As(err, &exit) || exit.Code != 1 || !strings.Contains(err.Error(), `"sse"`) {
 		t.Fatalf("err = %v, want exit status 1 that names the transport", err)
+	}
+}
+
+// buildMCPRuntime builds the runtime of `sluice serve` with MCP over HTTP
+// and the extra server config text.
+func buildMCPRuntime(t *testing.T, extra string) (*runtimeDeps, error) {
+	t.Helper()
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	if err := os.MkdirAll(policyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := "policies:\n  reload: false\naudit:\n  file:\n    path: " + filepath.Join(dir, "audit") + "\n" + extra
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps, err := buildRuntime(context.Background(), cfgPath, policyDir)
+	if err == nil {
+		t.Cleanup(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			deps.Close(shutdownCtx)
+		})
+	}
+	return deps, err
+}
+
+// mcp.tls reaches the MCP server: files that cannot be read stop the start.
+func TestBuildRuntime_MCPTLSIsWired(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	_, err := buildMCPRuntime(t, `
+mcp:
+  enabled: true
+  transport: streamable_http
+  listen: 127.0.0.1:0
+  allowAnonymous: true
+  tls:
+    certFile: /nonexistent/cert.pem
+    keyFile: /nonexistent/key.pem
+`)
+	if err == nil || !strings.Contains(err.Error(), "mcp: tls") {
+		t.Fatalf("buildRuntime = %v, want the tls error of the MCP server", err)
+	}
+}
+
+// The per-IP bucket is shared too: the address that used its token on REST
+// is refused on MCP, another address is not.
+func TestBuildRuntime_MCPSharesThePerIPLimitOfREST(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	deps, err := buildMCPRuntime(t, `
+mcp:
+  enabled: true
+  transport: streamable_http
+  listen: 127.0.0.1:0
+  allowAnonymous: true
+limits:
+  globalRps: 0
+  perIpRps: 0.001
+  perIpBurst: 1
+`)
+	if err != nil {
+		t.Fatalf("buildRuntime: %v", err)
+	}
+	post := func(h http.Handler, path, remote string) int {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		r.RemoteAddr = remote
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := post(deps.rest.Handler(), "/v1/query", "203.0.113.7:1000"); code == http.StatusTooManyRequests {
+		t.Fatal("first request was rate limited")
+	}
+	if code := post(deps.mcp.Handler(), "/", "203.0.113.7:2000"); code != http.StatusTooManyRequests {
+		t.Errorf("MCP status for the same address = %d, want 429", code)
+	}
+	if code := post(deps.mcp.Handler(), "/", "203.0.113.8:2000"); code == http.StatusTooManyRequests {
+		t.Error("another address was rate limited")
+	}
+}
+
+// The server config check and the MCP transport know the same names.
+func TestMCPTransportNames_ValidateAgreesWithParse(t *testing.T) {
+	for _, name := range []string{"", "stdio", "streamable_http", "http", "streamable-http", "streamablehttp", "sse", "STDIO"} {
+		_, parseErr := mcp.ParseTransport(name)
+		scfg := config.DefaultServerConfig()
+		scfg.MCP.Transport = name
+		scfg.MCP.Listen = ":8081"
+		if valErr := scfg.Validate(); (parseErr == nil) != (valErr == nil) {
+			t.Errorf("transport %q: ParseTransport = %v, Validate = %v", name, parseErr, valErr)
+		}
 	}
 }

@@ -104,15 +104,13 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-func TestRun_ServesTLS(t *testing.T) {
-	ca := tlstest.NewCA(t, "server")
-	cert, key := ca.ServerCert(t)
+// startTLSServer runs the HTTP transport with tc on a loopback address and
+// waits until the listener accepts connections.
+func startTLSServer(t *testing.T, tc *tlsutil.Config) string {
+	t.Helper()
 	addr := freeAddr(t)
-	s, err := New(Config{
-		Transport:  TransportStreamableHTTP,
-		HTTPListen: addr,
-		TLS:        &tlsutil.Config{CertFile: cert, KeyFile: key},
-	}, Deps{Service: testService(), Identifier: keySubjectIdentifier{}})
+	s, err := New(Config{Transport: TransportStreamableHTTP, HTTPListen: addr, TLS: tc},
+		Deps{Service: testService(), Identifier: keySubjectIdentifier{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,21 +121,37 @@ func TestRun_ServesTLS(t *testing.T) {
 		cancel()
 		<-done
 	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return addr
+		}
+		select {
+		case err := <-done:
+			done <- err
+			t.Fatalf("Run returned before the listener was up: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no listener on %s: %v", addr, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRun_ServesTLS(t *testing.T) {
+	ca := tlstest.NewCA(t, "server")
+	cert, key := ca.ServerCert(t)
+	addr := startTLSServer(t, &tlsutil.Config{CertFile: cert, KeyFile: key})
 
 	client := &http.Client{
 		Timeout:   2 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.Pool(t), MinVersion: tls.VersionTLS12}},
 	}
 	// Without a credential the answer is 401, over TLS.
-	var resp *http.Response
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		resp, err = client.Get("https://" + addr + "/")
-		if err == nil || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	resp, err := client.Get("https://" + addr + "/")
 	if err != nil {
 		t.Fatalf("https request: %v", err)
 	}
@@ -153,20 +167,6 @@ func TestRun_ServesTLS(t *testing.T) {
 		if plain.StatusCode != http.StatusBadRequest {
 			t.Errorf("plain HTTP status = %d, want 400 from the TLS listener", plain.StatusCode)
 		}
-	}
-}
-
-func TestRun_BadTLSFailsBeforeBind(t *testing.T) {
-	s, err := New(Config{
-		Transport:  TransportStreamableHTTP,
-		HTTPListen: "127.0.0.1:0",
-		TLS:        &tlsutil.Config{CertFile: "/nonexistent/cert.pem", KeyFile: "/nonexistent/key.pem"},
-	}, Deps{Service: testService()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "tls") {
-		t.Fatalf("Run = %v, want a tls error", err)
 	}
 }
 
@@ -191,5 +191,62 @@ func TestParseTransport(t *testing.T) {
 	// and not when the listener runs.
 	if _, err := New(Config{Transport: "sse"}, Deps{Service: testService()}); err == nil {
 		t.Error("New accepted the transport sse")
+	}
+}
+
+// A request that the per-IP bucket refuses takes no token of the global
+// bucket, which REST shares.
+func TestStreamable_PerIPRefusalLeavesTheGlobalBucket(t *testing.T) {
+	global := &bucket{}
+	perIP := &bucket{refuse: map[string]bool{"127.0.0.1": true}}
+	_, url := newStreamableTestServerWith(t, Config{}, func(d *Deps) {
+		d.GlobalLimiter = global
+		d.PerIPLimiter = perIP
+	})
+	if status, _, _ := mcpPost(t, url, "alice", "", rpcInitialize); status != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", status)
+	}
+	if len(global.asked) != 0 {
+		t.Errorf("the global bucket was asked %d time(s) for a request the per-IP bucket refused", len(global.asked))
+	}
+}
+
+// A TLS file that cannot be read fails the construction, before any
+// listener of the server starts.
+func TestNew_BadTLS(t *testing.T) {
+	_, err := New(Config{
+		Transport:  TransportStreamableHTTP,
+		HTTPListen: "127.0.0.1:0",
+		TLS:        &tlsutil.Config{CertFile: "/nonexistent/cert.pem", KeyFile: "/nonexistent/key.pem"},
+	}, Deps{Service: testService()})
+	if err == nil || !strings.Contains(err.Error(), "tls") {
+		t.Fatalf("New = %v, want a tls error", err)
+	}
+}
+
+func TestRun_RequiresAClientCertificateWithClientCA(t *testing.T) {
+	serverCA := tlstest.NewCA(t, "server")
+	clientCA := tlstest.NewCA(t, "clients")
+	cert, key := serverCA.ServerCert(t)
+	addr := startTLSServer(t, &tlsutil.Config{CertFile: cert, KeyFile: key, ClientCA: clientCA.CertPath})
+
+	without := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs: serverCA.Pool(t), MinVersion: tls.VersionTLS12,
+	}}}
+	if resp, err := without.Get("https://" + addr + "/"); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a client without a certificate got an answer")
+	}
+	with := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs: serverCA.Pool(t), Certificates: []tls.Certificate{clientCA.ClientCert(t)}, MinVersion: tls.VersionTLS12,
+	}}}
+	resp, err := with.Get("https://" + addr + "/")
+	if err != nil {
+		t.Fatalf("request with a client certificate: %v", err)
+	}
+	_ = resp.Body.Close()
+	// The certificate does not replace the login.
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }

@@ -42,12 +42,14 @@ func rateLimitedMetric() *prometheus.CounterVec {
 // identity middleware on the data-plane route. Either limiter may be nil.
 func (s *Server) rateLimitMW(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.deps.GlobalLimiter != nil && !s.deps.GlobalLimiter.Allow("") {
-			s.denyRateLimited(w, r, "global")
-			return
-		}
+		// Per IP first: a request this bucket refuses must not take a
+		// token of the global one, or one client starves all others.
 		if s.deps.PerIPLimiter != nil && !s.deps.PerIPLimiter.Allow(identity.RemoteIP(r)) {
 			s.denyRateLimited(w, r, "per_ip")
+			return
+		}
+		if s.deps.GlobalLimiter != nil && !s.deps.GlobalLimiter.Allow("") {
+			s.denyRateLimited(w, r, "global")
 			return
 		}
 		next.ServeHTTP(w, r)

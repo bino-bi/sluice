@@ -41,12 +41,14 @@ func rateLimitedMetric() *prometheus.CounterVec {
 // nil.
 func (s *Server) rateLimitMW(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Per IP first: a request this bucket refuses must not take a
+		// token of the global one, or one client starves all others.
 		scope := ""
 		switch {
-		case s.deps.GlobalLimiter != nil && !s.deps.GlobalLimiter.Allow(""):
-			scope = "global"
 		case s.deps.PerIPLimiter != nil && !s.deps.PerIPLimiter.Allow(identity.RemoteIP(r)):
 			scope = "per_ip"
+		case s.deps.GlobalLimiter != nil && !s.deps.GlobalLimiter.Allow(""):
+			scope = "global"
 		}
 		if scope == "" {
 			next.ServeHTTP(w, r)

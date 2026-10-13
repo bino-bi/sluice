@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -104,6 +105,7 @@ type Server struct {
 	deps Deps
 	mcp  *sdkmcp.Server
 	http *http.Server
+	tls  *tls.Config
 	lg   *slog.Logger
 }
 
@@ -142,6 +144,14 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	}
 	srv := sdkmcp.NewServer(impl, nil)
 	s := &Server{cfg: cfg, deps: deps, mcp: srv, lg: lg}
+	// Read the TLS files now: an error then stops the start before any
+	// other listener runs.
+	if cfg.Transport == TransportStreamableHTTP && cfg.TLS != nil {
+		s.tls, err = tlsutil.Build(*cfg.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: tls: %w", err)
+		}
+	}
 	s.registerTools()
 	srv.AddReceivingMiddleware(cancelWithRequest)
 	return s, nil
@@ -262,12 +272,8 @@ func (s *Server) runStreamable(ctx context.Context) error {
 		WriteTimeout:      s.cfg.WriteTimeout,
 		IdleTimeout:       s.cfg.SessionIdleMax,
 	}
-	if s.cfg.TLS != nil {
-		tc, err := tlsutil.Build(*s.cfg.TLS)
-		if err != nil {
-			return fmt.Errorf("mcp: tls: %w", err)
-		}
-		s.http.TLSConfig = tc
+	if s.tls != nil {
+		s.http.TLSConfig = s.tls
 		if s.cfg.TLS.ClientCA != "" {
 			s.lg.InfoContext(ctx, "mcp: mTLS enabled, client certificates required",
 				slog.String("client_ca", s.cfg.TLS.ClientCA))
@@ -275,7 +281,7 @@ func (s *Server) runStreamable(ctx context.Context) error {
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		if s.cfg.TLS != nil {
+		if s.tls != nil {
 			errCh <- s.http.ListenAndServeTLS("", "")
 			return
 		}

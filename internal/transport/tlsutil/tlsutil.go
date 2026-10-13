@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-// Config holds TLS material paths shared by the REST and admin listeners.
+// Config holds TLS material paths shared by the REST, MCP and admin listeners.
 type Config struct {
 	CertFile string
 	KeyFile  string

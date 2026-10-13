@@ -37,7 +37,7 @@ Diagram numbers count messages, not stages.
 
 ## Stages
 
-1. **Transport limits and login.** The REST API checks its rate limits. Sluice maps the API key or token to a subject.
+1. **Transport limits and login.** The REST API and MCP over HTTP check their rate limits. Sluice maps the API key or token to a subject.
 2. **Admission.** Sluice checks the concurrency limit, the subject's [rate limit and budget](../policies/subjects.md) and the SQL size. It caps the requested timeout and row count.
 3. **Parse.** Sluice parses the statement with the PostgreSQL grammar and finds its tables.
 4. **Statement checks.** Sluice checks function calls and table names.
