@@ -134,13 +134,27 @@ func TestApproval_TriggerPatternsFoldCase(t *testing.T) {
 	}
 }
 
+// A pattern matches each part of a dotted name: a qualifier before the
+// column, and a field after a STRUCT column.
+func TestApproval_PatternMatchesEachNamePart(t *testing.T) {
+	when := &apitypes.ApprovalWhen{ColumnsAccessed: []string{"profile"}}
+	for _, col := range []string{"profile", "p.profile", "profile.ssn", "p.profile.ssn", "main.people.profile.ssn"} {
+		if dec := evalApproval(t, parser.QueryShape{AccessedColumns: []string{col}}, allowAll(0), approvalPolicy("pii", when)); dec.Approval == nil {
+			t.Errorf("pattern profile should match %s", col)
+		}
+	}
+	if dec := evalApproval(t, parser.QueryShape{AccessedColumns: []string{"p.profiles", "id"}}, allowAll(0), approvalPolicy("pii", when)); dec.Approval != nil {
+		t.Error("pattern profile matched another column")
+	}
+}
+
 // A number written in another way is the same value.
 func TestApproval_NumericValueMatches(t *testing.T) {
 	when := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "tenant_id", Op: "=", Value: "7"}}}
 	cmp := func(v string) parser.QueryShape {
 		return parser.QueryShape{Comparisons: []parser.Comparison{{Column: "tenant_id", Op: "=", Value: v}}}
 	}
-	for _, v := range []string{"7", "7.0", "07", "7e0"} {
+	for _, v := range []string{"7", "7.0", "07", "7e0", " 7 "} {
 		if dec := evalApproval(t, cmp(v), allowAll(0), approvalPolicy("tenant", when)); dec.Approval == nil {
 			t.Errorf("tenant_id = %s should trigger approval", v)
 		}

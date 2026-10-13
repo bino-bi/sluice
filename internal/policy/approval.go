@@ -4,6 +4,7 @@ package policy
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/pkg/apitypes"
@@ -82,15 +83,18 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 	return false
 }
 
-// matchColumn matches a wildcard against a column reference by both its
-// full dotted form and its bare last segment (so `email` matches
-// `u.email`).
+// matchColumn matches a wildcard against a column reference: the dotted
+// name as written and each of its parts. So `email` matches `u.email`, and
+// a pattern for a STRUCT column matches `profile.city`. A part can also be
+// a table alias; that fails closed.
 func matchColumn(m apitypes.Matcher, col string) bool {
 	if m.Match(col) {
 		return true
 	}
-	if bare := lastSegment(col); bare != col {
-		return m.Match(bare)
+	for _, part := range strings.Split(col, ".") {
+		if m.Match(part) {
+			return true
+		}
 	}
 	return false
 }
@@ -112,16 +116,7 @@ func triggerMatches(tr compiledTrigger, cmp parser.Comparison) bool {
 // sameNumber reports whether a and b are the same number written in two
 // ways: 7 and 7.0.
 func sameNumber(a, b string) bool {
-	x, errX := strconv.ParseFloat(a, 64)
-	y, errY := strconv.ParseFloat(b, 64)
+	x, errX := strconv.ParseFloat(strings.TrimSpace(a), 64)
+	y, errY := strconv.ParseFloat(strings.TrimSpace(b), 64)
 	return errX == nil && errY == nil && x == y
-}
-
-func lastSegment(dotted string) string {
-	for i := len(dotted) - 1; i >= 0; i-- {
-		if dotted[i] == '.' {
-			return dotted[i+1:]
-		}
-	}
-	return dotted
 }

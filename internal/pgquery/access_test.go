@@ -90,7 +90,7 @@ func TestAccess_AllColumns(t *testing.T) {
 		"SELECT p.* FROM pg.hr.people p",
 		"SELECT id FROM (SELECT * FROM pg.hr.people) s",
 		"SELECT id FROM pg.hr.a UNION SELECT * FROM pg.hr.people",
-		"SELECT s.* FROM (SELECT 1 AS x) s JOIN pg.hr.people p ON true",
+		"SELECT * FROM (SELECT 1 AS x) s JOIN pg.hr.people p ON true",
 		"SELECT (SELECT c.* FROM (SELECT 1 AS x) y) FROM pg.hr.people c",
 		// The table, its alias or a join alias as a row value.
 		"SELECT p FROM pg.hr.people p",
@@ -98,6 +98,9 @@ func TestAccess_AllColumns(t *testing.T) {
 		`SELECT p FROM pg.hr.people "P"`,
 		`SELECT "PEOPLE" FROM pg.hr.people`,
 		"SELECT hr.people FROM pg.hr.people",
+		// A FROM item named like the schema does not hide the row value.
+		"SELECT hr.people FROM pg.hr.people WHERE EXISTS (SELECT 1 FROM (SELECT 1 AS z) hr)",
+		"SELECT pg.hr.people FROM pg.hr.people, (SELECT 1 AS z) hr",
 		"SELECT to_json(people) FROM pg.hr.people",
 		`SELECT ("P").ssn FROM pg.hr.people p`,
 		"SELECT j FROM (pg.hr.people p JOIN pg.hr.badges b ON b.id = p.id) AS j",
@@ -106,6 +109,9 @@ func TestAccess_AllColumns(t *testing.T) {
 		"SELECT j.c4 FROM (pg.hr.people p JOIN pg.hr.badges b ON b.id = p.id) AS j(c1, c2, c3, c4)",
 		"SELECT #4 FROM pg.hr.people",
 		"SELECT id FROM pg.hr.people WHERE #3 = 'de'",
+		// pg_query reads an operator before # as one name.
+		"SELECT '' ||#4 FROM pg.hr.people",
+		"SELECT id FROM pg.hr.people WHERE 'de' =#3",
 		"SELECT id FROM pg.hr.people NATURAL JOIN pg.hr.badges",
 	}
 	for _, sql := range all {
@@ -123,6 +129,11 @@ func TestAccess_AllColumns(t *testing.T) {
 		"SELECT * FROM (SELECT id, name FROM pg.hr.people) AS virtual_table LIMIT 100",
 		"WITH t AS (SELECT id, name FROM pg.hr.people) SELECT * FROM t",
 		"SELECT s FROM (SELECT id, name FROM pg.hr.people) s",
+		"SELECT s.* FROM (SELECT 1 AS x) s JOIN pg.hr.people p ON true",
+		"SELECT t.*, b.id FROM (SELECT id FROM pg.hr.people) t JOIN pg.hr.badges b ON b.id = t.id",
+		"WITH base AS (SELECT id FROM pg.hr.people) SELECT base.*, b.id FROM base JOIN pg.hr.badges b ON b.id = base.id",
+		// ORDER BY names the output column, not the table.
+		"SELECT name, count(*) AS people FROM pg.hr.people GROUP BY name ORDER BY people DESC",
 		// EXISTS returns no column of its subquery.
 		"SELECT a.id FROM pg.hr.a a WHERE EXISTS (SELECT * FROM pg.hr.people p WHERE p.id = a.id)",
 		// A column of a table whose alias is also a column name elsewhere.
@@ -158,6 +169,7 @@ func TestAccessedColumns_EveryForm(t *testing.T) {
 		"SELECT x FROM (VALUES (1)) v(x) WHERE x IN (SELECT ssn FROM pg.t)",
 		`SELECT "SSN" FROM pg.t`,
 		`SELECT p."Ssn" FROM pg.t p`,
+		"SELECT (p).ssn FROM pg.t p",
 	} {
 		s := shapeOf(t, sql)
 		if !slices.Contains(s.AccessedColumns, "ssn") && !slices.Contains(s.AccessedColumns, "p.ssn") {
@@ -198,6 +210,7 @@ func TestAccess_UnreadPredicateColumns(t *testing.T) {
 		"SELECT id FROM pg.a JOIN pg.b ON lower(a.country) = 'de'",
 		"SELECT count(*) FILTER (WHERE upper(country) = 'DE') FROM pg.t",
 		"SELECT id FROM pg.t GROUP BY id HAVING max(country) = 'de'",
+		"SELECT id FROM pg.t p WHERE (p).country = 'de'",
 	}
 	for _, sql := range unread {
 		s := shapeOf(t, sql)
@@ -216,6 +229,7 @@ func TestAccess_UnreadPredicateColumns(t *testing.T) {
 		"SELECT id FROM (SELECT id FROM pg.t WHERE country = 'fr') s",
 		"SELECT (SELECT max(id) FROM pg.t WHERE country = 'fr')",
 		"SELECT country, lower(country), amount * 2 FROM pg.t",
+		"SELECT country ->> 'x', country // 2, country & 1, country << 1 FROM pg.t",
 		"SELECT id FROM pg.t ORDER BY country",
 	}
 	for _, sql := range read {

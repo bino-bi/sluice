@@ -2103,6 +2103,10 @@ func TestExecute_ApprovalTriggersAgainstDuckDB(t *testing.T) {
 		`SELECT "ADMIN_USERS" FROM shop.main.admin_users`,
 		"SELECT (a).username FROM shop.main.admin_users a",
 		"SELECT #2 FROM shop.main.admin_users",
+		"SELECT '' ||#2 FROM shop.main.admin_users",
+		"SELECT id FROM shop.main.admin_users WHERE 'root' =#2",
+		"SELECT main.admin_users FROM shop.main.admin_users, (SELECT 1 AS z) main",
+		"SELECT shop.admin_users FROM shop.main.admin_users WHERE EXISTS (SELECT 1 FROM (SELECT 1 AS z) shop)",
 		"SELECT x FROM shop.main.admin_users a(i, x, r)",
 		"SELECT j FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j",
 		"SELECT j.c2 FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j(c1, c2)",
@@ -2115,6 +2119,7 @@ func TestExecute_ApprovalTriggersAgainstDuckDB(t *testing.T) {
 		"SELECT id FROM shop.main.admin_users WHERE role NOT IN ('analyst')",
 		"SELECT id FROM shop.main.admin_users WHERE NOT (role <> 'superuser')",
 		"SELECT id FROM shop.main.admin_users WHERE role = 'superuser'::VARCHAR",
+		"SELECT id FROM shop.main.admin_users a WHERE (a).role = 'superuser'",
 	}
 	for _, sql := range held {
 		before := ex.calls
@@ -2136,10 +2141,69 @@ func TestExecute_ApprovalTriggersAgainstDuckDB(t *testing.T) {
 		"SELECT * FROM (SELECT id, role FROM shop.main.admin_users) AS virtual_table LIMIT 100",
 		"WITH t AS (SELECT id FROM shop.main.admin_users) SELECT * FROM t",
 		"SELECT a.id FROM shop.main.admin_users a WHERE a.id = 1",
+		"SELECT t.*, o.id AS oid FROM (SELECT id, role FROM shop.main.admin_users) t JOIN shop.main.orders o ON o.id = t.id",
+		"SELECT role, count(*) AS admin_users FROM shop.main.admin_users GROUP BY role ORDER BY admin_users DESC",
 	}
 	for _, sql := range served {
 		if _, err := runRows(svc, sql); err != nil {
 			t.Errorf("%s: %v, want served without approval", sql, err)
 		}
+	}
+}
+
+// A field of a STRUCT column is a read of the column.
+func TestExecute_ApprovalStructColumn(t *testing.T) {
+	const seed = `
+CREATE TABLE docs (id INTEGER, secret STRUCT(a VARCHAR, b INTEGER));
+INSERT INTO docs VALUES (1, {'a': 'top', 'b': 2});`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-shop
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: approve-secret
+  priority: 100
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["docs"] }
+  when:
+    columnsAccessed: ["secret"]
+`
+	svc, ex, _ := newSeededHelloSluiceService(t, nil, seed, policies)
+	for _, sql := range []string{
+		"SELECT secret FROM shop.main.docs",
+		"SELECT secret.a FROM shop.main.docs",
+		"SELECT d.secret.a FROM shop.main.docs d",
+		"SELECT docs.secret.a FROM shop.main.docs",
+		"SELECT (secret).a FROM shop.main.docs",
+		"SELECT secret['a'] FROM shop.main.docs",
+		"SELECT secret.* FROM shop.main.docs",
+		"SELECT id FROM shop.main.docs WHERE secret.a = 'top'",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want held for approval", sql, rows)
+		} else if !strings.Contains(err.Error(), "approval") {
+			t.Errorf("%s: err = %v, want held for approval", sql, err)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	if rows, err := runRows(svc, "SELECT id FROM shop.main.docs"); err != nil || fmt.Sprint(rows) != "[[1]]" {
+		t.Errorf("id alone: rows %v, err %v, want [[1]] without approval", rows, err)
 	}
 }

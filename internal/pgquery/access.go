@@ -29,7 +29,7 @@ func collectAccess(raw *pg.RawStmt, shape *parser.QueryShape) {
 		read:       map[*pg.ColumnRef]struct{}{},
 		ctes:       map[string]struct{}{},
 		exists:     map[*pg.SelectStmt]struct{}{},
-		fromNames:  map[string]struct{}{},
+		outputRefs: map[*pg.ColumnRef]struct{}{},
 		rowNames:   map[string]struct{}{},
 	}
 	root := raw.Stmt.ProtoReflect()
@@ -47,7 +47,15 @@ func collectAccess(raw *pg.RawStmt, shape *parser.QueryShape) {
 		return true
 	})
 	c.walk(root, false, false, false)
-	c.findRowValues()
+	// A reference whose last part names a table, its alias or a join alias
+	// can be that item as a row value: SELECT p FROM people p, p.*,
+	// main.people. A qualifier does not rule it out, since a schema and a
+	// FROM item can share a name.
+	for _, col := range c.columns {
+		if _, ok := c.rowNames[col[strings.LastIndexByte(col, '.')+1:]]; ok {
+			c.all = true
+		}
+	}
 
 	shape.AccessedColumns = c.columns
 	shape.Comparisons = c.comparisons
@@ -67,14 +75,13 @@ type accessCollector struct {
 	// ctes holds the CTE names, exists the subqueries of EXISTS.
 	ctes   map[string]struct{}
 	exists map[*pg.SelectStmt]struct{}
-	// fromNames holds the name of every FROM item. rowNames holds those
-	// that give the columns of a table when used as a value: a table, its
-	// alias, a join alias.
-	fromNames map[string]struct{}
-	rowNames  map[string]struct{}
-	// starQualifiers holds q of each q.*.
-	starQualifiers []string
-	all            bool
+	// outputRefs holds the ORDER BY items that name an output column of
+	// their own SELECT. They read no column of a table.
+	outputRefs map[*pg.ColumnRef]struct{}
+	// rowNames holds the names that give the columns of a table when used
+	// as a value: a table, its alias, a join alias.
+	rowNames map[string]struct{}
+	all      bool
 }
 
 func (c *accessCollector) addColumn(name string) {
@@ -108,32 +115,6 @@ func (c *accessCollector) addComparison(cmp parser.Comparison) {
 	c.comparisons = append(c.comparisons, cmp)
 }
 
-// findRowValues sets all when a reference reads a table as a row value:
-// SELECT p FROM people p, or p.* of a table of an outer SELECT. A name
-// with a qualifier counts when the qualifier is no FROM item, as in
-// main.people. x.id is the column id of x.
-func (c *accessCollector) findRowValues() {
-	for _, q := range c.starQualifiers {
-		if _, ok := c.rowNames[q]; ok {
-			c.all = true
-		}
-	}
-	for _, col := range c.columns {
-		last := strings.LastIndexByte(col, '.')
-		if _, ok := c.rowNames[col[last+1:]]; !ok {
-			continue
-		}
-		if last < 0 {
-			c.all = true
-			continue
-		}
-		qualifier := col[:last]
-		if _, ok := c.fromNames[qualifier[strings.LastIndexByte(qualifier, '.')+1:]]; !ok {
-			c.all = true
-		}
-	}
-}
-
 // walk visits m and every message below it.
 //
 // star is set while a star in the current SELECT reads the columns of a
@@ -151,23 +132,40 @@ func (c *accessCollector) walk(m protoreflect.Message, star, cond, plain bool) {
 	case *pg.SelectStmt:
 		_, inExists := c.exists[v]
 		star = !inExists && (len(v.FromClause) == 0 || c.fromHasTable(v.FromClause))
+		c.findOutputRefs(v)
 	case *pg.A_Star:
 		if star {
 			c.all = true
 		}
 	case *pg.ColumnRef:
-		name := strings.ToLower(columnRefNameOf(v))
-		if n := len(v.Fields); n > 0 && v.Fields[n-1].GetAStar() != nil {
-			c.starQualifiers = append(c.starQualifiers, name[strings.LastIndexByte(name, '.')+1:])
-			break
+		if _, ok := c.outputRefs[v]; ok {
+			return
 		}
+		name := strings.ToLower(columnRefNameOf(v))
 		c.addColumn(name)
+		// q.* reads what q is: the name check after the walk decides. A
+		// bare star has no name and goes on to the A_Star case.
+		if n := len(v.Fields); name != "" && v.Fields[n-1].GetAStar() != nil {
+			return
+		}
 		if _, ok := c.read[v]; cond && !ok {
 			c.addUnread(name)
 		}
+	case *pg.A_Indirection:
+		// (p).ssn names the field ssn.
+		for _, ind := range v.Indirection {
+			if str := ind.GetString_(); str != nil {
+				name := strings.ToLower(str.Sval)
+				c.addColumn(name)
+				if cond {
+					c.addUnread(name)
+				}
+			}
+		}
 	case *pg.A_Expr:
-		// #3 is the third column of the FROM items.
-		if v.Lexpr == nil && aexprName(v) == "#" {
+		// #3 is the third column of the FROM items. pg_query reads an
+		// operator before it as one name: ||#3 is the operator "||#".
+		if strings.Contains(aexprName(v), "#") {
 			c.all = true
 		}
 		c.readComparison(v, plain)
@@ -179,13 +177,11 @@ func (c *accessCollector) walk(m protoreflect.Message, star, cond, plain bool) {
 			}
 		}
 	case *pg.RangeVar:
-		c.fromItem(v.Relname, v.Alias, c.isTable(v))
-	case *pg.RangeSubselect:
-		c.fromItem("", v.Alias, false)
-	case *pg.RangeFunction:
-		c.fromItem("", v.Alias, false)
+		if c.isTable(v) {
+			c.rowItem(v.Relname, v.Alias)
+		}
 	case *pg.JoinExpr:
-		c.fromItem("", v.Alias, true)
+		c.rowItem("", v.Alias)
 		// NATURAL compares every common column without naming one.
 		if v.IsNatural {
 			c.all = true
@@ -239,23 +235,42 @@ func (c *accessCollector) fromHasTable(from []*pg.Node) bool {
 	return false
 }
 
-// fromItem records the name of a FROM item. row is set for an item whose
-// name gives the columns of a table when used as a value.
-func (c *accessCollector) fromItem(name string, alias *pg.Alias, row bool) {
+// rowItem records the name of a table or a join: used as a value, the
+// name gives its columns.
+func (c *accessCollector) rowItem(name string, alias *pg.Alias) {
 	if alias != nil {
 		name = alias.Aliasname
 		// p(a, b) renames the columns: a reads the first one.
-		if row && len(alias.Colnames) > 0 {
+		if len(alias.Colnames) > 0 {
 			c.all = true
 		}
 	}
-	if name == "" {
+	if name != "" {
+		c.rowNames[strings.ToLower(name)] = struct{}{}
+	}
+}
+
+// findOutputRefs marks the ORDER BY items of sel that are the bare name of
+// one of its output columns, as in count(*) AS orders ... ORDER BY orders.
+// A set operation is left out: its ORDER BY belongs to no single SELECT.
+func (c *accessCollector) findOutputRefs(sel *pg.SelectStmt) {
+	if sel.Larg != nil || len(sel.SortClause) == 0 {
 		return
 	}
-	name = strings.ToLower(name)
-	c.fromNames[name] = struct{}{}
-	if row {
-		c.rowNames[name] = struct{}{}
+	outputs := map[string]struct{}{}
+	for _, t := range sel.TargetList {
+		if name := t.GetResTarget().GetName(); name != "" {
+			outputs[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	for _, s := range sel.SortClause {
+		cr := s.GetSortBy().GetNode().GetColumnRef()
+		if cr == nil || len(cr.Fields) != 1 {
+			continue
+		}
+		if _, ok := outputs[strings.ToLower(columnRefNameOf(cr))]; ok {
+			c.outputRefs[cr] = struct{}{}
+		}
 	}
 }
 
@@ -301,7 +316,7 @@ func isValueOperator(e *pg.A_Expr) bool {
 		return false
 	}
 	switch aexprName(e) {
-	case "+", "-", "*", "/", "%", "^", "||":
+	case "+", "-", "*", "/", "//", "%", "^", "**", "||", "&", "|", "<<", ">>", "->", "->>":
 		return true
 	}
 	return false
