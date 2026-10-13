@@ -18,6 +18,20 @@ type stubEngine struct {
 	name string
 	dec  *Decision
 	err  error
+	// prepareErr fails Prepare. applied counts the snapshots applied.
+	prepareErr error
+	applied    *int
+}
+
+func (s stubEngine) Prepare(context.Context, *config.Snapshot) (func(), error) {
+	if s.prepareErr != nil {
+		return nil, s.prepareErr
+	}
+	return func() {
+		if s.applied != nil {
+			*s.applied++
+		}
+	}, nil
 }
 
 func (s stubEngine) Evaluate(context.Context, Input) (*Decision, error) { return s.dec, s.err }
@@ -133,5 +147,29 @@ func TestEngine_ExplicitDenyNotAbstained(t *testing.T) {
 	})
 	if dec.Outcome != OutcomeDeny || dec.Abstained {
 		t.Errorf("explicit deny abstained=%v, want false", dec.Abstained)
+	}
+}
+
+// A snapshot that one member cannot take is applied to no member: the
+// members must not decide on two different policy sets.
+func TestComposite_PrepareAllOrNothing(t *testing.T) {
+	var first, second int
+	c := compositeOf(
+		stubEngine{name: "yaml", applied: &first},
+		stubEngine{name: "opa", applied: &second, prepareErr: errors.New("rego: parse error")},
+	)
+	if err := c.ApplySnapshot(context.Background(), nil); err == nil {
+		t.Fatal("a member that cannot prepare must fail the composite")
+	}
+	if first != 0 || second != 0 {
+		t.Errorf("applied = %d and %d, want no member to apply", first, second)
+	}
+
+	c = compositeOf(stubEngine{name: "yaml", applied: &first}, stubEngine{name: "opa", applied: &second})
+	if err := c.ApplySnapshot(context.Background(), nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if first != 1 || second != 1 {
+		t.Errorf("applied = %d and %d, want every member to apply once", first, second)
 	}
 }

@@ -75,6 +75,11 @@ type runtimeDeps struct {
 	admin        *admin.Server
 	watcher      *config.Watcher
 	telShutdown  func(context.Context) error
+
+	// applyPolicies makes the policies active that the watcher prepared
+	// for the snapshot it is about to publish. The watcher holds its
+	// reload lock from Validate to the end of Publish.
+	applyPolicies func()
 }
 
 // buildRuntime wires every layer in the correct order. The returned deps
@@ -402,16 +407,23 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	//     (Start, in serve.go); the synchronous Reload path backing SIGHUP
 	//     and POST /admin/reload works without it.
 	deps.watcher, err = config.NewWatcher(config.WatchOptions{
-		Dir:      dir,
-		Registry: deps.registry,
-		Logger:   deps.log,
-		// Dry-run compile before publish: a snapshot the policy
-		// engine would reject must not reach the other subscribers
-		// (bindings, limits, budgets) or the gateway ends up
-		// half-applied.
+		Dir:       dir,
+		ModuleDir: scfg.Policies.OPA.ModuleDir,
+		Registry:  deps.registry,
+		Logger:    deps.log,
+		// Compile before publish, for every engine: a snapshot or a Rego
+		// module that an engine refuses must not reach the other
+		// subscribers (bindings, limits, budgets) or the gateway ends up
+		// half-applied. applyReload makes the prepared policies active.
 		Validate: func(ctx context.Context, snap *config.Snapshot) error {
-			_, err := policy.Compile(ctx, snap)
-			return err
+			// A ReBAC tokenRef is read while the engine prepares.
+			deps.resolver.Invalidate()
+			apply, err := deps.policyEngine.Prepare(ctx, snap)
+			if err != nil {
+				return err
+			}
+			deps.applyPolicies = apply
+			return nil
 		},
 	})
 	if err != nil {
@@ -462,7 +474,12 @@ func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
 		// URIs return the new value on resolve.
 		d.resolver.Invalidate()
 	}
-	if d.policyEngine != nil {
+	// The watcher prepared the policies of this snapshot in Validate. A
+	// snapshot that reaches here from another publisher is compiled now.
+	if apply := d.applyPolicies; apply != nil {
+		d.applyPolicies = nil
+		apply()
+	} else if d.policyEngine != nil {
 		if err := d.policyEngine.ApplySnapshot(ctx, cur); err != nil {
 			d.log.Warn("reload: policy engine rejected snapshot",
 				slog.String("error", err.Error()))

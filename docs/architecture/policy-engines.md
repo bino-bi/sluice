@@ -80,7 +80,6 @@ A Rego module that returns no result denies the query. An unknown field in its r
 
 - `rebac` works only as a member of `composite`.
 - `opa` needs `policies.opa.moduleDir`. Without it the server does not start.
-- Sluice does not watch `.rego` files. After an edit, send `SIGHUP` or call `POST /admin/reload`.
 - The rewrite cache (`cache.rewrite.enabled`) works only with `yaml`.
 - `sluice policy test` and `sluice policy explain` use the YAML engine only. `GET /admin/subjects/explain` and the MCP tool `explain_access` use the configured engine.
 

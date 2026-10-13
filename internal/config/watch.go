@@ -22,6 +22,11 @@ type WatchOptions struct {
 	// Dir is the policy/data-source manifest directory. Required.
 	Dir string
 
+	// ModuleDir is the directory of the Rego modules, when the OPA engine
+	// is used. A changed .rego file there triggers a reload, which loads
+	// the modules again. The snapshot itself holds no Rego.
+	ModuleDir string
+
 	// Registry receives the new Snapshot on every successful reload.
 	// Required.
 	Registry *Registry
@@ -97,6 +102,12 @@ func NewWatcher(opts WatchOptions) (*Watcher, error) {
 	if err := addDirRecursive(fsw, opts.Dir); err != nil {
 		_ = fsw.Close()
 		return nil, err
+	}
+	if opts.ModuleDir != "" {
+		if err := addDirRecursive(fsw, opts.ModuleDir); err != nil {
+			_ = fsw.Close()
+			return nil, err
+		}
 	}
 
 	return &Watcher{
@@ -221,14 +232,14 @@ func (w *Watcher) reloadOnce(ctx context.Context) error {
 }
 
 // isRelevant filters out events that shouldn't trigger a reload — e.g.,
-// transient editor swap files. Only YAML / YML names matter.
+// transient editor swap files. Only YAML, YML and Rego names matter.
 func isRelevant(ev fsnotify.Event) bool {
 	name := filepath.Base(ev.Name)
 	if strings.HasPrefix(name, ".") {
 		return false
 	}
 	low := strings.ToLower(name)
-	if !strings.HasSuffix(low, ".yaml") && !strings.HasSuffix(low, ".yml") {
+	if !strings.HasSuffix(low, ".yaml") && !strings.HasSuffix(low, ".yml") && !strings.HasSuffix(low, ".rego") {
 		return false
 	}
 	return ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0

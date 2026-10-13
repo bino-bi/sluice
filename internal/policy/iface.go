@@ -21,6 +21,12 @@ const (
 type PolicyEngine interface {
 	Evaluate(ctx context.Context, in Input) (*Decision, error)
 	Explain(ctx context.Context, in Input) (*apitypes.ExplainResult, error)
+	// Prepare compiles src without making it active and returns the
+	// function that does. An error leaves the engine on its old policies.
+	// A reload prepares every engine first, so that a snapshot one engine
+	// refuses is applied to none.
+	Prepare(ctx context.Context, src *config.Snapshot) (apply func(), err error)
+	// ApplySnapshot is Prepare followed by apply.
 	ApplySnapshot(ctx context.Context, src *config.Snapshot) error
 	// Name identifies the engine for audit and metrics.
 	Name() string

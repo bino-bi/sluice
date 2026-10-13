@@ -69,12 +69,26 @@ func (e *Engine) SnapshotInfo() (version int64, digest string, keyHeaders []stri
 // ApplySnapshot compiles src and swaps it into place. On failure the
 // previous snapshot stays live and the error is returned.
 func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
-	compiled, err := Compile(ctx, src)
+	apply, err := e.Prepare(ctx, src)
 	if err != nil {
 		return err
 	}
-	e.snapshot.Store(compiled)
+	apply()
 	return nil
+}
+
+// Prepare implements PolicyEngine.
+func (e *Engine) Prepare(ctx context.Context, src *config.Snapshot) (func(), error) {
+	compiled, err := Compile(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		// The registry numbers a snapshot when it publishes it, which
+		// can be after Prepare.
+		compiled.Version = src.Version
+		e.snapshot.Store(compiled)
+	}, nil
 }
 
 // Input is the per-request evaluation input.

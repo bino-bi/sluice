@@ -64,8 +64,7 @@ An undefined result denies the query. The header `X-Sluice-Applied-Policies` and
 ## Limits
 
 - `policies.opa.moduleDir` is required. Sluice loads the `.rego` files at its top level and does not start without one.
-- A changed `.rego` file needs `POST /admin/reload` or SIGHUP. The file watcher sees only YAML files.
-- A reload with a broken module still answers `ok`. The old modules stay active.
+- A module that does not compile fails the [reload](../operations/hot-reload.md) with `ERR_POLICY_INVALID`. The old modules and policies stay active.
 - An unknown output field, a bad predicate or mask, or a table outside the input gives 503 `ERR_POLICY_UNAVAILABLE`.
 - An unknown `code` becomes `ACL_DENIED` or `ACL_REJECTED`.
 
