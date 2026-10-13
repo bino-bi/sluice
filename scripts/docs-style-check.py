@@ -255,7 +255,7 @@ def check_block(rel, start, lang, block, errors, pinned):
             errors.append(f"{rel}:{start}: kept diagram needs the fence language {pinned[body.strip()]!r}")
         return
     if lang == "mermaid":
-        errors.append(f"{rel}:{start}: mermaid block has no copy in docs-audit/diagrams/")
+        errors.append(f"{rel}:{start}: mermaid block has no copy in docs-diagrams/")
         return
     lines = [l for l in block if l.strip()]
     if not lines:
@@ -284,11 +284,13 @@ def check_diagrams(errors):
     """Every stored diagram must appear unchanged in docs/. Returns body -> fence language."""
     pinned = {}
     all_docs = "\n".join(p.read_text() for p in sorted((ROOT / "docs").rglob("*.md")))
-    for f in sorted((ROOT / "docs-audit" / "diagrams").iterdir()):
+    for f in sorted((ROOT / "docs-diagrams").iterdir()):
+        if f.name == "README.md":
+            continue
         body = f.read_text().strip("\n")
         pinned[body.strip()] = "mermaid" if f.suffix == ".mmd" else ""
         if body not in all_docs:
-            errors.append(f"docs-audit/diagrams/{f.name}: diagram is missing or changed in docs/")
+            errors.append(f"docs-diagrams/{f.name}: diagram is missing or changed in docs/")
     return pinned
 
 

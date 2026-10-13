@@ -10,11 +10,11 @@ Taken at commit 6f7b99f, before any rewrite. Every diagram listed here must stil
 | 4 | `docs/policies/approvals.md` | Mermaid | `sequenceDiagram` (approval flow) | 13 |
 | 5 | `docs/security/threat-model.md` | Mermaid | `flowchart LR` (trust boundaries) | 36 |
 
-The original blocks are kept byte for byte in `docs-audit/diagrams/`. The final check compares each block in `docs/` with its copy there.
+The original blocks are kept byte for byte in this folder. The final check compares each block in `docs/` with its copy there.
 
 ## Changes
 
-The maintainer approved these three changes to diagram 2 (component map) on 2026-10-12. The copy in `diagrams/architecture-index.mmd` holds the new version.
+The maintainer approved these three changes to diagram 2 (component map) on 2026-10-12. The copy in `architecture-index.mmd` holds the new version.
 
 | Change | Reason | Evidence |
 |---|---|---|
@@ -22,7 +22,7 @@ The maintainer approved these three changes to diagram 2 (component map) on 2026
 | New node `HTTP` | The `http` data source type had no node | `pkg/apitypes/datasource.go:62` |
 | Edge `Admin --> identity` removed | The admin listener checks a static bearer token. It does not use the identity layer | `internal/transport/admin/auth.go:16-31` |
 
-One label of diagram 4 (approval flow) changed on 2026-10-13, with the code change that makes a `GET` of an approval link show a page. The copy in `diagrams/approvals.mmd` holds the new version.
+One label of diagram 4 (approval flow) changed on 2026-10-13, with the code change that makes a `GET` of an approval link show a page. The copy in `approvals.mmd` holds the new version.
 
 | Change | Reason | Evidence |
 |---|---|---|

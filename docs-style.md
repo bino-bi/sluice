@@ -65,10 +65,10 @@ Use the term on the left. The [glossary](docs/reference/glossary.md) explains ea
 
 ## 4. Diagrams
 
-- Keep every diagram listed in `docs-audit/diagrams.md`.
+- Keep every diagram listed in `docs-diagrams/README.md`.
 - Do not delete, redraw or restyle a diagram. Change a label only if the code proves it wrong.
 - You may add a diagram in the same style if it replaces a long paragraph.
-- List each change to a diagram in `docs-audit/diagrams.md` and update its copy in `docs-audit/diagrams/`.
+- List each change to a diagram in `docs-diagrams/README.md` and update its copy in `docs-diagrams/`.
 
 ## 5. Structure
 
