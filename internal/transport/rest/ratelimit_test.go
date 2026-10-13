@@ -123,3 +123,24 @@ func TestRateLimit_PerIPRefusalLeavesTheGlobalBucket(t *testing.T) {
 		t.Fatalf("another client got 429: the refused requests emptied the global bucket: %s", w.Body.String())
 	}
 }
+
+// A request over the rate limit never reaches the login, so it reports no
+// failed login either.
+func TestRateLimit_RefusedRequestReportsNoFailedLogin(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier:    &stubIdentifier{err: identity.ErrInvalidCredential},
+		GlobalLimiter: ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 1, func() time.Time { return time.Unix(0, 0) }),
+		AuthFailed:    func(string, string) { calls++ },
+	})
+	if w := postQuery(srv, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("first: got %d want 401", w.Code)
+	}
+	if w := postQuery(srv, ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second: got %d want 429", w.Code)
+	}
+	if calls != 1 {
+		t.Errorf("failed logins reported = %d, want 1", calls)
+	}
+}

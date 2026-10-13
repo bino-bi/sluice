@@ -14,8 +14,8 @@ import (
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
-// Bounds of the auth-event records, in records per second and as a burst.
-// A flood of failed logins must not fill the audit log.
+// Bounds of the auth-event records of one origin, in records per second
+// and as a burst. A flood of failed logins must not fill the audit log.
 const (
 	AuthEventRate  = 5
 	AuthEventBurst = 20
@@ -109,7 +109,7 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		quit:    make(chan struct{}),
 		metrics: metricsShared(),
 		authEvents: ratelimit.NewKeyed(
-			ratelimit.Spec{RPS: AuthEventRate, Burst: AuthEventBurst}, 1, opts.Clock),
+			ratelimit.Spec{RPS: AuthEventRate, Burst: AuthEventBurst}, 8, opts.Clock),
 	}
 
 	// Seed the chain: prefer the primary sink's LastHash; otherwise write
@@ -191,11 +191,12 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 // identity.FailureReason. The record holds no part of the credential.
 //
 // A flood of failed logins must not fill the audit log or hold up the
-// query records: the events have their own rate limit, and one that finds
-// the queue full is dropped at once. A dropped event is counted, the
-// request gets its 401 either way.
+// query records, and the 401 must not wait for the audit path. So each
+// origin has its own rate limit, and an event is dropped at once when the
+// queue is full or another record holds the dispatcher. A dropped event
+// is counted.
 func (d *Dispatcher) AuthFailure(origin, remoteIP, reason string) {
-	if d.authEvents.Allow("") {
+	if d.authEvents.Allow(origin) {
 		err := d.enqueue(context.Background(), &Record{
 			EventType: EventAuthEvent,
 			Origin:    origin,
@@ -212,7 +213,8 @@ func (d *Dispatcher) AuthFailure(origin, remoteIP, reason string) {
 }
 
 // enqueue is Enqueue. With wait false it gives up at once when the queue
-// is full, and counts no drop.
+// is full or the lock is held, and counts no drop. A record that waits
+// for the queue holds the lock for up to EnqueueDeadline.
 func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	if r == nil {
 		return fmt.Errorf("audit: nil record")
@@ -226,7 +228,11 @@ func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	// queue is already full (i.e. the gateway is overloaded), which is
 	// exactly when serialising enqueues is acceptable. Sink I/O still runs
 	// off-lock on the worker goroutine.
-	d.mu.Lock()
+	if wait {
+		d.mu.Lock()
+	} else if !d.mu.TryLock() {
+		return ErrQueueFull
+	}
 	defer d.mu.Unlock()
 	if d.closed {
 		return ErrClosed

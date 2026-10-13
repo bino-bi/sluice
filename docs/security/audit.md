@@ -82,7 +82,7 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `auth-event` | A request fails the login on REST, MCP over HTTP or the admin API |
 | `approval-requested`, `approval-approved`, `approval-rejected`, `approval-expired` | An approval changes state |
 
-An `auth-event` record has `origin`, `remote_ip`, the `error_code` `ERR_UNAUTHORIZED` and a `message`: `no credential`, `expired credential` or `invalid credential`. It holds no part of the credential. Sluice writes at most 5 of these records per second, after a burst of 20. `sluice_audit_auth_events_dropped_total` counts the failed logins without a record.
+An `auth-event` record has `origin`, `remote_ip`, the `error_code` `ERR_UNAUTHORIZED` and a `message`: `no credential`, `expired credential` or `invalid credential`. It holds no part of the credential. For each of the three listeners, Sluice writes at most 5 of these records per second, after a burst of 20. `sluice_audit_auth_events_dropped_total` counts the failed logins without a record.
 
 ## Hash chain
 

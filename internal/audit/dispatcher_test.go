@@ -335,8 +335,8 @@ func TestDispatcher_AuthFailureIsRateLimited(t *testing.T) {
 	}
 }
 
-// With a full queue a query record waits for EnqueueDeadline, under the
-// lock that every other record needs. An auth event must give up at once.
+// With a full queue a query record waits for EnqueueDeadline. An auth
+// event must give up at once.
 func TestDispatcher_AuthFailureDoesNotWaitForAFullQueue(t *testing.T) {
 	sink := &gateSink{entered: make(chan string, 8), gate: make(chan struct{}), seed: "seedtip"}
 	d, err := audit.NewDispatcher(audit.DispatcherOptions{
@@ -376,5 +376,72 @@ func TestDispatcher_AuthFailureDoesNotWaitForAFullQueue(t *testing.T) {
 	// The dropped event left no gap in the chain.
 	if len(sink.records) != 2 || sink.records[1].PriorHash != sink.records[0].Hash {
 		t.Errorf("chain broken after a dropped auth event: %d records", len(sink.records))
+	}
+}
+
+// Query records that wait for a full queue hold the dispatcher lock. An
+// auth event must not queue behind them: the 401 would be late.
+func TestDispatcher_AuthFailureDoesNotWaitBehindQueryRecords(t *testing.T) {
+	sink := &gateSink{entered: make(chan string, 8), gate: make(chan struct{}), seed: "seedtip"}
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks:           []audit.Sink{sink},
+		QueueSize:       1,
+		EnqueueDeadline: 2 * time.Second,
+		FlushInterval:   -1,
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	for _, id := range []string{"q1", "q2"} {
+		if err := d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: id}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	<-sink.entered
+	// This record finds the queue full and waits, with the lock held.
+	waiting := make(chan struct{})
+	go func() {
+		defer close(waiting)
+		_ = d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: "q3"})
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	d.AuthFailure("rest", "203.0.113.7", "invalid credential")
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Errorf("AuthFailure took %v behind a waiting query record, want no wait", took)
+	}
+	close(sink.gate)
+	<-waiting
+	_ = d.Close(context.Background())
+}
+
+// Each listener has its own budget: a flood on one must not hide the
+// failed logins on another.
+func TestDispatcher_AuthFailureBudgetPerOrigin(t *testing.T) {
+	sink := &memSink{}
+	now := time.Unix(1_700_000_000, 0)
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks: []audit.Sink{sink}, GenesisSeed: []byte("auth"), Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	defer func() { _ = d.Close(context.Background()) }()
+	for range 100 {
+		d.AuthFailure("admin", "203.0.113.7", "no credential")
+	}
+	d.AuthFailure("rest", "203.0.113.8", "invalid credential")
+	if err := d.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rest := 0
+	for _, r := range sink.byType(audit.EventAuthEvent) {
+		if r.Origin == "rest" {
+			rest++
+		}
+	}
+	if rest != 1 {
+		t.Errorf("rest records = %d, want 1 after a flood on admin", rest)
 	}
 }
