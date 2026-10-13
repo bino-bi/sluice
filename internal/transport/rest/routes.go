@@ -36,13 +36,14 @@ func (s *Server) routes() http.Handler {
 
 	// Approval capability endpoints. Accept/reject are PUBLIC — the
 	// capability token in the request IS the authorisation, so no identity
-	// middleware. The status poll is authenticated: only the requesting
+	// middleware. GET (and HEAD) shows a page with a form; only POST
+	// decides. The status poll is authenticated: only the requesting
 	// subject may read a request's state (the requester never holds the
 	// capability tokens).
 	if s.deps.Approvals != nil {
-		mux.HandleFunc("GET /v1/approvals/{id}/accept", s.handleApprovalDecision(true))
+		mux.HandleFunc("GET /v1/approvals/{id}/accept", handleApprovalPage(true))
 		mux.HandleFunc("POST /v1/approvals/{id}/accept", s.handleApprovalDecision(true))
-		mux.HandleFunc("GET /v1/approvals/{id}/reject", s.handleApprovalDecision(false))
+		mux.HandleFunc("GET /v1/approvals/{id}/reject", handleApprovalPage(false))
 		mux.HandleFunc("POST /v1/approvals/{id}/reject", s.handleApprovalDecision(false))
 		mux.Handle("GET /v1/approvals/{id}", authMW(http.HandlerFunc(s.handleApprovalStatus)))
 	}

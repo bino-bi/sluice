@@ -15,10 +15,10 @@ The script creates `data/shop.db` from `seed.sql`. It starts `webhook.py` on por
 |---|---|
 | `steps/01-query-held.sh` | The query is held: `ERR_APPROVAL_PENDING`. |
 | `steps/02-webhook.sh` | The webhook with the accept and reject links. |
-| `steps/03-accept.sh` | The approver opens the accept link. |
+| `steps/03-accept.sh` | The approver accepts: a `POST` to the accept link. |
 | `steps/04-query-runs.sh` | The same query returns rows. |
 | `steps/05-query-held-again.sh` | The grant is used up. The query is held again. |
-| `steps/06-reject.sh` | The approver opens the reject link. |
+| `steps/06-reject.sh` | The approver rejects: a `POST` to the reject link. |
 | `steps/07-status.sh` | The caller reads the state: `rejected`. |
 
 `webhook.py` stands in for the approver's inbox. It stores each webhook and the newest links under `data/`.

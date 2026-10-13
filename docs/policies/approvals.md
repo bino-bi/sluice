@@ -32,7 +32,7 @@ Sluice posts a webhook to each URL in `approval.webhooks`. The example stores it
 --8<-- "examples/approval-workflow/expected/02-webhook.txt"
 ```
 
-The approver opens `accept_url`.
+The approver opens `accept_url` in a browser and confirms on the page. A script sends a `POST`:
 
 ```bash
 --8<-- "examples/approval-workflow/steps/03-accept.sh"
@@ -64,7 +64,7 @@ sequenceDiagram
     C->>S: POST /v1/query (matches an ApprovalPolicy)
     S->>W: POST approval payload (accept_url, reject_url)
     S-->>C: 202 ERR_APPROVAL_PENDING + approval_id (after syncWait)
-    A->>S: GET or POST accept_url (capability token)
+    A->>S: POST accept_url (capability token)
     S-->>A: approved — single-use grant minted
     Note over C,S: MCP clients block on await_approval(approval_id) instead of polling
     C->>S: POST /v1/query (identical SQL, same subject)
@@ -142,7 +142,7 @@ MCP clients use `check_approval` and `await_approval`. The operator lists pendin
 - A predicate with `op` and `value` matches only that operator. `country LIKE 'de'` does not hit `op: "="`. Leave out `op` and `value` to hold every condition on the column.
 - Without `approval.persist`, a restart drops all approvals and grants. A query that waits never survives a restart. Run one instance: instances do not share approvals.
 - A link needs no login, only its token. A wrong id or token gets 404.
-- A `HEAD` request, or a request with the header `Purpose`, `Sec-Purpose` or `X-Moz` set to exactly `prefetch` or `preview`, changes nothing. Any other `GET` of a link decides.
+- A `GET` of a link shows a page with one button and changes nothing. Only the `POST` that the button sends decides.
 - The other link after a decision gets 409. After the query ran, each link answers 200 with state `consumed`. After `approval.requestTtl`, Sluice forgets a decided approval and each link gets 404.
 
 ## See also

@@ -5,25 +5,55 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/identity"
 )
 
-// handleApprovalDecision handles the public accept/reject capability
-// endpoints. The token in ?token= (or X-Approval-Token) is the sole
-// authorisation. Unknown id and bad token return an identical 404 so the
-// endpoint is not an existence/token oracle. A repeat of the same verb is
-// idempotent (200); a conflicting verb after a decision is a 409.
+// approvalPage is the answer to a GET of an accept or reject link. The form
+// posts to the URL of the page, so the token stays in the query string.
+// Nothing of the request is written into the page.
+const approvalPage = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sluice approval</title></head>
+<body>
+<p>%s this approval request?</p>
+<form method="post"><button type="submit">%s</button></form>
+</body>
+</html>
+`
+
+// handleApprovalPage answers a GET of an accept or reject link with a page
+// that asks for the decision. Chat clients, mail scanners and browsers
+// fetch links on their own, so a GET must not decide. The page never
+// reaches the broker and is the same for every id and token, so it is no
+// existence or token oracle either.
+func handleApprovalPage(accept bool) http.HandlerFunc {
+	verb := "Reject"
+	if accept {
+		verb = "Accept"
+	}
+	page := []byte(fmt.Sprintf(approvalPage, verb, verb))
+	return func(w http.ResponseWriter, _ *http.Request) {
+		h := w.Header()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		h.Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(page)
+	}
+}
+
+// handleApprovalDecision handles a POST to the public accept/reject
+// capability endpoints. The token in ?token= (or X-Approval-Token) is the
+// sole authorisation. Unknown id and bad token return an identical 404 so
+// the endpoint is not an existence/token oracle. A repeat of the same verb
+// is idempotent (200); a conflicting verb after a decision is a 409.
 func (s *Server) handleApprovalDecision(accept bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Anti-prefetch: chat clients and link unfurlers issue HEAD or
-		// prefetch GETs. Never mutate on those.
-		if isPrefetch(r) {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		id := r.PathValue("id")
 		token := approvalToken(r)
 		remote := clientIP(r)
@@ -95,20 +125,6 @@ func approvalToken(r *http.Request) string {
 		return t
 	}
 	return r.Header.Get("X-Approval-Token")
-}
-
-// isPrefetch reports whether the request is a link prefetch / unfurl that
-// must not mutate state.
-func isPrefetch(r *http.Request) bool {
-	if r.Method == http.MethodHead {
-		return true
-	}
-	for _, h := range []string{"Purpose", "Sec-Purpose", "X-Moz"} {
-		if v := r.Header.Get(h); v == "prefetch" || v == "preview" {
-			return true
-		}
-	}
-	return false
 }
 
 func clientIP(r *http.Request) string {

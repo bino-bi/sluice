@@ -1,1 +1,1 @@
-curl -s "$(cat data/reject_url)"
+curl -s -X POST "$(cat data/reject_url)"
