@@ -22,9 +22,8 @@ func (s *state) applyRewrite(res *pg.ParseResult) error {
 	}
 	sel := res.Stmts[0].Stmt.GetSelectStmt()
 	if sel == nil {
-		// Non-SELECT read-only statements (EXPLAIN / SET / SHOW / PRAGMA)
-		// carry no row set to bound; queryservice's MaxRows clamp still
-		// applies to whatever they emit.
+		// EXPLAIN carries no row set to bound; queryservice's MaxRows clamp
+		// still applies to whatever it emits.
 		s.rewrites = append(s.rewrites, "limit-skipped:not-select")
 		return nil
 	}

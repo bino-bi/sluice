@@ -95,13 +95,11 @@ What happened: each request stopped at a different stage. Several stages share t
 |---|---|
 | `SELECT` | Runs |
 | `EXPLAIN` of a `SELECT` | Runs. `ERR_UNSUPPORTED_SYNTAX` if a row filter or column mask applies |
-| `SHOW` | Runs when an allow policy without `resources` and `actions` matches, or a Rego module allows it |
-| `SET` | As `SHOW`. DuckDB refuses most settings with `ERR_QUERY_FAILED` |
 | `INSERT`, `UPDATE`, `DELETE` | `ACL_REJECTED` |
-| DDL, `COPY` | `ERR_UNSUPPORTED_SYNTAX` |
+| DDL, `COPY`, `SET`, `RESET`, `SHOW` | `ERR_UNSUPPORTED_SYNTAX` |
 | `ATTACH` | `ERR_SYNTAX` |
 
-Policies see no table in `SHOW` and `SET`. A deny policy on a table does not hide that table from `SHOW`. A setting that DuckDB accepts stays active on one database connection. Later requests of any subject can use this connection. The setting can change how DuckDB finds a table that a query names without catalog. A policy that names a catalog or schema without a wildcard does not match a name that leaves that part out. Do not give an allow policy without `resources` to clients. Name catalog, schema and table in every other allow policy, the catalog without a wildcard.
+Policies see no table in `SET` and `SHOW`. An allow policy that names a table does not match them, so the answer is `ACL_DENIED`. The code in the table shows under an allow policy without `resources`.
 
 ## Where a request stops
 
@@ -130,7 +128,7 @@ Policies see no table in `SHOW` and `SET`. A deny policy on a table does not hid
 | | Queue full | `ERR_RATE_LIMITED` |
 | | `ApprovalPolicy` added by a reload, `approval.publicBaseUrl` not set | `ERR_INTERNAL` |
 | Rewrite | Write statement | `ACL_REJECTED` |
-| | DDL, `COPY` | `ERR_UNSUPPORTED_SYNTAX` |
+| | DDL, `COPY`, `SET`, `RESET`, `SHOW` | `ERR_UNSUPPORTED_SYNTAX` |
 | | [Form refused on a filtered or masked table](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables) | `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
 | | Masked table missing in the schema cache | `ERR_REWRITE_FAILED` |
 | | Schema cannot be loaded | `ERR_DATASOURCE_UNAVAILABLE` |

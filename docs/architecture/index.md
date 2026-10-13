@@ -37,6 +37,6 @@ flowchart LR
 
 - **Default deny.** Sluice denies a query unless a policy allows every table that the query reads. An empty policy directory denies every query.
 - **Audit before rows.** By default Sluice queues the audit record before it sends the first row. If it cannot, the query fails with `ERR_AUDIT_UNAVAILABLE`. See [Audit log](../security/audit.md).
-- **No writes.** Sluice runs `SELECT`, `EXPLAIN`, `SHOW` and `SET`. It refuses writes and DDL. See [Statements Sluice runs](request-lifecycle.md#statements-sluice-runs).
+- **No writes.** Sluice runs `SELECT` and `EXPLAIN`. It refuses writes, DDL, `SET` and `SHOW`. See [Statements Sluice runs](request-lifecycle.md#statements-sluice-runs).
 - **Bound parameters.** Row filter values reach DuckDB as bound parameters, not as SQL text. A value from a policy cannot change the statement.
 - **Reload without restart.** Sluice loads changed policies after a file change, a `SIGHUP` or `POST /admin/reload`. If the new policies have an error, the old ones stay active. See [Reload](../operations/hot-reload.md).

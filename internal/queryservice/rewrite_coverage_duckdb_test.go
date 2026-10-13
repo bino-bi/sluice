@@ -1891,6 +1891,38 @@ func TestExecute_DuckDBOnlyStatementsNotExecuted(t *testing.T) {
 	}
 }
 
+// SET and SHOW name no table, so only an allow policy that names no table
+// matches them. A setting DuckDB accepts would stay on the pooled
+// connection for later requests of any subject, and SHOW lists tables a
+// deny policy covers. Neither reaches the executor.
+func TestExecute_SetAndShowNotExecuted(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowWithoutTables)
+	for _, sql := range []string{
+		"SET threads = 1",
+		"SET search_path = 'shop.main'",
+		"RESET threads",
+		"SHOW TABLES",
+		"SHOW ALL",
+		"SHOW search_path",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	// The refused search_path is not active: a name without catalog does
+	// not resolve to the attached table.
+	if rows, err := runRows(svc, "SELECT count(*) FROM customers"); err == nil {
+		t.Errorf("table name without catalog served %v after a refused SET search_path", rows)
+	}
+}
+
 // orders has a row filter and no mask. A post-query mask on a table read
 // only in a subquery must not refuse a star over orders.
 func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {

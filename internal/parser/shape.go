@@ -5,9 +5,9 @@ package parser
 // StmtKind is the top-level statement type.
 type StmtKind string
 
-// Statement kinds. Only StmtSelect, StmtExplain, StmtSet, StmtShow, and
-// StmtPragma are ever permitted at the transport boundary; everything else
-// is rejected by the rewriter even if a policy would allow it.
+// Statement kinds. Only StmtSelect and StmtExplain are ever permitted at
+// the transport boundary; everything else is rejected by the rewriter even
+// if a policy would allow it.
 const (
 	StmtSelect      StmtKind = "SELECT"
 	StmtExplain     StmtKind = "EXPLAIN"
@@ -25,10 +25,13 @@ const (
 	StmtUnsupported StmtKind = "UNSUPPORTED"
 )
 
-// IsReadOnly reports whether kind is permitted through the gateway.
+// IsReadOnly reports whether kind is permitted through the gateway. SET
+// and SHOW are not: they name no table for a policy to match, a setting
+// stays on the pooled connection for later requests of any subject, and
+// SHOW lists tables a deny policy covers.
 func (k StmtKind) IsReadOnly() bool {
 	switch k {
-	case StmtSelect, StmtExplain, StmtSet, StmtShow, StmtPragma:
+	case StmtSelect, StmtExplain:
 		return true
 	default:
 		return false
