@@ -61,21 +61,23 @@ type QueryShape struct {
 	// recursing into subqueries, CTEs, and set-operation arms. Used by
 	// ApprovalPolicy triggers; a deep walk means a column buried in a
 	// subquery still triggers approval (fail-closed, more matches never
-	// fewer). Names are dotted as written ("email" or "u.email").
+	// fewer). Names are dotted as written ("email" or "u.email"), in
+	// lower case.
 	AccessedColumns []string
 	// Comparisons lists (column, op, literal) facts from WHERE/HAVING/JOIN
 	// quals, same deep walk. Used by ApprovalPolicy "field compared to a
 	// value" triggers.
 	Comparisons []Comparison
-	// AccessesAllColumns is set when the statement reads columns it does
-	// not name: a star, a whole-row reference to a FROM item, a column
-	// alias list on a table, or a NATURAL join. A columnsAccessed trigger
-	// then cannot tell which columns are read.
+	// AccessesAllColumns is set when the statement reads columns of a
+	// table without naming them: a star over a table, a table or a join
+	// used as a row value, a column alias list, a position (#2), or a
+	// NATURAL join. A columnsAccessed trigger then cannot tell which
+	// columns are read.
 	AccessesAllColumns bool
-	// UnreadPredicateColumns lists the columns used in a condition that
+	// UnreadPredicateColumns lists the columns named in a condition that
 	// Comparisons does not describe: inside a function, under NOT or CASE,
-	// compared with another column, in a USING join. A predicate trigger
-	// on such a column cannot tell which value is compared.
+	// compared with another column or a cast, in a USING join. A predicate
+	// trigger on such a column cannot tell which value is compared.
 	UnreadPredicateColumns []string
 
 	// Functions lists every function call in the statement, at any depth.

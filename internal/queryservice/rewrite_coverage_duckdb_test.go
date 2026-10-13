@@ -2028,3 +2028,92 @@ func TestExecute_FormerMaskRefusalsServeMaskedValues(t *testing.T) {
 		}
 	}
 }
+
+const approvalOnAdminUsers = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-shop
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: approve-admin-reads
+  priority: 100
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["admin_users"] }
+  when:
+    columnsAccessed: ["username"]
+    predicates:
+      - { column: "role", op: "=", value: "superuser" }
+`
+
+// An ApprovalPolicy with columnsAccessed must hold every statement that
+// DuckDB would answer with the column, also when the statement does not
+// name it. The service has no broker here, so a held query fails before
+// the executor, and a query that is not held is served by DuckDB.
+func TestExecute_ApprovalTriggersAgainstDuckDB(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, approvalOnAdminUsers)
+	held := []string{
+		// columnsAccessed: the column by name, in any case.
+		"SELECT username FROM shop.main.admin_users",
+		`SELECT "USERNAME" FROM shop.main.admin_users`,
+		`SELECT a."UserName" FROM shop.main.admin_users a`,
+		"SELECT greatest(username, '') FROM shop.main.admin_users",
+		// columnsAccessed: the column without its name.
+		"SELECT * FROM shop.main.admin_users",
+		"SELECT a FROM shop.main.admin_users a",
+		`SELECT "A" FROM shop.main.admin_users a`,
+		`SELECT a FROM shop.main.admin_users "A"`,
+		`SELECT "ADMIN_USERS" FROM shop.main.admin_users`,
+		"SELECT (a).username FROM shop.main.admin_users a",
+		"SELECT #2 FROM shop.main.admin_users",
+		"SELECT x FROM shop.main.admin_users a(i, x, r)",
+		"SELECT j FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j",
+		"SELECT j.c2 FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j(c1, c2)",
+		"SELECT id FROM shop.main.admin_users NATURAL JOIN (SELECT 'root' AS username) u",
+		// predicates: the value, and a condition that hides the value.
+		"SELECT id FROM shop.main.admin_users WHERE role = 'superuser'",
+		`SELECT id FROM shop.main.admin_users WHERE "ROLE" = 'superuser'`,
+		"SELECT id FROM shop.main.admin_users WHERE role IN ('analyst', 'superuser')",
+		"SELECT id FROM shop.main.admin_users WHERE lower(role) = 'superuser'",
+		"SELECT id FROM shop.main.admin_users WHERE role NOT IN ('analyst')",
+		"SELECT id FROM shop.main.admin_users WHERE NOT (role <> 'superuser')",
+		"SELECT id FROM shop.main.admin_users WHERE role = 'superuser'::VARCHAR",
+	}
+	for _, sql := range held {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want held for approval", sql, rows)
+		} else if !strings.Contains(err.Error(), "approval") {
+			t.Errorf("%s: err = %v, want held for approval", sql, err)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	served := []string{
+		"SELECT id FROM shop.main.admin_users",
+		"SELECT id, role FROM shop.main.admin_users WHERE role = 'analyst'",
+		"SELECT id FROM shop.main.admin_users WHERE role IN ('analyst', 'auditor')",
+		// The wrapper BI tools put around a query.
+		"SELECT * FROM (SELECT id, role FROM shop.main.admin_users) AS virtual_table LIMIT 100",
+		"WITH t AS (SELECT id FROM shop.main.admin_users) SELECT * FROM t",
+		"SELECT a.id FROM shop.main.admin_users a WHERE a.id = 1",
+	}
+	for _, sql := range served {
+		if _, err := runRows(svc, sql); err != nil {
+			t.Errorf("%s: %v, want served without approval", sql, err)
+		}
+	}
+}

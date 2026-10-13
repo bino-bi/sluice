@@ -120,6 +120,38 @@ func TestApproval_InMatchesEqualsTrigger(t *testing.T) {
 	}
 }
 
+// A trigger pattern matches without regard to case, as DuckDB resolves
+// column names. The parser reports names in lower case.
+func TestApproval_TriggerPatternsFoldCase(t *testing.T) {
+	cols := &apitypes.ApprovalWhen{ColumnsAccessed: []string{"SSN"}}
+	if dec := evalApproval(t, parser.QueryShape{AccessedColumns: []string{"ssn"}}, allowAll(0), approvalPolicy("pii", cols)); dec.Approval == nil {
+		t.Error("pattern SSN should match the column ssn")
+	}
+	preds := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "Country", Op: "=", Value: "de"}}}
+	shape := parser.QueryShape{Comparisons: []parser.Comparison{{Column: "country", Op: "=", Value: "de"}}}
+	if dec := evalApproval(t, shape, allowAll(0), approvalPolicy("geo", preds)); dec.Approval == nil {
+		t.Error("pattern Country should match the column country")
+	}
+}
+
+// A number written in another way is the same value.
+func TestApproval_NumericValueMatches(t *testing.T) {
+	when := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "tenant_id", Op: "=", Value: "7"}}}
+	cmp := func(v string) parser.QueryShape {
+		return parser.QueryShape{Comparisons: []parser.Comparison{{Column: "tenant_id", Op: "=", Value: v}}}
+	}
+	for _, v := range []string{"7", "7.0", "07", "7e0"} {
+		if dec := evalApproval(t, cmp(v), allowAll(0), approvalPolicy("tenant", when)); dec.Approval == nil {
+			t.Errorf("tenant_id = %s should trigger approval", v)
+		}
+	}
+	for _, v := range []string{"8", "70", "seven"} {
+		if dec := evalApproval(t, cmp(v), allowAll(0), approvalPolicy("tenant", when)); dec.Approval != nil {
+			t.Errorf("tenant_id = %s triggered approval", v)
+		}
+	}
+}
+
 func TestApproval_AggregatesMultiplePolicies(t *testing.T) {
 	p1 := approvalPolicy("pii", &apitypes.ApprovalWhen{ColumnsAccessed: []string{"ssn"}})
 	p2 := approvalPolicy("geo", &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "country"}}})

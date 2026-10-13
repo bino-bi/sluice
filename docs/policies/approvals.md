@@ -76,21 +76,22 @@ sequenceDiagram
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `when` | object | | One hit is enough. Without it, the selector alone decides. |
-| `when.columnsAccessed` | list | | Patterns for columns that the query names, as `ssn` or as `p.ssn`. A query that reads columns without naming them is a hit too. |
-| `when.predicates[]` | list | | A hit is a comparison of the column with a literal. A condition on the column that Sluice cannot read is a hit too. |
+| `when.columnsAccessed` | list | | Patterns for columns that the query reads, as `ssn` or as `p.ssn`. |
+| `when.predicates[]` | list | | A hit is a comparison of the column with a literal. |
 | `predicates[].column` | string | required | Pattern. |
 | `predicates[].op` | string | any | `=`, `!=`, `<`, `<=`, `>`, `>=`, `like`, `ilike`, `in` or `isnull`. `*` also means any. `=` also matches a value in an `IN` list. |
 | `predicates[].value` | string | any | The literal as text. |
 | `reason` | string | | Text for `reasons` in the webhook. |
 
-A query that reads columns without naming them hits every `columnsAccessed` entry. These forms do that:
+`columnsAccessed` holds every query that reads the column. Names match without regard to case. A query that reads columns of a table without naming them hits every entry. These forms do that:
 
-- `*` and `t.*`
-- the table or its alias as a value: `SELECT p FROM people p`
-- a column alias list: `people p(a, b)`
+- `*` and `t.*` over a table. A star over a subquery or CTE that names its columns is no hit.
+- the table, its alias or a join alias as a value: `SELECT p FROM people p`
+- a column alias list on a table or a join: `people p(a, b)`
+- a position: `#2`
 - `NATURAL JOIN`
 
-Sluice reads a comparison of a column with a literal in `WHERE`, `HAVING`, `JOIN ... ON` or `FILTER`. `AND` and `OR` can join such comparisons. Any other condition on the column hits its `predicates` entry, whatever `op` and `value` say. Examples are a function around the column, `NOT`, `CASE`, `BETWEEN`, a subquery, another column and `USING`.
+`predicates` look at the conditions that name the column. Sluice reads a comparison of the column with a literal in `WHERE`, `HAVING`, `JOIN ... ON` or `FILTER`. `AND` and `OR` can join such comparisons. A number matches in any spelling, `7` and `7.0`. Any other condition that names the column is a hit, whatever `op` and `value` say. Examples are a function around the column, a cast of the literal, `NOT`, `NOT IN`, `CASE`, `BETWEEN`, a subquery, another column and `USING`.
 
 With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --json` lists the policy under `shadow`.
 
@@ -139,11 +140,10 @@ MCP clients use `check_approval` and `await_approval`. The operator lists pendin
 
 ## Limits
 
-- A predicate with `op` and `value` matches only that operator. `country LIKE 'de'` does not hit `op: "="`. Leave out `op` and `value` to hold every condition on the column.
+- A `predicates` entry is no guard for the column. It misses a condition on another name for the column: an alias, a column of a subquery or CTE, a position. It misses another operator with the same result, such as `LIKE 'de'` under `op: "="`. Use `columnsAccessed` to hold every read of a column.
 - Without `approval.persist`, a restart drops all approvals and grants. A query that waits never survives a restart. Run one instance: instances do not share approvals.
-- A link needs no login, only its token. A wrong id or token gets 404.
-- A `GET` of a link shows a page with one button and changes nothing. Only the `POST` that the button sends decides.
-- The other link after a decision gets 409. After the query ran, each link answers 200 with state `consumed`. After `approval.requestTtl`, Sluice forgets a decided approval and each link gets 404.
+- A link needs no login, only its token. A `GET` of a link shows a page with one button and changes nothing, also for a wrong id or token. Only the `POST` that the button sends decides.
+- A `POST` with a wrong id or token gets 404. A `POST` to the other link after a decision gets 409. After the query ran, a `POST` to each link gets 200 with state `consumed`. After `approval.requestTtl`, Sluice forgets a decided approval and a `POST` gets 404.
 
 ## See also
 

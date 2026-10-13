@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
@@ -419,8 +420,9 @@ func compileApproval(spec apitypes.ApprovalSpec) (*CompiledApproval, error) {
 	if spec.When == nil {
 		return out, nil
 	}
+	// Column names are matched in lower case, as the parser reports them.
 	for _, pat := range spec.When.ColumnsAccessed {
-		m, err := apitypes.CompileWildcard(pat)
+		m, err := apitypes.CompileWildcard(strings.ToLower(pat))
 		if err != nil {
 			return nil, fmt.Errorf("spec.when.columnsAccessed %q: %w", pat, err)
 		}
@@ -430,7 +432,7 @@ func compileApproval(spec apitypes.ApprovalSpec) (*CompiledApproval, error) {
 		if tr.Column == "" {
 			return nil, fmt.Errorf("spec.when.predicates[%d]: column is required", i)
 		}
-		m, err := apitypes.CompileWildcard(tr.Column)
+		m, err := apitypes.CompileWildcard(strings.ToLower(tr.Column))
 		if err != nil {
 			return nil, fmt.Errorf("spec.when.predicates[%d].column %q: %w", i, tr.Column, err)
 		}

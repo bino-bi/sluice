@@ -35,3 +35,17 @@ cases:
     expect:
       outcome: allow
       applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: a quoted name in another case is the same column
+    identity: { subject: alice, groups: [analysts] }
+    sql: 'SELECT "SSN" FROM shop.main.people'
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: a star over a subquery that names its columns runs at once
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT * FROM (SELECT id, name FROM shop.main.people) AS t LIMIT 100"
+    expect:
+      outcome: allow
+      applied: ["SqlAccessPolicy/allow-analysts"]

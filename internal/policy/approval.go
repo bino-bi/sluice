@@ -3,6 +3,8 @@
 package policy
 
 import (
+	"strconv"
+
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -101,10 +103,18 @@ func triggerMatches(tr compiledTrigger, cmp parser.Comparison) bool {
 	if tr.Op != "" && tr.Op != "*" && tr.Op != cmp.Op && (tr.Op != "=" || cmp.Op != "in") {
 		return false
 	}
-	if tr.Value != "" && tr.Value != cmp.Value {
+	if tr.Value != "" && tr.Value != cmp.Value && !sameNumber(tr.Value, cmp.Value) {
 		return false
 	}
 	return true
+}
+
+// sameNumber reports whether a and b are the same number written in two
+// ways: 7 and 7.0.
+func sameNumber(a, b string) bool {
+	x, errX := strconv.ParseFloat(a, 64)
+	y, errY := strconv.ParseFloat(b, 64)
+	return errX == nil && errY == nil && x == y
 }
 
 func lastSegment(dotted string) string {
