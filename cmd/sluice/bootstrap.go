@@ -80,6 +80,12 @@ type runtimeDeps struct {
 	// for the snapshot it is about to publish. The watcher holds its
 	// reload lock from Validate to the end of Publish.
 	applyPolicies func()
+
+	// globalLimiter and perIPLimiter are the buckets ahead of the login.
+	// REST and MCP over HTTP share them, so a client has one budget for
+	// both listeners. Nil means no limit.
+	globalLimiter *ratelimit.KeyedLimiter
+	perIPLimiter  *ratelimit.KeyedLimiter
 }
 
 // buildRuntime wires every layer in the correct order. The returned deps
@@ -364,16 +370,19 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Approvals:  approvalGateway(deps.approvals),
 		Logger:     deps.log,
 	}
-	// Transport-level buckets sit ahead of identity on /v1/query; zero RPS
-	// disables them (limits.* is restart-only, like the other limits).
+	// Transport-level buckets sit ahead of identity on /v1/query and on
+	// MCP over HTTP; zero RPS disables them (limits.* is restart-only,
+	// like the other limits).
 	if scfg.Limits.GlobalRPS > 0 {
-		restDeps.GlobalLimiter = ratelimit.NewKeyed(
+		deps.globalLimiter = ratelimit.NewKeyed(
 			ratelimit.Spec{RPS: scfg.Limits.GlobalRPS, Burst: scfg.Limits.GlobalBurst}, 1, nil)
+		restDeps.GlobalLimiter = deps.globalLimiter
 	}
 	if scfg.Limits.PerIPRPS > 0 {
-		restDeps.PerIPLimiter = ratelimit.NewKeyed(
+		deps.perIPLimiter = ratelimit.NewKeyed(
 			ratelimit.Spec{RPS: scfg.Limits.PerIPRPS, Burst: scfg.Limits.PerIPBurst},
 			scfg.Limits.PerIPMaxBuckets, nil)
+		restDeps.PerIPLimiter = deps.perIPLimiter
 	}
 	deps.rest = rest.New(restCfg, restDeps)
 
@@ -382,20 +391,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
 		}
-		deps.mcp, err = mcp.New(mcp.Config{
-			Enabled:        true,
-			Transport:      mcp.TransportMode(scfg.MCP.Transport),
-			HTTPListen:     scfg.MCP.Listen,
-			SessionIdleMax: scfg.MCP.SessionIdleMax,
-			AllowAnonymous: scfg.MCP.AllowAnonymous,
-			Tracing:        scfg.Tracing.Enabled,
-		}, mcp.Deps{
-			Service:    deps.service,
-			Identifier: deps.identifier,
-			Catalogs:   registryCatalogLister{r: deps.sourceReg},
-			Logger:     deps.log,
-			PinnedUser: pinned,
-		})
+		deps.mcp, err = newMCPServer(deps, mcp.TransportMode(scfg.MCP.Transport), scfg.MCP.AllowAnonymous, pinned)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
 		}

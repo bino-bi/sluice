@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/telemetry"
+	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 	"github.com/bino-bi/sluice/internal/version"
 )
 
@@ -37,6 +38,9 @@ type Config struct {
 
 	// HTTPListen is the bind address when Transport = TransportStreamableHTTP.
 	HTTPListen string
+
+	// TLS enables HTTPS on the Streamable HTTP listener when non-nil.
+	TLS *tlsutil.Config
 
 	// SessionIdleMax bounds the Streamable HTTP idle timeout. Zero falls
 	// back to 10 minutes.
@@ -72,6 +76,13 @@ type Deps struct {
 	// `sluice mcp` subcommand resolves it once at startup from a static
 	// credential (JWT or API key). Nil means stdio runs anonymous.
 	PinnedUser *identity.UserCtx
+
+	// GlobalLimiter and PerIPLimiter bound the Streamable HTTP requests
+	// ahead of identity resolution. The composition root passes the
+	// buckets of the REST transport, so a client has one budget for both
+	// listeners. Nil disables the respective bucket.
+	GlobalLimiter keyLimiter
+	PerIPLimiter  keyLimiter
 }
 
 // Server wraps sdkmcp.Server and optional HTTP listener.
@@ -95,6 +106,10 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	case "http", "streamable-http", "streamablehttp":
 		// Operator-friendly aliases for the canonical value.
 		cfg.Transport = TransportStreamableHTTP
+	}
+	// net/http binds port 80 on every interface for an empty address.
+	if cfg.Transport == TransportStreamableHTTP && cfg.HTTPListen == "" {
+		return nil, errors.New("mcp: the streamable_http transport needs mcp.listen")
 	}
 	if cfg.SessionIdleMax <= 0 {
 		cfg.SessionIdleMax = 10 * time.Minute
@@ -168,6 +183,10 @@ func pinnedIdentityLabel(u *identity.UserCtx) string {
 	return "authenticated"
 }
 
+// Handler returns the Streamable HTTP handler. Intended for tests that
+// call it without a listener.
+func (s *Server) Handler() http.Handler { return s.httpHandler() }
+
 // httpHandler builds the Streamable HTTP handler chain.
 func (s *Server) httpHandler() http.Handler {
 	// Stateless: the SDK connects a stateful session once, with the context
@@ -181,7 +200,8 @@ func (s *Server) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	// Authenticate every HTTP request before it reaches the SDK handler:
 	// an expired or revoked credential gets 401, not an anonymous call.
-	mux.Handle("/", s.authMiddleware(withRequestCtx(handler)))
+	// The rate limit runs first, so a flood costs no login.
+	mux.Handle("/", s.rateLimitMW(s.authMiddleware(withRequestCtx(handler))))
 
 	var h http.Handler = mux
 	if s.cfg.Tracing {
@@ -231,8 +251,27 @@ func (s *Server) runStreamable(ctx context.Context) error {
 		WriteTimeout:      s.cfg.WriteTimeout,
 		IdleTimeout:       s.cfg.SessionIdleMax,
 	}
+	if s.cfg.TLS != nil {
+		tc, err := tlsutil.Build(*s.cfg.TLS)
+		if err != nil {
+			return fmt.Errorf("mcp: tls: %w", err)
+		}
+		s.http.TLSConfig = tc
+		if s.cfg.TLS.ClientCA != "" {
+			s.lg.InfoContext(ctx, "mcp: mTLS enabled, client certificates required",
+				slog.String("client_ca", s.cfg.TLS.ClientCA))
+		}
+	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.http.ListenAndServe() }()
+	go func() {
+		if s.cfg.TLS != nil {
+			errCh <- s.http.ListenAndServeTLS("", "")
+			return
+		}
+		s.lg.WarnContext(ctx, "mcp: serving plain HTTP (no TLS configured)",
+			slog.String("listen", s.cfg.HTTPListen))
+		errCh <- s.http.ListenAndServe()
+	}()
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {

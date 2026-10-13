@@ -19,6 +19,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
+	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -115,19 +116,7 @@ Exit codes:
 				}
 			}
 
-			srv, err := mcp.New(mcp.Config{
-				Enabled:        true,
-				Transport:      mode,
-				HTTPListen:     deps.server.MCP.Listen,
-				SessionIdleMax: deps.server.MCP.SessionIdleMax,
-				AllowAnonymous: allowAnon,
-			}, mcp.Deps{
-				Service:    deps.service,
-				Identifier: deps.identifier,
-				Catalogs:   registryCatalogLister{r: deps.sourceReg},
-				Logger:     deps.log,
-				PinnedUser: pinned,
-			})
+			srv, err := newMCPServer(deps, mode, allowAnon, pinned)
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}
@@ -145,6 +134,40 @@ Exit codes:
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "static API key to authenticate as (stdio)")
 	cmd.Flags().BoolVar(&allowAnon, "allow-anonymous", false, "run without a credential (queries default-denied unless a policy allows the anonymous subject)")
 	return cmd
+}
+
+// newMCPServer builds the MCP server of `sluice serve` and of `sluice mcp`.
+// The transport and the anonymous switch come from the server config or
+// from the flags of `sluice mcp`, the rest from the server config.
+func newMCPServer(deps *runtimeDeps, transport mcp.TransportMode, allowAnon bool, pinned *identity.UserCtx) (*mcp.Server, error) {
+	scfg := deps.server
+	cfg := mcp.Config{
+		Enabled:        true,
+		Transport:      transport,
+		HTTPListen:     scfg.MCP.Listen,
+		SessionIdleMax: scfg.MCP.SessionIdleMax,
+		AllowAnonymous: allowAnon,
+		Tracing:        scfg.Tracing.Enabled,
+	}
+	// Validate guarantees cert+key are both set when the block exists.
+	if t := scfg.MCP.TLS; t != nil {
+		cfg.TLS = &tlsutil.Config{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
+	}
+	mdeps := mcp.Deps{
+		Service:    deps.service,
+		Identifier: deps.identifier,
+		Catalogs:   registryCatalogLister{r: deps.sourceReg},
+		Logger:     deps.log,
+		PinnedUser: pinned,
+	}
+	// A nil pointer in the interface field would not read as "no limit".
+	if deps.globalLimiter != nil {
+		mdeps.GlobalLimiter = deps.globalLimiter
+	}
+	if deps.perIPLimiter != nil {
+		mdeps.PerIPLimiter = deps.perIPLimiter
+	}
+	return mcp.New(cfg, mdeps)
 }
 
 // resolveMCPPinnedUser resolves mcp.tokenRef / mcp.apiKeyRef into the

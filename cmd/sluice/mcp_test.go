@@ -8,10 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/identity"
@@ -160,5 +162,58 @@ audit:
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
+	}
+}
+
+// REST and MCP over HTTP draw from the same buckets ahead of the login, so
+// a client cannot double its budget by using both listeners.
+func TestBuildRuntime_MCPSharesTheRateLimitOfREST(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	if err := os.MkdirAll(policyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := `
+policies:
+  reload: false
+mcp:
+  enabled: true
+  transport: streamable_http
+  listen: 127.0.0.1:0
+  allowAnonymous: true
+limits:
+  globalRps: 0.001
+  globalBurst: 1
+audit:
+  file:
+    path: ` + filepath.Join(dir, "audit") + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps, err := buildRuntime(context.Background(), cfgPath, policyDir)
+	if err != nil {
+		t.Fatalf("buildRuntime: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		deps.Close(shutdownCtx)
+	}()
+
+	// REST takes the only token of the bucket.
+	w := httptest.NewRecorder()
+	deps.rest.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/query", strings.NewReader(`{"sql":"SELECT 1"}`)))
+	if w.Code == http.StatusTooManyRequests {
+		t.Fatalf("first request was rate limited: %s", w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	deps.mcp.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("MCP status = %d, want 429 from the bucket that REST emptied: %s", w.Code, w.Body.String())
 	}
 }

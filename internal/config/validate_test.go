@@ -148,6 +148,35 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"admin.tls", "certFile and keyFile"},
 		},
 		{
+			name: "mcp.tls with cert and key is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}
+			},
+		},
+		{
+			name: "mcp.tls missing keyFile rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.TLS = &TLSConfig{CertFile: "cert.pem"}
+			},
+			wantErr: []string{"mcp.tls", "certFile and keyFile"},
+		},
+		{
+			name: "mcp over http without an address rejected",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "streamable_http"
+			},
+			wantErr: []string{"mcp.listen"},
+		},
+		{
+			name: "mcp over http with an address is valid",
+			mutate: func(c *ServerConfig) {
+				c.MCP.Enabled = true
+				c.MCP.Transport = "http"
+				c.MCP.Listen = ":8081"
+			},
+		},
+		{
 			name: "tracing enabled without endpoint rejected",
 			mutate: func(c *ServerConfig) {
 				c.Tracing.Enabled = true
@@ -294,6 +323,7 @@ func TestServerConfigValidate(t *testing.T) {
 			mutate: func(c *ServerConfig) {
 				c.MCP.Enabled = true
 				c.MCP.Transport = "streamable_http"
+				c.MCP.Listen = ":8081"
 			},
 		},
 		{

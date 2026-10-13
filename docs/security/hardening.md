@@ -36,8 +36,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 |---|---|---|
 | `admin.token` | Without it the admin API accepts every request | Set it in the server config or with `SLUICE_ADMIN__TOKEN` |
 | `admin.listen` | Serves the admin API and `/metrics` | A private address |
-| `rest.tls`, `admin.tls` | REST and admin serve plain HTTP by default | See [Deployment](../operations/deployment.md) |
-| `mcp.listen` | MCP over HTTP: no `tls` setting, no rate limit before login | A TLS proxy in front, or stdio |
+| `rest.tls`, `mcp.tls`, `admin.tls` | REST, MCP over HTTP and admin serve plain HTTP by default | See [Deployment](../operations/deployment.md) |
 | `rest.tls.clientCA` | Adds a client certificate check. Login stays required | Your CA bundle |
 | `identity.apiKeyPepper` | API keys do not work without the [pepper](../reference/glossary.md) | A `secret://` reference |
 | Secret files | Sluice refuses files that group or others can write | `chmod 0600` |

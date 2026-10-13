@@ -12,7 +12,7 @@ Sluice stands between clients you do not trust and your data. This page lists th
 | Statements | Read-only. Sluice rejects writes and attaches databases `READ_ONLY`. |
 | [Audit log](audit.md) | `audit.failClosed: true`. A client gets rows only after Sluice queued the audit record. |
 | Admin API | Off. Without `admin.token` it accepts every request. |
-| TLS | Off. REST and admin serve plain HTTP until you set `tls`. MCP over HTTP has no `tls` setting. |
+| TLS | Off. REST, MCP over HTTP and admin serve plain HTTP until you set `tls`. |
 | Secrets | Sluice writes no secret value to logs, metrics or the audit log. |
 
 See the [hardening checklist](hardening.md) and the [threat model](threat-model.md).

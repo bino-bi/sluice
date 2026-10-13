@@ -65,19 +65,31 @@ const (
 	rpcWhoAmI      = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`
 )
 
+func testService() *queryservice.Service {
+	return queryservice.New(queryservice.Options{
+		Parser:   pgquery.New(parser.Options{}),
+		Policy:   allowAllPolicy{},
+		Rewriter: passRewriter{},
+		Executor: unreachableExecutor{},
+		Audit:    discardAudit{},
+	})
+}
+
 func newStreamableTestServer(t *testing.T, cfg Config) (*Server, string) {
 	t.Helper()
+	return newStreamableTestServerWith(t, cfg, nil)
+}
+
+// newStreamableTestServerWith lets a test change the dependencies.
+func newStreamableTestServerWith(t *testing.T, cfg Config, edit func(*Deps)) (*Server, string) {
+	t.Helper()
 	cfg.Transport = TransportStreamableHTTP
-	s, err := New(cfg, Deps{
-		Service: queryservice.New(queryservice.Options{
-			Parser:   pgquery.New(parser.Options{}),
-			Policy:   allowAllPolicy{},
-			Rewriter: passRewriter{},
-			Executor: unreachableExecutor{},
-			Audit:    discardAudit{},
-		}),
-		Identifier: keySubjectIdentifier{},
-	})
+	cfg.HTTPListen = "127.0.0.1:0"
+	deps := Deps{Service: testService(), Identifier: keySubjectIdentifier{}}
+	if edit != nil {
+		edit(&deps)
+	}
+	s, err := New(cfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -141,6 +141,7 @@ func TestLoadServer_EnvSetsKeyWithoutDefault(t *testing.T) {
 	t.Setenv("SLUICE_DUCKDB__TEMPDIR", "/var/tmp/sluice")
 	t.Setenv("SLUICE_IDENTITY__APIKEYPEPPER", "secret://env/PEPPER")
 	t.Setenv("SLUICE_REST__TLS__CERTFILE", "/etc/sluice/tls.crt")
+	t.Setenv("SLUICE_MCP__TLS__KEYFILE", "/etc/sluice/mcp.key")
 	t.Setenv("SLUICE_AUDIT__FILE__PATH", "/var/log/sluice")
 	t.Setenv("SLUICE_AUDIT__S3__INSECURE", "true")
 	t.Setenv("SLUICE_POLICIES__COMPOSITE__MEMBERS", "yaml,opa")
@@ -157,6 +158,9 @@ func TestLoadServer_EnvSetsKeyWithoutDefault(t *testing.T) {
 	}
 	if cfg.REST.TLS == nil || cfg.REST.TLS.CertFile != "/etc/sluice/tls.crt" {
 		t.Errorf("rest.tls.certFile not read: %+v", cfg.REST.TLS)
+	}
+	if cfg.MCP.TLS == nil || cfg.MCP.TLS.KeyFile != "/etc/sluice/mcp.key" {
+		t.Errorf("mcp.tls.keyFile not read: %+v", cfg.MCP.TLS)
 	}
 	if cfg.Audit.File == nil || cfg.Audit.File.Path != "/var/log/sluice" {
 		t.Errorf("audit.file.path not read: %+v", cfg.Audit.File)
@@ -179,9 +183,9 @@ func TestLoadServer_NoEnvKeepsOptionalBlocksNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
 	}
-	if cfg.REST.TLS != nil || cfg.Admin.TLS != nil || cfg.Audit.Syslog != nil || cfg.Audit.S3 != nil {
-		t.Errorf("optional blocks exist without config: rest.tls %v, admin.tls %v, audit.syslog %v, audit.s3 %v",
-			cfg.REST.TLS, cfg.Admin.TLS, cfg.Audit.Syslog, cfg.Audit.S3)
+	if cfg.REST.TLS != nil || cfg.MCP.TLS != nil || cfg.Admin.TLS != nil || cfg.Audit.Syslog != nil || cfg.Audit.S3 != nil {
+		t.Errorf("optional blocks exist without config: rest.tls %v, mcp.tls %v, admin.tls %v, audit.syslog %v, audit.s3 %v",
+			cfg.REST.TLS, cfg.MCP.TLS, cfg.Admin.TLS, cfg.Audit.Syslog, cfg.Audit.S3)
 	}
 	want := DefaultServerConfig()
 	if !reflect.DeepEqual(*cfg, want) {

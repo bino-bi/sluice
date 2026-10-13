@@ -28,7 +28,7 @@ flowchart LR
     ADM -.-> P
 ```
 
-REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
+REST, MCP over HTTP and admin serve plain HTTP until you set `tls`.
 
 ## Threats
 
@@ -46,7 +46,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A client gets around a policy with SQL that Sluice and DuckDB read differently | Rejects a two-part table name such as `shop.customers`: `ACL_REJECTED`. Refuses a name over 63 bytes. Before a rewrite, checks that DuckDB reads the SQL the same way: `ERR_UNSUPPORTED_SYNTAX` or `ERR_SYNTAX` | Write `catalog.schema.table` |
 | A client dumps a table in one query | A `QueryRewritePolicy` sets a row limit, a sample and a timeout. `limits.maxRowsCeiling` caps every result. Both count result rows, and one `list()` or `string_agg()` row can hold a whole table | Add a `QueryRewritePolicy` on `tables: ["**"]` |
 | A client dumps a table over many queries | Daily budget per subject on result rows and run time: `ERR_BUDGET_EXCEEDED`. The query that crosses the budget is still served | Set `budget.enabled: true`. Set `budget` on the subject binding, with `claims.subjectId` or `issuer` |
-| A client floods Sluice with requests | On the REST listener, global and per-IP rate limits before login. One rate limit per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding, with `claims.subjectId` or `issuer`. `limits.perIpRps` is off by default |
+| A client floods Sluice with requests | On the REST and MCP listeners, global and per-IP rate limits before login, with one budget for both. One rate limit per subject after login: `ERR_RATE_LIMITED` | Set `rateLimit` on the subject binding, with `claims.subjectId` or `issuer`. `limits.perIpRps` is off by default |
 | A client sends a risky query form | A `QueryRejectPolicy` rule rejects it: `ACL_REJECTED` | Write the rules |
 | A client runs a sensitive query that nobody approved | An `ApprovalPolicy` holds the query until an approver accepts it: `ERR_APPROVAL_PENDING`. A grant runs the same query once. Accept and reject links need only their token | Set `approval.publicBaseUrl` and a webhook. Keep the webhook channel private. Run one instance |
 | A stolen API key | Stores only an HMAC of each key with a [pepper](../reference/glossary.md). Rate limit and budget, when set, cap its use | Keep the pepper secret. Use one key id per client. [Rotate keys](key-rotation.md) |
@@ -54,8 +54,7 @@ REST and admin serve plain HTTP until you set `tls`. MCP over HTTP always does.
 | A changed audit log | [Hash chain](../reference/glossary.md). `sluice audit verify` exits with status 4 and names file and line, unless the later hashes were computed again or the newest records were removed | Run verify with [`--anchor`](../reference/glossary.md) on a schedule. Keep a copy and each `last_hash` on another host and compare, see [Audit log](audit.md) |
 | A query without an audit record | `audit.failClosed`: `ERR_AUDIT_UNAVAILABLE` when the audit queue does not take the record. A failed disk write does not stop queries | Keep it `true`. Alert on `sluice_audit_write_errors_total` |
 | An open admin API | Own listener, off by default, bearer token | Set `admin.token` in the server config. Bind `admin.listen` to a private interface |
-| Traffic read on the network | TLS and client certificates on the REST and admin listeners, TLS 1.2 or newer | Set `rest.tls` and `admin.tls`, or use a TLS proxy |
-| Traffic to MCP over HTTP is read, or the listener is flooded | Nothing before login: `mcp.listen` has no `tls` setting and no rate limit | Put a TLS proxy in front, or use stdio |
+| Traffic read on the network | TLS and client certificates on the REST, MCP and admin listeners, TLS 1.2 or newer | Set `rest.tls`, `mcp.tls` and `admin.tls`, or use a TLS proxy |
 | A secret file open to other users | Refuses a file that group or others can write. Warns when others can read it | `chmod 0600` |
 | DuckDB reads local files or other URLs | Turns off external access and extension install, locks the settings. Only the configured S3 bucket and HTTP URLs stay readable | List only the URLs you need |
 | A user with database credentials | Nothing. This user does not pass through Sluice | Give database credentials only to Sluice |

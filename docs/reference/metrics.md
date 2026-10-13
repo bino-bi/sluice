@@ -17,6 +17,7 @@ Sluice serves Prometheus metrics at `GET /metrics` on the [admin API](admin-api.
 | `sluice_audit_rotate_duration_seconds` | histogram | `sink` | Wall-clock time spent rotating an audit file. |
 | `sluice_audit_write_errors_total` | counter | `sink` | Audit sink write errors. |
 | `sluice_build_info` | gauge | `version`, `commit`, `go`, `platform`, `parser` | Build identity of the running sluice binary. Value is always 1. |
+| `sluice_mcp_rate_limited_total` | counter | `scope` | MCP requests over HTTP refused by the transport-level rate limiter, before identity resolution. |
 | `sluice_policy_denials_total` | counter | `policy` | Policy engine denials by policy name. |
 | `sluice_policy_eval_duration_seconds` | histogram |  | Policy engine evaluation duration. |
 | `sluice_policy_evaluations_total` | counter | `outcome` | Policy engine evaluations by outcome. |

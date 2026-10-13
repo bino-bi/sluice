@@ -7,8 +7,14 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+### Added
+
+- **MCP over HTTP serves TLS.** The new block `mcp.tls` takes the keys of `rest.tls`: `certFile`, `keyFile`, `clientCA` and `clientAuth`. Before, the listener of `mcp.listen` could only serve plain HTTP, so a deployment needed a TLS proxy in front. `sluice serve` and `sluice mcp --transport streamable_http` both read the block.
+- **MCP over HTTP has a rate limit before login.** `limits.globalRps` and `limits.perIpRps` now also count the requests to the MCP listener. REST and MCP share the buckets, so a client has one budget for both. A request over the limit gets HTTP 429 with `ERR_RATE_LIMITED`, is counted in the new metric `sluice_mcp_rate_limited_total{scope}` and writes no audit record. **Behavior change:** `limits.globalRps` is 500 by default, so MCP over HTTP is limited without a config change, and MCP requests use up the budget of REST queries.
+
 ### Changed
 
+- **Breaking: MCP over HTTP needs `mcp.listen`.** With `mcp.transport: streamable_http` and no `mcp.listen`, Sluice listened on port 80 of every interface. `sluice serve`, `sluice mcp` and `sluice config validate` now refuse that config.
 - **`sluice mcp` does not start when an `ApprovalPolicy` is loaded.** An approver decides over the REST API, and `sluice mcp` does not start it, so a held query could never be released. **Behavior change:** the command exits with status 1 and names the cause. Run `sluice serve` with `mcp.enabled` to use approvals over MCP.
 - **A JWT binding maps `claims.tenantId` and `claims.allowedRegions`.** Both keys had an effect only for API keys. In JWT mode they are now claim paths, like `claims.groups`: the value at the path becomes the claim `tenantId` or `allowedRegions` of the subject, so `{{ subject.tenantId }}` works for a nested claim such as `org.tenant`. **Behavior change:** with such a mapping, a token that lacks the path has no `tenantId` claim, also when it carries a top-level claim of that name. A binding that serves JWTs and API keys with `tenantId: "acme"` now reads `acme` as a path for JWTs.
 - **Breaking: fields that had no effect are refused when a manifest loads.** These fields loaded and did nothing, so an operator could rely on a control that was not there. A manifest that sets one now fails `sluice policy validate`, `sluice config validate` and the start, with a message that names what works:

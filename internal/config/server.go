@@ -47,6 +47,7 @@ type MCPConfig struct {
 	Enabled        bool          `mapstructure:"enabled"`
 	Transport      string        `mapstructure:"transport"` // "stdio" | "streamable_http"
 	Listen         string        `mapstructure:"listen"`
+	TLS            *TLSConfig    `mapstructure:"tls"`
 	SessionIdleMax time.Duration `mapstructure:"sessionIdleMax"`
 
 	// TokenRef is a secret:// reference to a static JWT bearer token that

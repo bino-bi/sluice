@@ -22,7 +22,11 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `rest.requestTimeout` | `30s` | Time limit of a request. |
 | `mcp.enabled` | `false` | Start MCP in `sluice serve`. |
 | `mcp.transport` | `stdio` | `stdio` or `streamable_http`. |
-| `mcp.listen` |  | Address for `streamable_http`. Empty means `:80`. |
+| `mcp.listen` |  | Address for `streamable_http`. Required for it. |
+| `mcp.tls.certFile` |  | Certificate file. Needs `keyFile`. |
+| `mcp.tls.keyFile` |  | Key file. Needs `certFile`. |
+| `mcp.tls.clientCA` |  | CA file. Clients must send a certificate. |
+| `mcp.tls.clientAuth` |  | Only `require_and_verify`. Needs `clientCA`. |
 | `mcp.sessionIdleMax` | `30m` | HTTP idle timeout. |
 | `mcp.tokenRef` |  | Secret reference: JWT for `stdio`. |
 | `mcp.apiKeyRef` |  | Secret reference: API key for `stdio`. |
@@ -87,9 +91,9 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `limits.maxQueryTimeout` | `30s` | Longest timeout a request can set. |
 | `limits.maxConcurrent` | `100` | Queries running at one time. |
 | `limits.disableCrossCatalog` | `false` | Reject queries that read several catalogs. |
-| `limits.globalRps` | `500` | Requests per second, all clients. `0` means no limit. |
+| `limits.globalRps` | `500` | Requests per second of all clients, REST queries and MCP over HTTP together. `0` means no limit. |
 | `limits.globalBurst` | `1000` | Burst for `globalRps`. |
-| `limits.perIpRps` | `0` | Requests per second per client IP. `0` means no limit. |
+| `limits.perIpRps` | `0` | Requests per second per client IP, counted like `globalRps`. `0` means no limit. |
 | `limits.perIpBurst` | `0` | Burst for `perIpRps`. |
 | `limits.perIpMaxBuckets` | `10000` | Maximum client IPs tracked. |
 | `limits.defaultSubjectRps` | `0` | Requests per second per subject without `rateLimit`. `0` means no limit. |

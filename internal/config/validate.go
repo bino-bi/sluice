@@ -18,6 +18,7 @@ import (
 func (c *ServerConfig) Validate() error {
 	var errs []error
 	errs = append(errs, validateTLSBlock("rest.tls", c.REST.TLS)...)
+	errs = append(errs, validateTLSBlock("mcp.tls", c.MCP.TLS)...)
 	errs = append(errs, validateTLSBlock("admin.tls", c.Admin.TLS)...)
 	if c.Tracing.Enabled && c.Tracing.Endpoint == "" {
 		errs = append(errs, errors.New("tracing.endpoint: required when tracing is enabled"))
@@ -111,6 +112,10 @@ func (c *ServerConfig) Validate() error {
 		c.MCP.TokenRef == "" && c.MCP.APIKeyRef == "" && !c.MCP.AllowAnonymous {
 		errs = append(errs, errors.New(
 			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
+	}
+	// net/http binds port 80 on every interface for an empty address.
+	if c.MCP.Enabled && c.MCP.Transport != "" && c.MCP.Transport != "stdio" && c.MCP.Listen == "" {
+		errs = append(errs, errors.New("mcp.listen: required with mcp.transport "+c.MCP.Transport))
 	}
 	return errors.Join(errs...)
 }
