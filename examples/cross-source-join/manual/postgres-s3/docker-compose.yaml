@@ -57,7 +57,7 @@ services:
   # Pulls the published image by default. To run a locally built one instead:
   #   docker build -t sluice:dev ../../../..  &&  SLUICE_IMAGE=sluice:dev docker compose up
   sluice:
-    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.3}
     depends_on:
       postgres:
         condition: service_healthy

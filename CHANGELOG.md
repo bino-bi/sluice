@@ -7,6 +7,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-10-13
+
+Third release candidate for v0.1.0. It holds the fixes from a security review of the query path and from an audit of the docs against the code. Several changes are marked **Breaking**: read the **Changed** and **Removed** sections before an upgrade from `v0.1.0-rc.2`.
+
 ### Added
 
 - **The audit hash chain can have a key.** The plain chain is a SHA-256 over each record and the hash before it. Anyone who can write the files can change a record and compute every later hash again, and `sluice audit verify` reports an intact chain. With the new key `audit.chainKeyRef` (a secret reference, 32 bytes or more) each new hash is an HMAC-SHA256 with that key, and the record carries `hash_alg: hmac-sha256`. `sluice audit verify --key-ref <ref>` checks such a chain. An existing directory can get a key: the first keyed record follows the last plain one. After that Sluice does not start without the key or with another one. With `--key-ref`, a plain record after a keyed one is a broken chain, and so is a chain without any keyed record. Logs without a key verify as before, without `--key-ref`. The chain tip is now read from the newest file that has a record, so an empty newest file no longer starts a second genesis. A keyed chain still does not show removed newest records or a replaced directory.
@@ -318,6 +322,7 @@ Everything below landed between 2026-04-19 and 2026-04-20 across ten implementat
 
 ---
 
-[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.2...HEAD
+[Unreleased]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.3...HEAD
+[0.1.0-rc.3]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/bino-bi/sluice/compare/v0.1.0-rc.1...v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/bino-bi/sluice/releases/tag/v0.1.0-rc.1

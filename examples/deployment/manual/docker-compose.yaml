@@ -2,7 +2,7 @@
 # Runs the released image with the files of this example.
 services:
   sluice:
-    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.3}
     ports:
       - "8080:8080"
       # Only this host can reach the admin API.

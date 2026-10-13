@@ -1,5 +1,5 @@
 # --8<-- [start:download]
-VERSION=0.1.0-rc.2
+VERSION=0.1.0-rc.3
 BASE=https://github.com/bino-bi/sluice/releases/download/v${VERSION}
 curl -fsSLO ${BASE}/sluice_${VERSION}_linux_amd64.tar.gz
 curl -fsSLO ${BASE}/checksums.txt
