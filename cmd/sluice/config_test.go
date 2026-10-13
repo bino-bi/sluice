@@ -178,3 +178,44 @@ func TestConfigValidate_BadServerConfig_ExitCode1(t *testing.T) {
 		t.Fatalf("missing server config should not fail: %v", err)
 	}
 }
+
+// --strict also refuses a key the server config does not know. Without the
+// flag such a key is ignored, as `sluice serve` does.
+func TestConfigValidate_StrictChecksServerConfigKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(path, []byte("rest:\n  listen: \":8080\"\npolicies:\n  dir: ./policies.d\nlimitz:\n  maxRows: 5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, error) {
+		root := newRootCmd()
+		root.SetArgs(append([]string{"config", "validate"}, args...))
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		err := root.Execute()
+		return out.String(), err
+	}
+
+	if out, err := run("--config", path); err != nil || !strings.Contains(out, "server config OK") {
+		t.Fatalf("without --strict: %v, output %q", err, out)
+	}
+
+	out, err := run("--config", path, "--strict")
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.Code != 3 {
+		t.Fatalf("with --strict: err = %v, want exit status 3; output %q", err, out)
+	}
+	for _, key := range []string{"dir", "limitz"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("output %q does not name the unknown key %q", out, key)
+		}
+	}
+
+	good := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(good, []byte("rest:\n  listen: \":8080\"\n  tls:\n    certFile: a\n    keyFile: b\napproval:\n  webhooks:\n    - url: https://example.test/hook\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("--config", good, "--strict"); err != nil {
+		t.Fatalf("known keys with --strict: %v, output %q", err, out)
+	}
+}

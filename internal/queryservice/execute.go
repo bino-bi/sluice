@@ -6,6 +6,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,8 +49,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	defer func() { endQuerySpan(span, finalRec) }()
 
 	// 0. Concurrency + input caps.
-	if err := s.acquireSlot(ctx); err != nil {
-		return nil, err
+	if !s.acquireSlot(ctx) {
+		rec := s.buildAuditBase(req, qid, nil)
+		finalRec = rec
+		rec.Decision = audit.DecisionError
+		rec.ErrorCode = string(pkgerr.CodeRateLimited)
+		rec.Message = "service saturated"
+		s.emit(ctx, rec, start)
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).
+			WithQueryID(qid).
+			WithMessage("service saturated")
 	}
 	releaseSlot := s.releaseFn()
 
@@ -201,11 +210,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		})
 		polSpan.End()
 		if polErr != nil {
-			setErrorCode(rec, polErr)
+			// Map first so the audit record carries the client code.
+			apiErr := s.policyErrToAPI(polErr, qid)
+			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
 			releaseSlot()
-			return nil, toAPIError(polErr, qid)
+			return nil, apiErr
 		}
 	}
 	applyDecisionToAudit(rec, dec)
@@ -290,8 +301,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			// Never cache error paths. Map first so the audit record
 			// carries the client code.
 			apiErr := toAPIError(reErr, qid)
-			setErrorCode(rec, apiErr)
-			rec.Decision = audit.DecisionError
+			if stderrors.Is(reErr, policy.ErrTemplateVarMissing) {
+				// A row filter value the subject lacks is a deny, not a
+				// fault. Like a policy deny, the record has no error code.
+				// The reason goes to the record, not to the client.
+				rec.Decision = audit.DecisionDeny
+				rec.Message = reErr.Error()
+			} else {
+				setErrorCode(rec, apiErr)
+				rec.Decision = audit.DecisionError
+			}
 			s.emit(ctx, rec, start)
 			releaseSlot()
 			return nil, apiErr
@@ -325,12 +344,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 
 	// 5. Execute.
 	execReq := executor.Request{
-		QueryID: qid,
-		SQL:     rewriteResp.SQL,
-		Params:  rewriteResp.Params,
-		MaxRows: req.MaxRows,
-		Timeout: req.Timeout,
-		Format:  req.Format,
+		QueryID:  qid,
+		SQL:      rewriteResp.SQL,
+		Params:   rewriteResp.Params,
+		MaxRows:  req.MaxRows,
+		MaxBytes: s.opts.Limits.MaxResultBytes,
+		Timeout:  req.Timeout,
+		Format:   req.Format,
 	}
 	execCtx, execSpan := s.tracer.Start(ctx, "query.execute")
 	resp, execErr := s.opts.Executor.Execute(execCtx, execReq)
@@ -338,6 +358,15 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if execErr != nil {
 		// Map first so the audit record carries the client code.
 		apiErr := execErrToAPI(execErr, qid)
+		if !rewriteResp.Changed && stderrors.Is(execErr, executor.ErrSyntax) {
+			// The statement ran as the client wrote it: pg_query read it,
+			// DuckDB does not.
+			apiErr = pkgerr.Wrap(pkgerr.CodeSyntax, execErr).WithQueryID(qid).
+				WithMessage("DuckDB cannot parse the statement")
+		}
+		if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal && s.sourceDown(rec.Catalogs) {
+			apiErr = pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, execErr).WithQueryID(qid)
+		}
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
@@ -411,6 +440,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		start:    start,
 		parent:   qr,
 		truncSrc: &resp.Truncated,
+		subject:  rec.Subject,
+		origin:   rec.Origin,
+		remoteIP: rec.RemoteIP,
 	}
 	// Budget usage: capture the execute duration now (excludes client
 	// streaming so a slow reader does not burn budget); rows are known at
@@ -434,13 +466,13 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 // acquireSlot grabs a semaphore token when MaxConcurrent is set. Returns
 // ERR_RATE_LIMITED when the limit is reached and the context's deadline
 // fires (or immediately when no deadline is set).
-func (s *Service) acquireSlot(ctx context.Context) error {
+func (s *Service) acquireSlot(ctx context.Context) bool {
 	if s.sem == nil {
-		return nil
+		return true
 	}
 	select {
 	case s.sem <- struct{}{}:
-		return nil
+		return true
 	default:
 	}
 	// Wait up to ctx or a short grace period.
@@ -448,11 +480,11 @@ func (s *Service) acquireSlot(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case s.sem <- struct{}{}:
-		return nil
+		return true
 	case <-ctx.Done():
-		return pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+		return false
 	case <-timer.C:
-		return pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+		return false
 	}
 }
 
@@ -570,6 +602,32 @@ func endQuerySpan(span trace.Span, rec *audit.Record) {
 		}
 	}
 	span.End()
+}
+
+// policyErrToAPI maps an error of the policy engine. An engine that cannot
+// decide, such as a ReBAC or OPA backend that is down, is an outage: no
+// deny, and no ERR_INTERNAL. The client gets no cause, so it is logged.
+func (s *Service) policyErrToAPI(err error, qid string) error {
+	apiErr := toAPIError(err, qid)
+	if pkgerr.FromError(apiErr).Code != pkgerr.CodeInternal {
+		return apiErr
+	}
+	s.opts.Logger.Error("policy engine failed",
+		"query_id", qid,
+		"error", err.Error(),
+	)
+	return pkgerr.Wrap(pkgerr.CodePolicyUnavailable, err).WithQueryID(qid)
+}
+
+// sourceDown reports whether a data source of a failed query is known to
+// be down. DuckDB reports a source that went away with an error type that
+// says nothing: a removed SQLite file gives "Invalid Error". So the result
+// of the periodic health test decides whether the failure is an outage.
+func (s *Service) sourceDown(catalogs []string) bool {
+	if s.opts.SourceDown == nil {
+		return false
+	}
+	return slices.ContainsFunc(catalogs, s.opts.SourceDown)
 }
 
 func execErrToAPI(err error, qid string) error {

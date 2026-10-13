@@ -23,7 +23,7 @@ type RelationshipSpec struct {
 
 // RelationshipBackend addresses the ReBAC service.
 type RelationshipBackend struct {
-	Type                 string   `yaml:"type" json:"type"` // "openfga"
+	Type                 string   `yaml:"type,omitempty" json:"type,omitempty"` // "openfga"
 	Endpoint             string   `yaml:"endpoint" json:"endpoint"`
 	StoreID              string   `yaml:"storeId" json:"storeId"`
 	AuthorizationModelID string   `yaml:"authorizationModelId,omitempty" json:"authorizationModelId,omitempty"`

@@ -176,3 +176,28 @@ func TestReBAC_ActionScopedPolicyRuns(t *testing.T) {
 		t.Errorf("outcome = %s abstained=%v, want the failing check to deny", dec.Outcome, dec.Abstained)
 	}
 }
+
+// In Audit mode a failed check does not deny. The decision lists the
+// policy with would=deny, which the audit record shows.
+func TestReBAC_AuditModeFailedCheckIsShadowDeny(t *testing.T) {
+	rp := relPolicy()
+	rp.Spec.EnforcementMode = apitypes.EnforcementAudit
+	e := rebac.New(rebac.Options{
+		NewChecker: func(apitypes.RelationshipBackend, []byte) rebac.RelationChecker {
+			return &rebac.Fake{Tuples: map[string]bool{}}
+		},
+	})
+	if err := e.ApplySnapshot(context.Background(), &config.Snapshot{RelationshipPolicies: []*apitypes.RelationshipPolicy{rp}}); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	dec, err := e.Evaluate(context.Background(), input())
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if dec.Outcome == policy.OutcomeDeny && !dec.Abstained {
+		t.Fatalf("an Audit policy denied: %+v", dec.DenyReason)
+	}
+	if len(dec.Shadow) != 1 || dec.Shadow[0].Name != "fga-finance" || dec.Shadow[0].Would != "deny" {
+		t.Errorf("shadow = %+v, want fga-finance with would=deny", dec.Shadow)
+	}
+}

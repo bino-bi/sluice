@@ -22,14 +22,16 @@ cases:
       errorCode: TOO_MANY_JOINS
       rejections: ["agent-shapes/no-big-joins"]
 
-  - name: query.joins does not count a comma join
+  - name: query.joins counts a comma join
     identity: { subject: report-agent, groups: [agents] }
     sql: >-
       SELECT a.id
       FROM shop.main.orders a, shop.main.orders b, shop.main.orders c, shop.main.orders d
       WHERE b.id = a.id AND c.id = a.id AND d.id = a.id
     expect:
-      outcome: allow
+      outcome: reject
+      errorCode: TOO_MANY_JOINS
+      rejections: ["agent-shapes/no-big-joins"]
 
   - name: a rule without an expression fires for every matched query
     identity: { subject: ivy, groups: [interns] }
@@ -114,11 +116,12 @@ cases:
     expect:
       outcome: allow
 
-  - name: query.has_select_star does not see the second part of a UNION
+  - name: query.has_select_star sees every SELECT of a UNION
     identity: { subject: report-agent, groups: [agents] }
     sql: "SELECT id, status, amount_cents FROM shop.main.orders UNION ALL SELECT * FROM shop.main.orders"
     expect:
-      outcome: allow
+      outcome: reject
+      rejections: ["agent-shapes/no-select-star"]
 
   - name: a recursive CTE is rejected
     identity: { subject: report-agent, groups: [agents] }
@@ -130,14 +133,15 @@ cases:
       outcome: reject
       rejections: ["agent-recursion/no-recursive-cte"]
 
-  - name: query.is_recursive_cte does not see the WITH of a UNION
+  - name: query.is_recursive_cte sees the WITH of a UNION
     identity: { subject: report-agent, groups: [agents] }
     sql: >-
       WITH RECURSIVE n(id) AS (
       SELECT id FROM shop.main.orders UNION ALL SELECT id + 1 FROM n WHERE id < 9)
       SELECT id FROM n UNION ALL SELECT id FROM shop.main.orders
     expect:
-      outcome: allow
+      outcome: reject
+      rejections: ["agent-recursion/no-recursive-cte"]
 
   - name: with only a limit, an alias spelled two ways comes back in lower case
     identity: { subject: report-agent, groups: [agents] }

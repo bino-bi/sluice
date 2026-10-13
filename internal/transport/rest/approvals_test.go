@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,13 +65,53 @@ func TestApprovalAccept_HappyPath(t *testing.T) {
 	b := &gwBroker{acceptToken: "acc", view: approval.View{ID: "apr_1"}, found: true}
 	srv := newApprovalServer(b)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/v1/approvals/apr_1/accept?token=acc", nil)
+	r := httptest.NewRequest(http.MethodPost, "/v1/approvals/apr_1/accept?token=acc", nil)
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 	if b.accepted != 1 {
 		t.Errorf("accept not recorded")
+	}
+}
+
+// A link preview, a mail scanner or a browser prefetch sends a plain GET.
+// GET shows a page with a form and decides nothing. The page is the same
+// for every id and token, so it tells nothing about them.
+func TestApproval_GetShowsPageAndDecidesNothing(t *testing.T) {
+	b := &gwBroker{acceptToken: "acc", rejectToken: "rej", view: approval.View{ID: "apr_1"}, found: true}
+	srv := newApprovalServer(b)
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+
+	accept := get("/v1/approvals/apr_1/accept?token=acc")
+	if accept.Code != http.StatusOK || !strings.Contains(accept.Body.String(), `<form method="post">`) {
+		t.Fatalf("accept page: status %d, body %s", accept.Code, accept.Body.String())
+	}
+	for h, want := range map[string]string{
+		"Content-Type":            "text/html; charset=utf-8",
+		"Content-Security-Policy": "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+		"Cache-Control":           "no-store",
+		"Referrer-Policy":         "no-referrer",
+		"X-Content-Type-Options":  "nosniff",
+	} {
+		if got := accept.Header().Get(h); got != want {
+			t.Errorf("%s = %q, want %q", h, got, want)
+		}
+	}
+	for _, path := range []string{"/v1/approvals/nope/accept?token=acc", "/v1/approvals/apr_1/accept?token=wrong", "/v1/approvals/apr_1/accept"} {
+		if other := get(path); other.Code != accept.Code || other.Body.String() != accept.Body.String() {
+			t.Errorf("%s: page differs from the page of a valid link (oracle)", path)
+		}
+	}
+	if reject := get("/v1/approvals/apr_1/reject?token=rej"); reject.Code != http.StatusOK || reject.Body.String() == accept.Body.String() {
+		t.Errorf("reject page: status %d, same body as accept: %v", reject.Code, reject.Body.String() == accept.Body.String())
+	}
+	if b.accepted != 0 || b.rejected != 0 {
+		t.Errorf("GET decided: accepted=%d rejected=%d", b.accepted, b.rejected)
 	}
 }
 
@@ -91,10 +132,10 @@ func TestApproval_OracleFreeness(t *testing.T) {
 	srv := newApprovalServer(b)
 
 	unknown := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/v1/approvals/nope/accept?token=acc", nil))
+	srv.Handler().ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/v1/approvals/nope/accept?token=acc", nil))
 
 	badTok := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(badTok, httptest.NewRequest(http.MethodGet, "/v1/approvals/apr_1/accept?token=wrong", nil))
+	srv.Handler().ServeHTTP(badTok, httptest.NewRequest(http.MethodPost, "/v1/approvals/apr_1/accept?token=wrong", nil))
 
 	if unknown.Code != http.StatusNotFound || badTok.Code != http.StatusNotFound {
 		t.Fatalf("codes: unknown=%d badTok=%d, want both 404", unknown.Code, badTok.Code)

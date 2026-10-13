@@ -13,6 +13,7 @@ import (
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgapi "github.com/bino-bi/sluice/pkg/apitypes"
+	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
 
 // fakeSchemaCache serves a fixed entry set; only All is exercised by the
@@ -34,6 +35,7 @@ func (f *fakeSchemaCache) Invalidate(schema.Key)                   {}
 func (f *fakeSchemaCache) InvalidateCatalog(string)                {}
 func (f *fakeSchemaCache) InvalidateAll()                          {}
 func (f *fakeSchemaCache) Refresh(context.Context, []string) error { return nil }
+func (f *fakeSchemaCache) Load(context.Context, []string)          {}
 
 // denyingPolicy denies the tables named in deny, allows everything else.
 type denyingPolicy struct {
@@ -179,5 +181,161 @@ func TestAccessibleTables_CatalogFilterAndPaging(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Fatalf("unknown catalog returned %d refs", len(none))
+	}
+}
+
+// catalogLoader serves the same two tables for every catalog and counts
+// the loads of each.
+type catalogLoader struct {
+	loads map[string]int
+}
+
+func (l *catalogLoader) Load(_ context.Context, catalog string) (pkgds.Schema, error) {
+	l.loads[catalog]++
+	return pkgds.Schema{Catalog: catalog, Schemas: []pkgds.SchemaNS{{
+		Name:   "main",
+		Tables: []pkgds.Table{{Name: "customers"}, {Name: "orders"}},
+	}}}, nil
+}
+
+type fixedCatalogs []queryservice.CatalogInfo
+
+func (f fixedCatalogs) List(context.Context) []queryservice.CatalogInfo { return f }
+
+// newColdService has the catalogs shop and crm attached and an empty
+// schema cache, as a server has after its start and after a reload.
+func newColdService(t *testing.T, pol *denyingPolicy, down string) (*queryservice.Service, *catalogLoader) {
+	t.Helper()
+	loader := &catalogLoader{loads: map[string]int{}}
+	return queryservice.New(queryservice.Options{
+		Parser:     &fakeParser{},
+		Policy:     pol,
+		Rewriter:   &fakeRewriter{},
+		Executor:   &fakeExecutor{},
+		Audit:      &fakeAudit{},
+		Schema:     schema.New(schema.Options{Loader: loader}),
+		Catalogs:   func() []string { return []string{"shop", "crm"} },
+		SourceDown: func(catalog string) bool { return catalog == down },
+		Clock:      func() time.Time { return time.Unix(1713600000, 0) },
+	}), loader
+}
+
+// The listing tools read the schema cache. Nothing fills it for a plain
+// query, so they load a catalog themselves, once.
+func TestListTables_LoadsTheCatalog(t *testing.T) {
+	svc, loader := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true}}, "")
+	ctx := context.Background()
+	for range 2 {
+		got, _, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{})
+		if err != nil {
+			t.Fatalf("ListTables: %v", err)
+		}
+		if len(got) != 1 || got[0].Table != "orders" {
+			t.Fatalf("tables = %v, want only shop.main.orders", got)
+		}
+	}
+	if loader.loads["shop"] != 1 || loader.loads["crm"] != 0 {
+		t.Errorf("loads = %v, want one load of shop only", loader.loads)
+	}
+	// A name that is no attached catalog reaches no data source.
+	if got, _, err := svc.ListTables(ctx, "nope", "", nil, queryservice.Page{}); err != nil || len(got) != 0 {
+		t.Errorf("ListTables(nope) = %v, %v, want no table", got, err)
+	}
+	if loader.loads["nope"] != 0 {
+		t.Errorf("an unknown catalog name was loaded %d time(s)", loader.loads["nope"])
+	}
+}
+
+func TestAccessibleTables_LoadsEveryCatalogThatIsUp(t *testing.T) {
+	svc, loader := newColdService(t, &denyingPolicy{}, "crm")
+	got, _, err := svc.AccessibleTables(context.Background(), nil, "", queryservice.Page{})
+	if err != nil {
+		t.Fatalf("AccessibleTables: %v", err)
+	}
+	if len(got) != 2 || got[0].Catalog != "shop" || got[1].Catalog != "shop" {
+		t.Errorf("tables = %v, want the two tables of shop", got)
+	}
+	if loader.loads["crm"] != 0 {
+		t.Errorf("the data source that is down was loaded %d time(s)", loader.loads["crm"])
+	}
+}
+
+func TestListCatalogs_HidesADeniedCatalogOnAColdCache(t *testing.T) {
+	svc, _ := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true, "orders": true}}, "crm")
+	got, err := svc.ListCatalogs(context.Background(),
+		fixedCatalogs{{Name: "shop"}, {Name: "crm"}}, nil)
+	if err != nil {
+		t.Fatalf("ListCatalogs: %v", err)
+	}
+	// shop: every table denied. crm: down, so nothing is known about it.
+	if len(got) != 1 || got[0].Name != "crm" {
+		t.Errorf("catalogs = %v, want only crm", got)
+	}
+}
+
+// actionPolicy allows only a request that names the SELECT action, as an
+// allow with `actions: [SELECT]` does.
+type actionPolicy struct{ denyingPolicy }
+
+func (p *actionPolicy) Evaluate(_ context.Context, in policy.Input) (*policy.Decision, error) {
+	if policy.ActionOf(in) != pkgapi.ActionSelect {
+		return &policy.Decision{Outcome: policy.OutcomeDeny}, nil
+	}
+	return &policy.Decision{Outcome: policy.OutcomeAllow}, nil
+}
+
+// The listing asks whether the subject may read a table, so it must ask
+// as a SELECT. Without an action, a policy with actions never matches.
+func TestListTables_VisibilityIsCheckedAsSelect(t *testing.T) {
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &actionPolicy{},
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    &fakeAudit{},
+		Schema: &fakeSchemaCache{entries: []*schema.Entry{
+			{Key: schema.Key{Catalog: "shop", Schema: "main", Table: "orders"}},
+		}},
+		Clock: func() time.Time { return time.Unix(1713600000, 0) },
+	})
+	got, _, err := svc.ListTables(context.Background(), "shop", "", nil, queryservice.Page{})
+	if err != nil {
+		t.Fatalf("ListTables: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("tables = %v, want shop.main.orders", got)
+	}
+}
+
+// recordingPolicy keeps the input of the last Explain call.
+type recordingPolicy struct {
+	denyingPolicy
+	explained policy.Input
+}
+
+func (p *recordingPolicy) Explain(_ context.Context, in policy.Input) (*pkgapi.ExplainResult, error) {
+	p.explained = in
+	return &pkgapi.ExplainResult{}, nil
+}
+
+// Explain for a table without SQL asks about a read, like the list tools.
+func TestExplain_TableOnlyIsARead(t *testing.T) {
+	pol := &recordingPolicy{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   pol,
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    &fakeAudit{},
+		Clock:    func() time.Time { return time.Unix(1713600000, 0) },
+	})
+	_, err := svc.Explain(context.Background(), queryservice.ExplainInput{
+		Table: parser.TableRef{Catalog: "shop", Schema: "main", Table: "orders"},
+	})
+	if err != nil {
+		t.Fatalf("Explain: %v", err)
+	}
+	if got := policy.ActionOf(pol.explained); got != pkgapi.ActionSelect {
+		t.Errorf("action = %q, want SELECT", got)
 	}
 }

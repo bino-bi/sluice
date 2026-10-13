@@ -30,26 +30,22 @@ import (
 // skip lists what the code declares but does not act on. A key is a
 // kind, a field as in docs, or Type=value for an enum value.
 var skip = map[string]bool{
-	"AuditSink":                           true, // decoded, never read: sinks come from the server config
 	"object.metadata.namespace":           true, // no reader
-	"Clause.subjects.ipRanges":            true, // never matches: the remote address holds a port
-	"PredOp=IsNull":                       true, // the rewritten SQL fails in DuckDB
-	"PredOp=IsNotNull":                    true, // the rewritten SQL fails in DuckDB
 	"MaskType=custom":                     true, // compile refuses it
 	"MaskType=external":                   true, // compile refuses it
 	"ColumnMaskPolicy.mask.expression":    true, // only read by mask type custom
 	"ColumnMaskPolicy.mask.args.provider": true, // only read by mask type external
 	"ColumnMaskPolicy.mask.args.keyPath":  true, // only read by mask type external
 	"QueryRewritePolicy.rewrite.hint":     true, // compile refuses it
-	"DataSource.prefix":                   true, // the s3 driver stores it and never uses it
-	"DataSource.schemas":                  true, // no driver reads it
-	"DataSource.tables":                   true, // no driver reads it
-	"DataSource.attachMode":               true, // no driver reads it
-	"DataSource.healthCheck":              true, // no reader
-	"DataSource.readonly":                 true, // no effect: every source is opened read-only
-	"SubjectBinding.groupsSource":         true, // no reader
-	"RelationshipPolicy.backend.type":     true, // no reader
-	"RelationshipPolicy.backend.cacheTtl": true, // no reader: the TTL is policies.rebac.cacheTtl
+	"DataSource.prefix":                   true, // the decoder refuses it
+	"DataSource.schemas":                  true, // the decoder refuses it
+	"DataSource.tables":                   true, // the decoder refuses it
+	"DataSource.attachMode":               true, // the decoder refuses every value but readonly
+	"DataSource.healthCheck":              true, // the decoder refuses it
+	"DataSource.readonly":                 true, // no effect: the decoder refuses false
+	"SubjectBinding.groupsSource":         true, // the decoder refuses it
+	"RelationshipPolicy.backend.type":     true, // only openfga loads
+	"RelationshipPolicy.backend.cacheTtl": true, // the decoder refuses it: the TTL is policies.rebac.cacheTtl
 }
 
 // pages links each kind to the page that explains it.
@@ -98,6 +94,7 @@ var docs = map[string]doc{
 	"Clause.subjects.groups":              {"", "Group names. One is enough."},
 	"Clause.subjects.apiKeys":             {"", "Subject ids of API key subjects."},
 	"Clause.subjects.roles":               {"", "Values of the `roles` claim. Without the claim, Sluice uses the groups."},
+	"Clause.subjects.ipRanges":            {"", "CIDR ranges. The address of the client must be in one."},
 	"Clause.resources":                    {"", "Tables to match."},
 
 	"ResourceSelector.catalogs": {"", "Catalog names. `*` is a wildcard."},
@@ -186,8 +183,8 @@ var docs = map[string]doc{
 	"SubjectBinding.claims.subjectId":        {"", "JWT: claim path, default `sub`. API key: the subject id."},
 	"SubjectBinding.claims.email":            {"", "JWT: claim path. API key: the email."},
 	"SubjectBinding.claims.groups":           {"", "JWT: claim path. API key: one group."},
-	"SubjectBinding.claims.tenantId":         {"", "API key only: the `tenantId` claim."},
-	"SubjectBinding.claims.allowedRegions":   {"", "API key only: the `allowedRegions` claim."},
+	"SubjectBinding.claims.tenantId":         {"", "JWT: path to the value. API key: the value. Policies read it as the `tenantId` claim."},
+	"SubjectBinding.claims.allowedRegions":   {"", "JWT: path to the value. API key: the value. Policies read it as the `allowedRegions` claim."},
 	"SubjectBinding.rateLimit.rps":           {"", "Requests per second for each subject."},
 	"SubjectBinding.rateLimit.burst":         {"", "Burst. Default 1."},
 	"SubjectBinding.budget.cpuSecondsPerDay": {"", "Query seconds per subject and UTC day."},

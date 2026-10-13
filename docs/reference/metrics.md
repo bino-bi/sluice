@@ -11,13 +11,25 @@ Sluice serves Prometheus metrics at `GET /metrics` on the [admin API](admin-api.
 | `sluice_approval_pending` | gauge |  | Approval requests currently awaiting a decision. |
 | `sluice_approval_wait_seconds` | histogram |  | Time a request waited before being decided or timing out. |
 | `sluice_approval_webhook_deliveries_total` | counter | `status` | Approval webhook delivery attempts by status. |
+| `sluice_audit_auth_events_dropped_total` | counter | `origin` | Failed logins without an audit record: over the rate limit of these records, or the queue was full. |
 | `sluice_audit_dropped_total` | counter | `sink`, `reason` | Audit records dropped before reaching a sink. |
 | `sluice_audit_enqueued_total` | counter | `event_type` | Audit records accepted into the dispatcher queue. |
 | `sluice_audit_queue_depth` | gauge | `sink` | Current audit dispatcher queue depth. |
+| `sluice_audit_rotate_duration_seconds` | histogram | `sink` | Wall-clock time spent rotating an audit file. |
 | `sluice_audit_write_errors_total` | counter | `sink` | Audit sink write errors. |
 | `sluice_build_info` | gauge | `version`, `commit`, `go`, `platform`, `parser` | Build identity of the running sluice binary. Value is always 1. |
+| `sluice_mcp_rate_limited_total` | counter | `scope` | MCP requests over HTTP refused by the transport-level rate limiter, before identity resolution. |
+| `sluice_policy_denials_total` | counter | `policy` | Policy engine denials by policy name. |
+| `sluice_policy_eval_duration_seconds` | histogram |  | Policy engine evaluation duration. |
+| `sluice_policy_evaluations_total` | counter | `outcome` | Policy engine evaluations by outcome. |
+| `sluice_policy_rejections_total` | counter | `policy`, `rule` | Policy engine rejections by policy + rule. |
 | `sluice_rest_rate_limited_total` | counter | `scope` | REST requests refused by `limits.globalRps` or `limits.perIpRps`. |
+| `sluice_schema_cache_hits_total` | counter | `catalog` | Schema cache hits. |
+| `sluice_schema_cache_misses_total` | counter | `catalog` | Schema cache misses that triggered an introspection. |
+| `sluice_schema_refresh_duration_seconds` | histogram |  | Duration of one read of the tables of a catalog. |
+| `sluice_schema_stale_entries_total` | counter | `catalog` | Number of times a cached entry became stale after a refresh failure. |
 
 - Sluice also exports the Go runtime metrics (`go_*`) and the process metrics (`process_*`).
 - The `sluice_approval_*` metrics exist only when `approval.publicBaseUrl` is set.
 - A counter with labels appears after its first event.
+- The `sluice_policy_*` metrics count the YAML engine only, also as a member of `composite`.

@@ -62,7 +62,7 @@ func TestDispatcher_SecondarySinkFailure_FileChainStillVerifies(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	rep, err := audit.Verify(dir, audit.GenesisPriorHash(seed))
+	rep, err := audit.Verify(dir, audit.GenesisPriorHash(seed), nil)
 	if err != nil {
 		t.Fatalf("chain must verify over the file sink: %v", err)
 	}

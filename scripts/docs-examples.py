@@ -190,7 +190,7 @@ SUITE_KEYS = {
     "": {"schema", "cases"},
     "case": {"name", "identity", "request", "sql", "expect"},
     "identity": {"subject", "issuer", "email", "groups", "claims"},
-    "request": {"headers", "userAgent"},
+    "request": {"headers", "userAgent", "remoteIp"},
     "expect": {"outcome", "denyPolicy", "errorCode", "rejections", "filters", "masks",
                "postMasks", "applied", "rewrittenSqlContains", "rewrittenSql"},
 }

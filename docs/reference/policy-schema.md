@@ -61,6 +61,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `subjects.jwtClaims[].pattern` | string |  | Regular expression for `Matches`. |
 | `subjects.groups` | []string |  | Group names. One is enough. |
 | `subjects.apiKeys` | []string |  | Subject ids of API key subjects. |
+| `subjects.ipRanges` | []string |  | CIDR ranges. The address of the client must be in one. |
 | `subjects.roles` | []string |  | Values of the `roles` claim. Without the claim, Sluice uses the groups. |
 | `resources` | [ResourceSelector](#resourceselector) |  | Tables to match. |
 
@@ -90,7 +91,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `any` | [Predicate](#predicate) list |  | One part must hold. |
 | `not` | [Predicate](#predicate) |  | The part must not hold. |
 | `column` | string |  | Column to test. |
-| `op` | string |  | `Equals`, `NotEquals`, `In`, `NotIn`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `Like`, `NotLike`, `Matches`, `StartsWith`, `EndsWith`, `Contains`. |
+| `op` | string |  | `Equals`, `NotEquals`, `In`, `NotIn`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `Like`, `NotLike`, `IsNull`, `IsNotNull`, `Matches`, `StartsWith`, `EndsWith`, `Contains`. |
 | `value` | any |  | Value to compare with. |
 | `values` | []any |  | For `In`, `NotIn`, `Between`. |
 
@@ -194,8 +195,8 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `claims.subjectId` | string |  | JWT: claim path, default `sub`. API key: the subject id. |
 | `claims.email` | string |  | JWT: claim path. API key: the email. |
 | `claims.groups` | string |  | JWT: claim path. API key: one group. |
-| `claims.tenantId` | string |  | API key only: the `tenantId` claim. |
-| `claims.allowedRegions` | string |  | API key only: the `allowedRegions` claim. |
+| `claims.tenantId` | string |  | JWT: path to the value. API key: the value. Policies read it as the `tenantId` claim. |
+| `claims.allowedRegions` | string |  | JWT: path to the value. API key: the value. Policies read it as the `allowedRegions` claim. |
 | `rateLimit.rps` | float |  | Requests per second for each subject. |
 | `rateLimit.burst` | int |  | Burst. Default 1. |
 | `budget.cpuSecondsPerDay` | int |  | Query seconds per subject and UTC day. |

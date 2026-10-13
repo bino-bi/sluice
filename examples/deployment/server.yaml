@@ -7,8 +7,7 @@ rest:
 admin:
   enabled: true
   listen: ":9091"
-  # Empty on purpose. The variable SLUICE_ADMIN__TOKEN sets the value.
-  token: ""
+  # The variable SLUICE_ADMIN__TOKEN sets the token.
   tls:
     certFile: "./data/tls/server.crt"
     keyFile: "./data/tls/server.key"

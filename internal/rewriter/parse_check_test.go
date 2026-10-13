@@ -167,21 +167,20 @@ func TestRewrite_ParseCheckSkipped(t *testing.T) {
 	}
 
 	limit := &policy.Decision{Outcome: policy.OutcomeAllow, Rewrite: &policy.RewriteEffect{LimitMax: 5}}
-	for _, sql := range []string{"EXPLAIN SELECT id FROM pg.public.orders", "SHOW TABLES"} {
-		ast, err := p.Parse(context.Background(), sql)
-		if err != nil {
-			t.Fatalf("parse %s: %v", sql, err)
-		}
-		if _, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: limit, Raw: sql}); err != nil {
-			t.Errorf("%s with a limit: %v", sql, err)
-		}
+	explain := "EXPLAIN SELECT id FROM pg.public.orders"
+	ast, err := p.Parse(context.Background(), explain)
+	if err != nil {
+		t.Fatalf("parse %s: %v", explain, err)
+	}
+	if _, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{AST: ast, Decision: limit, Raw: explain}); err != nil {
+		t.Errorf("%s with a limit: %v", explain, err)
 	}
 	if len(fc.calls) != 0 {
 		t.Errorf("checker called for %q", fc.calls)
 	}
 
 	// A SELECT under the same limit is checked.
-	ast, err := p.Parse(context.Background(), sql)
+	ast, err = p.Parse(context.Background(), sql)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

@@ -28,6 +28,11 @@ var (
 	// comes with ErrExecute. Maps to ERR_QUERY_FAILED upstream.
 	ErrRejected = errors.New("executor: statement rejected by duckdb")
 
+	// ErrSyntax marks an execution error where DuckDB could not parse the
+	// statement. It comes with ErrExecute. Upstream it is the client's
+	// fault only when the statement ran as the client wrote it.
+	ErrSyntax = errors.New("executor: statement not parsed by duckdb")
+
 	// ErrConnUnavailable is returned when a hardened connection cannot be
 	// drawn from the pool for reasons other than the caller's context.
 	// Maps to ERR_DATASOURCE_UNAVAILABLE upstream.

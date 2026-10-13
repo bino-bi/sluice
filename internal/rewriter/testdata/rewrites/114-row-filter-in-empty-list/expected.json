@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.orders sluice_src WHERE false AND NOT true) orders",
+  "changed": true,
+  "applied_policies": [
+    "RowFilterPolicy/by-subject",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "2d5a5e550b112cb8",
+  "filters": [
+    "pg.public.orders"
+  ]
+}

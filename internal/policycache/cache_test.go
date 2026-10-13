@@ -110,6 +110,17 @@ func TestTTLExpiry(t *testing.T) {
 	}
 }
 
+// subjects.ipRanges matches on the address of the subject, so a cached
+// decision must not be served to the same subject from another address.
+func TestSubjectAddressParticipates(t *testing.T) {
+	sql := "SELECT 1"
+	a := &identity.UserCtx{Subject: "u", RemoteAddr: "10.0.0.1"}
+	b := &identity.UserCtx{Subject: "u", RemoteAddr: "192.168.0.1"}
+	if BuildKey(1, "d", sql, a, nil, nil, false) == BuildKey(1, "d", sql, b, nil, nil, false) {
+		t.Fatal("the address of the subject did not participate in the key")
+	}
+}
+
 func TestRemoteIPParticipates(t *testing.T) {
 	sql := "SELECT 1"
 	user := &identity.UserCtx{Subject: "u"}

@@ -36,13 +36,13 @@ Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also ha
 |---|---|---|
 | 0 | all | Success. |
 | 1 | all | Wrong flags, a file that cannot be read, or a failed start. |
-| 1 | ~policy test~ | A policy does not compile. |
 | 1 | ~datasource check~ | A policy file is not valid, or the name is unknown. |
 | 2 | ~serve~ | A listener failed, for example the port is in use. |
 | 2 | ~datasource check~ | The directory holds no ~DataSource~ object. |
 | 3 | ~config validate~, ~policy validate~, ~policy explain~ | A policy or the server config is not valid. |
-| 3 | ~policy test~ | A policy file is not valid, a case failed, or no case ran. |
-| 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, or the anchor differs. |
+| 3 | ~policy test~ | A policy file is not valid or does not compile, a case failed, or no case ran. |
+| 1 | ~audit verify~ | The chain is keyed and ~--key-ref~ is missing. |
+| 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, the anchor or the key differs, or the directory has no record. |
 `
 
 // notes holds the hand-written text of a command section, keyed by the
@@ -52,13 +52,13 @@ var notes = map[string]string{
 
 	"audit verify": `See [Audit log](../security/audit.md).`,
 
-	"budget show": `The state directory must exist. The command creates ~budget.db~ there if the file is missing.`,
+	"budget show": `The command only reads ~budget.db~ in the state directory. A missing file is an error. A running server writes the numbers of today every ~budget.flushInterval~.`,
 
 	"config validate": `The policy directory is optional. ~sluice serve~ runs the same checks at start.`,
 
 	"datasource check": `The command does not connect to the data sources.`,
 
-	"mcp": `Without ~--jwt~, the command reads the token from ~SLUICE_MCP_TOKEN~. With ~http~, ~streamable-http~ or ~streamablehttp~, the command also needs ~--api-key~, ~--jwt~ or ~--allow-anonymous~ at start. See [MCP tools](mcp.md).`,
+	"mcp": `Without ~--jwt~, the command reads the token from ~SLUICE_MCP_TOKEN~. The command does not start when an ~ApprovalPolicy~ is loaded. See [MCP tools](mcp.md).`,
 
 	"policy explain": `You need ~--user~ and at least one of ~--table~ and ~--sql~. This call asks which policies apply when ~alice~ reads one table:
 
@@ -82,7 +82,7 @@ var notes = map[string]string{
 --8<-- "examples/cli/expected/03-validate-broken.txt"
 ~~~`,
 
-	"schema export": `Without ~--kind~ the command ends with exit status 1. So does ~--kind RowFilterPolicy~.`,
+	"schema export": `Without ~--kind~ the output is one schema with a ~oneOf~ over all kinds.`,
 
 	"serve": `Starts the REST API. The MCP server and the admin API start when the server config enables them. ~SIGINT~ and ~SIGTERM~ stop the server. ~SIGHUP~ reloads the policies. A binary built with ~-tags=pure_parser~ does not start.`,
 }

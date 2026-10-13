@@ -34,13 +34,11 @@ func newBudgetShowCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			subject := args[0]
-			mgr, err := budget.New(budget.Options{Path: filepath.Join(stateDir, "budget.db")})
-			if err != nil {
-				return &exitError{Code: 1, Err: err}
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
 			}
-			defer func() { _ = mgr.Close(context.Background()) }()
-
-			u, err := mgr.Usage(cmd.Context(), subject, day)
+			u, err := budget.ReadUsage(ctx, filepath.Join(stateDir, "budget.db"), subject, day)
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}

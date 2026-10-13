@@ -40,7 +40,7 @@ Alice asks for `ssn`. Sluice holds the query.
 --8<-- "examples/approval-workflow/expected/02-webhook.txt"
 ```
 
-The approver opens the accept link.
+The approver opens the accept link and confirms on the page. The step sends the `POST` of that page.
 
 ```bash
 --8<-- "examples/approval-workflow/steps/03-accept.sh"
@@ -74,7 +74,7 @@ She sends it a third time. Sluice holds it again.
 
 ## More examples
 
-The approver opens the reject link of the new approval.
+The approver opens the reject link of the new approval and confirms.
 
 ```bash
 --8<-- "examples/approval-workflow/steps/06-reject.sh"
@@ -96,7 +96,7 @@ Alice reads the state of her approval with her own key.
 
 ## Limits
 
-- `columnsAccessed` sees only column names written in the query. `SELECT *` returns `ssn` without approval.
+- `SELECT *` on the table needs approval too. Sluice cannot tell which columns a star reads.
 - The token in the link is the only check. Anyone who has the link can accept.
 
 ## See also

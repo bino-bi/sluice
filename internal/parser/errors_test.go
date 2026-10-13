@@ -49,8 +49,8 @@ func TestParseErrorFormatting(t *testing.T) {
 }
 
 func TestStmtKindIsReadOnly(t *testing.T) {
-	readOnly := []StmtKind{StmtSelect, StmtExplain, StmtSet, StmtShow, StmtPragma}
-	writing := []StmtKind{StmtInsert, StmtUpdate, StmtDelete, StmtDDL, StmtCopy, StmtAttach, StmtLoad, StmtInstall, StmtUnsupported}
+	readOnly := []StmtKind{StmtSelect, StmtExplain}
+	writing := []StmtKind{StmtSet, StmtShow, StmtPragma, StmtInsert, StmtUpdate, StmtDelete, StmtDDL, StmtCopy, StmtAttach, StmtLoad, StmtInstall, StmtUnsupported}
 
 	for _, k := range readOnly {
 		if !k.IsReadOnly() {

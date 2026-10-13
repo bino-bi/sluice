@@ -12,7 +12,7 @@ The engine decides on each query: allow, deny or reject, and which row filters a
 
 A member of `composite` is `yaml`, `opa` or `rebac`. The member `rebac` checks `RelationshipPolicy` objects against OpenFGA. See [ReBAC](../policies/rebac.md).
 
-Sluice checks these names at start. `sluice config validate` does not check them.
+Sluice checks these names at start, and so does `sluice config validate`. The `opa` engine and an `opa` member need `policies.opa.moduleDir`.
 
 ## Example
 
@@ -66,11 +66,11 @@ What happened: for one table the module abstains (gives no opinion), so the YAML
 | Approval | yes | no | no |
 | Abstain (no opinion) | no allow matches | `abstain: true` | no check fails |
 
-A Rego module that returns no result denies the query. An unknown field in its result fails the request with `ERR_INTERNAL`.
+A Rego module that returns no result denies the query. An unknown field in its result fails the request with `ERR_POLICY_UNAVAILABLE`.
 
 ## How `composite` merges
 
-1. An error in one member fails the request, mostly with `ERR_INTERNAL`. An OpenFGA server that does not answer within the policy's `backend.timeout` gives `ERR_TIMEOUT`.
+1. An error in one member fails the request with `ERR_POLICY_UNAVAILABLE`. An OpenFGA server that does not answer within the policy's `backend.timeout` gives `ERR_TIMEOUT`.
 2. A deny from any member wins.
 3. Then a reject from any member wins.
 4. One member must allow. An allow from Rego is enough, also for a table that no YAML policy allows. If all members abstain, Sluice denies the query.
@@ -80,7 +80,6 @@ A Rego module that returns no result denies the query. An unknown field in its r
 
 - `rebac` works only as a member of `composite`.
 - `opa` needs `policies.opa.moduleDir`. Without it the server does not start.
-- Sluice does not watch `.rego` files. After an edit, send `SIGHUP` or call `POST /admin/reload`.
 - The rewrite cache (`cache.rewrite.enabled`) works only with `yaml`.
 - `sluice policy test` and `sluice policy explain` use the YAML engine only. `GET /admin/subjects/explain` and the MCP tool `explain_access` use the configured engine.
 

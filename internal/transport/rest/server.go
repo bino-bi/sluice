@@ -80,6 +80,10 @@ type Deps struct {
 	GlobalLimiter keyLimiter
 	PerIPLimiter  keyLimiter
 
+	// AuthFailed is called for a request that fails the login, with the
+	// client address and a fixed reason. Nil means no call.
+	AuthFailed func(remoteIP, reason string)
+
 	// Logger receives request/error logs. Nil uses slog.Default.
 	Logger *slog.Logger
 }

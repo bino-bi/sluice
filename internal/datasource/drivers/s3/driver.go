@@ -41,7 +41,6 @@ type driver struct {
 	readonly bool
 
 	bucket       string
-	prefix       string
 	region       string
 	endpoint     string
 	allowedPaths []string
@@ -73,7 +72,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if region == "" {
 		return nil, errors.New("s3: spec.region is required")
 	}
-	prefix, _ := spec.Raw["prefix"].(string)
 	endpoint, _ := spec.Raw["endpoint"].(string)
 	credRef, _ := spec.Raw["credentialsRef"].(string)
 	formatOverride, _ := spec.Raw["format"].(string)
@@ -115,7 +113,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		name:           spec.Name,
 		readonly:       true,
 		bucket:         bucket,
-		prefix:         prefix,
 		region:         region,
 		endpoint:       endpoint,
 		allowedPaths:   allowed,

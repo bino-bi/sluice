@@ -4,12 +4,23 @@ package audit
 
 import (
 	"context"
+	"crypto/hmac"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/internal/version"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+)
+
+// Bounds of the auth-event records of one origin, in records per second
+// and as a burst. A flood of failed logins must not fill the audit log.
+const (
+	AuthEventRate  = 5
+	AuthEventBurst = 20
 )
 
 // DispatcherOptions configures a new Dispatcher.
@@ -38,6 +49,10 @@ type DispatcherOptions struct {
 	// resolver caller provides a secret://-sourced value.
 	GenesisSeed []byte
 
+	// ChainKey, when set, keys the hash of every new record (HashAlgHMAC).
+	// At least MinChainKeyBytes long. Empty keeps the plain chain.
+	ChainKey []byte
+
 	// Origin names the installation (e.g. hostname); embedded in the
 	// genesis record for operator diagnostics.
 	Origin string
@@ -63,6 +78,8 @@ type Dispatcher struct {
 	closed   bool
 	lastHash string
 	metrics  *metricsSet
+
+	authEvents *ratelimit.KeyedLimiter
 }
 
 // NewDispatcher builds a Dispatcher, emits the genesis record if needed,
@@ -92,11 +109,20 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		opts.Clock = time.Now
 	}
 
+	if n := len(opts.ChainKey); n > 0 && n < MinChainKeyBytes {
+		return nil, fmt.Errorf("audit: the chain key has %d bytes, it needs at least %d", n, MinChainKeyBytes)
+	}
+	if err := checkChainKey(opts.Sinks[0], opts.ChainKey); err != nil {
+		return nil, err
+	}
+
 	d := &Dispatcher{
 		opts:    opts,
 		queue:   make(chan *Record, opts.QueueSize),
 		quit:    make(chan struct{}),
 		metrics: metricsShared(),
+		authEvents: ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: AuthEventRate, Burst: AuthEventBurst}, 8, opts.Clock),
 	}
 
 	// Seed the chain: prefer the primary sink's LastHash; otherwise write
@@ -108,7 +134,7 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		}
 		gen := newGenesisRecord(opts)
 		gen.PriorHash = GenesisPriorHash(opts.GenesisSeed)
-		h, err := ComputeHash(gen.PriorHash, gen)
+		h, err := sealRecord(opts.ChainKey, gen.PriorHash, gen)
 		if err != nil {
 			return nil, err
 		}
@@ -135,6 +161,48 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		go d.flushLoop()
 	}
 	return d, nil
+}
+
+// sealRecord computes the hash of a new record, keyed when key is set.
+func sealRecord(key []byte, prior string, r *Record) (string, error) {
+	if len(key) > 0 {
+		r.HashAlg = HashAlgHMAC
+	}
+	return chainHash(key, prior, r)
+}
+
+// checkChainKey refuses a start that would break a keyed chain: the
+// newest record is keyed and the key is missing or another one. A plain
+// chain may get a key: the first keyed record chains onto the last plain
+// hash.
+func checkChainKey(primary Sink, key []byte) error {
+	lr, ok := primary.(interface{ LastRecord() *Record })
+	if !ok {
+		return nil
+	}
+	last := lr.LastRecord()
+	if last == nil {
+		return nil
+	}
+	if last.HashAlg == "" {
+		if len(key) > 0 {
+			// Visible on purpose: this happens once per directory. A
+			// second time means that someone removed the key marks.
+			slog.Default().Warn("audit: the newest record has no key, the chain is keyed from here on")
+		}
+		return nil
+	}
+	if len(key) == 0 {
+		return errors.New("audit: the newest record is keyed, set audit.chainKeyRef to the key of this audit directory")
+	}
+	h, err := chainHash(key, last.PriorHash, last)
+	if err != nil {
+		return err
+	}
+	if !hmac.Equal([]byte(h), []byte(last.Hash)) {
+		return errors.New("audit: the newest record does not verify with audit.chainKeyRef: another key, or the record was changed")
+	}
+	return nil
 }
 
 // primaryLastHash reads LastHash off the first sink that supports it.
@@ -170,6 +238,39 @@ func newGenesisRecord(opts DispatcherOptions) *Record {
 // PriorHash + Hash + Timestamp + SluiceVersion before handing it to
 // sinks. r may be mutated; callers must not reuse the same pointer.
 func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
+	return d.enqueue(ctx, r, true)
+}
+
+// AuthFailure writes an auth-event record for a request that failed the
+// login. origin names the transport, reason is one of the fixed texts of
+// identity.FailureReason. The record holds no part of the credential.
+//
+// A flood of failed logins must not fill the audit log or hold up the
+// query records, and the 401 must not wait for the audit path. So each
+// origin has its own rate limit, and an event is dropped at once when the
+// queue is full or another record holds the dispatcher. A dropped event
+// is counted.
+func (d *Dispatcher) AuthFailure(origin, remoteIP, reason string) {
+	if d.authEvents.Allow(origin) {
+		err := d.enqueue(context.Background(), &Record{
+			EventType: EventAuthEvent,
+			Origin:    origin,
+			RemoteIP:  remoteIP,
+			Decision:  DecisionError,
+			ErrorCode: string(pkgerr.CodeUnauthorized),
+			Message:   reason,
+		}, false)
+		if err == nil {
+			return
+		}
+	}
+	d.metrics.AuthEventsDropped.WithLabelValues(origin).Inc()
+}
+
+// enqueue is Enqueue. With wait false it gives up at once when the queue
+// is full or the lock is held, and counts no drop. A record that waits
+// for the queue holds the lock for up to EnqueueDeadline.
+func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	if r == nil {
 		return fmt.Errorf("audit: nil record")
 	}
@@ -182,7 +283,11 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 	// queue is already full (i.e. the gateway is overloaded), which is
 	// exactly when serialising enqueues is acceptable. Sink I/O still runs
 	// off-lock on the worker goroutine.
-	d.mu.Lock()
+	if wait {
+		d.mu.Lock()
+	} else if !d.mu.TryLock() {
+		return ErrQueueFull
+	}
 	defer d.mu.Unlock()
 	if d.closed {
 		return ErrClosed
@@ -194,7 +299,7 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 		r.SluiceVersion = version.Current().Version
 	}
 	r.PriorHash = d.lastHash
-	h, err := ComputeHash(d.lastHash, r)
+	h, err := sealRecord(d.opts.ChainKey, d.lastHash, r)
 	if err != nil {
 		return err
 	}
@@ -209,6 +314,10 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
 		return nil
 	default:
+	}
+	if !wait {
+		d.pending.Done()
+		return ErrQueueFull
 	}
 
 	// Bounded blocking path.

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/bino-bi/sluice/internal/audit"
 )
 
@@ -127,6 +129,10 @@ func TestFileSink_SizeRotation(t *testing.T) {
 	if err := sink.Flush(context.Background()); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
+	// The rotation is timed.
+	if n := histogramCount(t, "sluice_audit_rotate_duration_seconds"); n == 0 {
+		t.Error("sluice_audit_rotate_duration_seconds has no sample after a rotation")
+	}
 	// Expect two files.
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 2 {
@@ -224,7 +230,7 @@ func TestFileSink_SameDaySizeRotationOrdering(t *testing.T) {
 	}
 
 	// Verify must chain across the rotation, not falsely report tampering.
-	rep, verr := audit.Verify(dir, anchor)
+	rep, verr := audit.Verify(dir, anchor, nil)
 	if verr != nil {
 		t.Fatalf("verify falsely reported a broken chain across same-day rotation: %v", verr)
 	}
@@ -279,4 +285,24 @@ func fileNames(entries []os.DirEntry) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// histogramCount returns the sample count of a histogram in the default
+// registry, over all its label values.
+func histogramCount(t *testing.T, name string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	var n uint64
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			n += m.GetHistogram().GetSampleCount()
+		}
+	}
+	return n
 }

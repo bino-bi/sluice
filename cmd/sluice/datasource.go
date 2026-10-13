@@ -27,12 +27,10 @@ func newDataSourceCmd() *cobra.Command {
 
 // dataSourceCheck is the CLI-facing shape we emit as JSON.
 type dataSourceCheck struct {
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	FactoryKnown bool     `json:"factory_known"`
-	Schemas      []string `json:"schemas,omitempty"`
-	Tables       []string `json:"tables,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	FactoryKnown bool   `json:"factory_known"`
+	Error        string `json:"error,omitempty"`
 }
 
 func newDataSourceCheckCmd() *cobra.Command {
@@ -49,7 +47,6 @@ func newDataSourceCheckCmd() *cobra.Command {
 fallback) and reports, for each one:
 
   - whether the declared spec.type has a factory registered
-  - the schema + table filters attached to the source
   - any structural failures (unknown type, missing fields)
 
 Attaching each catalog to a live DuckDB and issuing a health probe is the
@@ -96,10 +93,8 @@ Exit codes:
 					continue
 				}
 				c := dataSourceCheck{
-					Name:    ds.Metadata.Name,
-					Type:    string(ds.Spec.Type),
-					Schemas: ds.Spec.Schemas,
-					Tables:  ds.Spec.Tables,
+					Name: ds.Metadata.Name,
+					Type: string(ds.Spec.Type),
 				}
 				if _, ok := pkgds.Lookup(string(ds.Spec.Type)); ok {
 					c.FactoryKnown = true
@@ -124,16 +119,14 @@ Exit codes:
 				}
 			} else {
 				w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-				_, _ = fmt.Fprintln(w, "NAME\tTYPE\tFACTORY\tSCHEMAS\tTABLES\tERROR")
-				_, _ = fmt.Fprintln(w, "----\t----\t-------\t-------\t------\t-----")
+				_, _ = fmt.Fprintln(w, "NAME\tTYPE\tFACTORY\tERROR")
+				_, _ = fmt.Fprintln(w, "----\t----\t-------\t-----")
 				for _, c := range reports {
 					factory := "yes"
 					if !c.FactoryKnown {
 						factory = "NO"
 					}
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\n",
-						c.Name, c.Type, factory, len(c.Schemas), len(c.Tables), c.Error,
-					)
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.Name, c.Type, factory, c.Error)
 				}
 				_ = w.Flush()
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n%d checked, %d failed\n", len(reports), failed)

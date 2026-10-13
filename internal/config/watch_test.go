@@ -80,6 +80,48 @@ func TestWatcher_ReloadOnChange(t *testing.T) {
 	}
 }
 
+// A changed .rego file in the module directory triggers a reload, which
+// is what makes the policy engine load the modules again.
+func TestWatcher_ReloadOnRegoChange(t *testing.T) {
+	t.Parallel()
+	dir, moduleDir := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "allow.yaml"), []byte(minimalAllowYAML), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reg := config.NewRegistry()
+	var published atomic.Int64
+	reg.Subscribe(func(_, cur *config.Snapshot) {
+		if cur != nil {
+			published.Add(1)
+		}
+	})
+	w, err := config.NewWatcher(config.WatchOptions{
+		Dir:       dir,
+		ModuleDir: moduleDir,
+		Registry:  reg,
+		Debounce:  20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new watcher: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	w.Start(ctx)
+
+	if err := os.WriteFile(filepath.Join(moduleDir, "main.rego"), []byte("package sluice\n"), 0o600); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	deadline := time.After(2 * time.Second)
+	for published.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("a .rego change did not trigger a reload")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // TestWatcher_ManualReload is the admin /admin/reload + SIGHUP hot path:
 // no filesystem change, just a direct Reload call.
 func TestWatcher_ManualReload(t *testing.T) {

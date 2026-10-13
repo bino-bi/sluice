@@ -80,7 +80,7 @@ Exit status 3 means an invalid policy. Without `--strict`, Sluice ignores unknow
 --8<-- "examples/policies-basics/expected/03-explain.txt"
 ```
 
-The decision is `allow`. The deny shows only under `shadow`, here and in the [admin API](../reference/admin-api.md).
+The decision is `allow`. The deny shows under `shadow`, with `would: deny`. The [audit record](../security/audit.md) of each query lists it under `policies_shadow`, so you can see what the policy would stop before you enforce it.
 
 ## Loading
 

@@ -68,6 +68,10 @@ type Deps struct {
 	Logger    *slog.Logger
 	Reloader  Reloader
 	Approvals PendingLister
+
+	// AuthFailed is called for a request with a missing or wrong token,
+	// with the client address and a fixed reason. Nil means no call.
+	AuthFailed func(remoteIP, reason string)
 }
 
 // PendingLister returns the currently-pending approval requests. A nil

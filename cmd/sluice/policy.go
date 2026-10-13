@@ -17,6 +17,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // newPolicyCmd groups `sluice policy …` subcommands.
@@ -177,12 +178,14 @@ Exit codes:
 				tables = append(tables, ref)
 			}
 
+			// Without --sql the question is about a read of the table.
 			result, err := engine.Explain(ctx, policy.Input{
 				User:   uctx,
 				AST:    ast,
 				Shape:  shape,
 				Tables: tables,
 				Now:    time.Now(),
+				Action: apitypes.ActionSelect,
 			})
 			if err != nil {
 				return &exitError{Code: 1, Err: err}

@@ -75,6 +75,17 @@ type runtimeDeps struct {
 	admin        *admin.Server
 	watcher      *config.Watcher
 	telShutdown  func(context.Context) error
+
+	// applyPolicies makes the policies active that the watcher prepared
+	// for the snapshot it is about to publish. The watcher holds its
+	// reload lock from Validate to the end of Publish.
+	applyPolicies func()
+
+	// globalLimiter and perIPLimiter are the buckets ahead of the login.
+	// REST and MCP over HTTP share them, so a client has one budget for
+	// both listeners. Nil means no limit.
+	globalLimiter *ratelimit.KeyedLimiter
+	perIPLimiter  *ratelimit.KeyedLimiter
 }
 
 // buildRuntime wires every layer in the correct order. The returned deps
@@ -196,6 +207,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.sourceReg.SetPool(ctx, datasource.NewSQLPool(deps.exec.DB()))
 
 	// 9. Schema cache — wired to the pool via a narrow ConnProvider.
+	schema.RegisterMetrics()
 	deps.schemaCache = schema.New(schema.Options{
 		Loader: schema.NewLoader(deps.sourceReg, deps.exec.DB()),
 		Logger: deps.log,
@@ -204,6 +216,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	// 10. Policy engine(s) + snapshot apply. The YAML engine always exists
 	// (admin snapshot introspection + composite member); the engine passed
 	// to the queryservice may be a composite.
+	policy.RegisterMetrics()
 	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.resolver, deps.log)
 	if err != nil {
 		return nil, fmt.Errorf("policy engine: %w", err)
@@ -237,10 +250,23 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if err != nil {
 		return nil, fmt.Errorf("audit genesis: %w", err)
 	}
+	var chainKey []byte
+	if ref := scfg.Audit.ChainKeyRef; ref != "" {
+		key, err := deps.resolver.ResolveString(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("audit.chainKeyRef: %w", err)
+		}
+		// An empty secret would silently mean a chain without a key.
+		if key == "" {
+			return nil, fmt.Errorf("audit.chainKeyRef: the secret %s is empty", ref)
+		}
+		chainKey = []byte(key)
+	}
 	host, _ := os.Hostname()
 	deps.auditDisp, err = audit.NewDispatcher(audit.DispatcherOptions{
 		Sinks:       deps.auditSinks,
 		GenesisSeed: genesis,
+		ChainKey:    chainKey,
 		Origin:      host,
 		Logger:      deps.log,
 	})
@@ -307,9 +333,18 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Keys:            secrets.NewKeyStore(deps.resolver),
 		Salts:           secrets.NewSaltStore(deps.resolver),
 		Catalogs:        deps.sourceReg.Catalogs,
+		SourceDown: func(catalog string) bool {
+			for _, st := range deps.sourceReg.Statuses() {
+				if strings.EqualFold(st.Name, catalog) {
+					return !st.Healthy
+				}
+			}
+			return false
+		},
 		Limits: queryservice.Limits{
 			DefaultMaxRows:         scfg.Limits.MaxRows,
 			MaxRowsCeiling:         scfg.Limits.MaxRowsCeiling,
+			MaxResultBytes:         scfg.Limits.MaxResultBytes,
 			DefaultTimeout:         scfg.Limits.QueryTimeout,
 			MaxTimeout:             scfg.Limits.MaxQueryTimeout,
 			MaxSQLBytes:            scfg.Limits.MaxSQLBytes,
@@ -348,17 +383,21 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Registry:   deps.sourceReg,
 		Approvals:  approvalGateway(deps.approvals),
 		Logger:     deps.log,
+		AuthFailed: deps.authFailed("rest"),
 	}
-	// Transport-level buckets sit ahead of identity on /v1/query; zero RPS
-	// disables them (limits.* is restart-only, like the other limits).
+	// Transport-level buckets sit ahead of identity on /v1/query and on
+	// MCP over HTTP; zero RPS disables them (limits.* is restart-only,
+	// like the other limits).
 	if scfg.Limits.GlobalRPS > 0 {
-		restDeps.GlobalLimiter = ratelimit.NewKeyed(
+		deps.globalLimiter = ratelimit.NewKeyed(
 			ratelimit.Spec{RPS: scfg.Limits.GlobalRPS, Burst: scfg.Limits.GlobalBurst}, 1, nil)
+		restDeps.GlobalLimiter = deps.globalLimiter
 	}
 	if scfg.Limits.PerIPRPS > 0 {
-		restDeps.PerIPLimiter = ratelimit.NewKeyed(
+		deps.perIPLimiter = ratelimit.NewKeyed(
 			ratelimit.Spec{RPS: scfg.Limits.PerIPRPS, Burst: scfg.Limits.PerIPBurst},
 			scfg.Limits.PerIPMaxBuckets, nil)
+		restDeps.PerIPLimiter = deps.perIPLimiter
 	}
 	deps.rest = rest.New(restCfg, restDeps)
 
@@ -367,20 +406,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
 		}
-		deps.mcp, err = mcp.New(mcp.Config{
-			Enabled:        true,
-			Transport:      mcp.TransportMode(scfg.MCP.Transport),
-			HTTPListen:     scfg.MCP.Listen,
-			SessionIdleMax: scfg.MCP.SessionIdleMax,
-			AllowAnonymous: scfg.MCP.AllowAnonymous,
-			Tracing:        scfg.Tracing.Enabled,
-		}, mcp.Deps{
-			Service:    deps.service,
-			Identifier: deps.identifier,
-			Catalogs:   registryCatalogLister{r: deps.sourceReg},
-			Logger:     deps.log,
-			PinnedUser: pinned,
-		})
+		deps.mcp, err = newMCPServer(deps, mcp.TransportMode(scfg.MCP.Transport), scfg.MCP.AllowAnonymous, pinned)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
 		}
@@ -392,16 +418,23 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	//     (Start, in serve.go); the synchronous Reload path backing SIGHUP
 	//     and POST /admin/reload works without it.
 	deps.watcher, err = config.NewWatcher(config.WatchOptions{
-		Dir:      dir,
-		Registry: deps.registry,
-		Logger:   deps.log,
-		// Dry-run compile before publish: a snapshot the policy
-		// engine would reject must not reach the other subscribers
-		// (bindings, limits, budgets) or the gateway ends up
-		// half-applied.
+		Dir:       dir,
+		ModuleDir: scfg.Policies.OPA.ModuleDir,
+		Registry:  deps.registry,
+		Logger:    deps.log,
+		// Compile before publish, for every engine: a snapshot or a Rego
+		// module that an engine refuses must not reach the other
+		// subscribers (bindings, limits, budgets) or the gateway ends up
+		// half-applied. applyReload makes the prepared policies active.
 		Validate: func(ctx context.Context, snap *config.Snapshot) error {
-			_, err := policy.Compile(ctx, snap)
-			return err
+			// A ReBAC tokenRef is read while the engine prepares.
+			deps.resolver.Invalidate()
+			apply, err := deps.policyEngine.Prepare(ctx, snap)
+			if err != nil {
+				return err
+			}
+			deps.applyPolicies = apply
+			return nil
 		},
 	})
 	if err != nil {
@@ -415,10 +448,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	})
 
 	if scfg.Admin.Enabled {
+		token, err := resolveAdminToken(ctx, deps.resolver, scfg.Admin.Token)
+		if err != nil {
+			return nil, err
+		}
 		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
-			Token:   scfg.Admin.Token,
+			Token:   token,
 		}
 		if t := scfg.Admin.TLS; t != nil {
 			adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
@@ -432,10 +469,20 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Logger:    deps.log,
 			Reloader:  reloaderFromWatcher(deps.watcher),
 			Audit:     auditTailer(deps.auditFile),
+
+			AuthFailed: deps.authFailed("admin"),
 		})
 	}
 
 	return deps, nil
+}
+
+// authFailed returns the hook a transport calls for a request that fails
+// the login. It writes an auth-event audit record with origin.
+func (d *runtimeDeps) authFailed(origin string) func(remoteIP, reason string) {
+	return func(remoteIP, reason string) {
+		d.auditDisp.AuthFailure(origin, remoteIP, reason)
+	}
 }
 
 // applyReload applies a published snapshot to every hot-swappable
@@ -448,7 +495,12 @@ func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
 		// URIs return the new value on resolve.
 		d.resolver.Invalidate()
 	}
-	if d.policyEngine != nil {
+	// The watcher prepared the policies of this snapshot in Validate. A
+	// snapshot that reaches here from another publisher is compiled now.
+	if apply := d.applyPolicies; apply != nil {
+		d.applyPolicies = nil
+		apply()
+	} else if d.policyEngine != nil {
 		if err := d.policyEngine.ApplySnapshot(ctx, cur); err != nil {
 			d.log.Warn("reload: policy engine rejected snapshot",
 				slog.String("error", err.Error()))
@@ -593,10 +645,28 @@ func (l registryCatalogLister) List(_ context.Context) []queryservice.CatalogInf
 // secret for multi-instance fleets.
 func resolveGenesisSeed(ctx context.Context, r *secrets.Resolver, file *config.FileSinkConfig) ([]byte, error) {
 	if file != nil && file.Genesis != "" {
-		return r.Resolve(ctx, file.Genesis)
+		seed, err := r.ResolveString(ctx, file.Genesis)
+		return []byte(seed), err
 	}
 	host, _ := os.Hostname()
 	return []byte("sluice-genesis:" + host + ":" + version.Current().CommitFull), nil
+}
+
+// resolveAdminToken returns the admin token. A value that starts with
+// "secret://" is a reference, anything else is the token itself. An empty
+// secret is an error: an empty token turns the check of the admin API off.
+func resolveAdminToken(ctx context.Context, r *secrets.Resolver, token string) (string, error) {
+	if !secrets.IsRef(token) {
+		return token, nil
+	}
+	resolved, err := r.ResolveString(ctx, token)
+	if err != nil {
+		return "", fmt.Errorf("resolve admin.token: %w", err)
+	}
+	if resolved == "" {
+		return "", fmt.Errorf("admin.token: the secret is empty")
+	}
+	return resolved, nil
 }
 
 // buildIdentity assembles the identity.Composite from server + policy
@@ -643,10 +713,14 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 	children := []identity.Identifier{jwtID}
 
 	if scfg.Identity.APIKeyPepper != "" {
-		pepper, err := r.Resolve(ctx, scfg.Identity.APIKeyPepper)
+		pepperText, err := r.ResolveString(ctx, scfg.Identity.APIKeyPepper)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("resolve apiKeyPepper: %w", err)
 		}
+		if pepperText == "" {
+			return identityStack{}, fmt.Errorf("identity.apiKeyPepper: the secret is empty")
+		}
+		pepper := []byte(pepperText)
 		bindings, err := buildAPIKeyBindings(ctx, r, snap, log)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("api-key bindings: %w", err)

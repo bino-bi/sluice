@@ -4,7 +4,8 @@ package policy
 
 import (
 	"errors"
-	"net"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/identity"
@@ -111,15 +112,15 @@ func TestTemplateRender_Subject(t *testing.T) {
 }
 
 func TestTemplateRender_Request(t *testing.T) {
-	facts := &RequestFacts{
-		RemoteIP:  net.ParseIP("10.0.0.7"),
-		UserAgent: "sluice-test/1.0",
-		Headers:   map[string]string{"X-Tenant": "t-1"},
-	}
+	facts := NewRequestFacts(http.Header{
+		"User-Agent": {"sluice-test/1.0"},
+		"X-Tenant":   {"t-1"},
+	}, "10.0.0.7")
 	for input, want := range map[string]any{
 		"{{ request.remote_ip }}":        "10.0.0.7",
 		"{{ request.user_agent }}":       "sluice-test/1.0",
 		"{{ request.headers.X-Tenant }}": "t-1",
+		"{{ request.headers.x-tenant }}": "t-1",
 	} {
 		tpl, err := CompileTemplate(input)
 		if err != nil {
@@ -142,5 +143,50 @@ func TestTemplateRender_RootUnknown(t *testing.T) {
 	}
 	if _, err := tpl.Render(&identity.UserCtx{}, nil); !errors.Is(err, ErrTemplateVarMissing) {
 		t.Errorf("got %v, want ErrTemplateVarMissing", err)
+	}
+}
+
+// The facts never hold a credential of the client, and header names are in
+// lower case.
+func TestNewRequestFacts(t *testing.T) {
+	f := NewRequestFacts(http.Header{
+		"Authorization":       {"Bearer secret"},
+		"Proxy-Authorization": {"Basic secret"},
+		"X-Api-Key":           {"k.secret"},
+		"X-Approval-Token":    {"secret"},
+		"Cookie":              {"session=secret"},
+		"X-Region":            {"eu", "us"},
+		"User-Agent":          {"curl/8"},
+	}, "2001:db8::1")
+	for name, value := range f.Headers {
+		if strings.Contains(value, "secret") {
+			t.Errorf("header %q kept a credential: %q", name, value)
+		}
+	}
+	if got := f.Headers["x-region"]; got != "eu, us" {
+		t.Errorf(`headers["x-region"] = %q, want "eu, us"`, got)
+	}
+	if f.UserAgent != "curl/8" || f.RemoteIP.String() != "2001:db8::1" {
+		t.Errorf("user agent %q, remote ip %v", f.UserAgent, f.RemoteIP)
+	}
+	if f := NewRequestFacts(http.Header{}, ""); f.RemoteIP != nil {
+		t.Errorf("empty address gave %v", f.RemoteIP)
+	}
+}
+
+// An empty issuer, email or user agent is a value the subject lacks. As a
+// bound text it would match every row in StartsWith, EndsWith, Contains
+// and Matches.
+func TestTemplateRender_EmptyValueIsMissing(t *testing.T) {
+	user := &identity.UserCtx{Subject: "key-1"}
+	facts := NewRequestFacts(http.Header{}, "10.0.0.7")
+	for _, input := range []string{"{{ subject.email }}", "{{ subject.issuer }}", "{{ request.user_agent }}"} {
+		tpl, err := CompileTemplate(input)
+		if err != nil {
+			t.Fatalf("compile %q: %v", input, err)
+		}
+		if got, err := tpl.Render(user, facts); !errors.Is(err, ErrTemplateVarMissing) {
+			t.Errorf("%s: got %v, err %v, want ErrTemplateVarMissing", input, got, err)
+		}
 	}
 }

@@ -4,6 +4,7 @@ package opaengine_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -139,5 +140,33 @@ main := {"abstain": true}
 	}
 	if dec.Outcome != policy.OutcomeDeny || !dec.Abstained {
 		t.Errorf("abstain: outcome=%s abstained=%v", dec.Outcome, dec.Abstained)
+	}
+}
+
+// A module that does not compile is refused as an invalid snapshot, and the
+// modules that were active before keep deciding.
+func TestOPA_BrokenModuleKeepsPrevious(t *testing.T) {
+	dir := writeModule(t, `
+package sluice
+import rego.v1
+main := {"allow": true}
+`)
+	e, err := opaengine.New(opaengine.Options{ModuleDir: dir, Query: "data.sluice.main"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := e.ApplySnapshot(context.Background(), nil); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "policy.rego"), []byte("package sluice\nmain := {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	apply, err := e.Prepare(context.Background(), nil)
+	if !errors.Is(err, policy.ErrSnapshotInvalid) || apply != nil {
+		t.Fatalf("Prepare with a broken module: apply set %v, err %v, want ErrSnapshotInvalid", apply != nil, err)
+	}
+	dec, err := e.Evaluate(context.Background(), inputFor("alice", nil, ordersTable))
+	if err != nil || dec.Outcome != policy.OutcomeAllow {
+		t.Fatalf("after the refused reload: decision %+v, err %v, want the old allow", dec, err)
 	}
 }

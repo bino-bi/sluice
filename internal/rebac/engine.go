@@ -3,6 +3,7 @@
 package rebac
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -80,18 +81,21 @@ func New(opts Options) *Engine {
 // Name implements policy.PolicyEngine.
 func (e *Engine) Name() string { return "rebac" }
 
-// ApplySnapshot compiles every RelationshipPolicy in the snapshot.
-func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
+// Prepare compiles every RelationshipPolicy in the snapshot. A policy that
+// does not compile, or a token that cannot be read, is a
+// policy.ErrSnapshotInvalid, and the old policies stay active.
+func (e *Engine) Prepare(ctx context.Context, src *config.Snapshot) (func(), error) {
 	if src == nil {
-		empty := []*compiledRel{}
-		e.compiled.Store(&empty)
-		return nil
+		return func() {
+			empty := []*compiledRel{}
+			e.compiled.Store(&empty)
+		}, nil
 	}
 	out := make([]*compiledRel, 0, len(src.RelationshipPolicies))
 	for _, rp := range src.RelationshipPolicies {
 		m, err := policy.CompileSelectorSpec(rp.Spec.Match)
 		if err != nil {
-			return fmt.Errorf("rebac: %s: spec.match: %w", rp.Metadata.Name, err)
+			return nil, fmt.Errorf("%w: rebac: %s: spec.match: %w", policy.ErrSnapshotInvalid, rp.Metadata.Name, err)
 		}
 		cr := &compiledRel{
 			name:        rp.Metadata.Name,
@@ -102,7 +106,7 @@ func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error 
 		if rp.Spec.Exclude != nil {
 			ex, err := policy.CompileSelectorSpec(*rp.Spec.Exclude)
 			if err != nil {
-				return fmt.Errorf("rebac: %s: spec.exclude: %w", rp.Metadata.Name, err)
+				return nil, fmt.Errorf("%w: rebac: %s: spec.exclude: %w", policy.ErrSnapshotInvalid, rp.Metadata.Name, err)
 			}
 			cr.exclude = &ex
 		}
@@ -110,14 +114,28 @@ func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error 
 		if rp.Spec.Backend.TokenRef != "" && e.opts.Secrets != nil {
 			token, err = e.opts.Secrets.Resolve(ctx, rp.Spec.Backend.TokenRef)
 			if err != nil {
-				return fmt.Errorf("rebac: %s: resolve tokenRef: %w", rp.Metadata.Name, err)
+				return nil, fmt.Errorf("%w: rebac: %s: resolve tokenRef: %w", policy.ErrSnapshotInvalid, rp.Metadata.Name, err)
 			}
+			// The token goes into a header. A final newline of a secret
+			// file would make every request fail.
+			token = bytes.TrimRight(token, " \t\r\n")
 		}
 		cr.checker = e.opts.NewChecker(rp.Spec.Backend, token)
 		out = append(out, cr)
 	}
-	e.compiled.Store(&out)
-	e.cache.Purge()
+	return func() {
+		e.compiled.Store(&out)
+		e.cache.Purge()
+	}, nil
+}
+
+// ApplySnapshot implements policy.PolicyEngine.
+func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
+	apply, err := e.Prepare(ctx, src)
+	if err != nil {
+		return err
+	}
+	apply()
 	return nil
 }
 
@@ -152,7 +170,9 @@ func (e *Engine) Evaluate(ctx context.Context, in policy.Input) (*policy.Decisio
 			}
 			if !ok {
 				if shadow {
-					dec.Shadow = append(dec.Shadow, ap)
+					failed := ap
+					failed.Would = "deny"
+					dec.Shadow = append(dec.Shadow, failed)
 					continue
 				}
 				return &policy.Decision{

@@ -4,6 +4,8 @@ package identity_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,4 +127,55 @@ func (c *ctxCheckingStub) Identify(ctx context.Context, _ *http.Request) (*ident
 		c.seenParent = true
 	}
 	return c.uc, nil
+}
+
+func TestFailureReason(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{identity.ErrNoCredential, "no credential"},
+		{identity.ErrExpiredCredential, "expired credential"},
+		{fmt.Errorf("%w: token is expired", identity.ErrJWTExpired), "expired credential"},
+		{identity.ErrInvalidCredential, "invalid credential"},
+		// The text of an error can name a key id or an issuer.
+		{fmt.Errorf("%w: key id svc-7 unknown", identity.ErrInvalidCredential), "invalid credential"},
+		{errors.New("anything else"), "invalid credential"},
+	} {
+		if got := identity.FailureReason(tc.err); got != tc.want {
+			t.Errorf("FailureReason(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestMiddlewareOnFailure(t *testing.T) {
+	type call struct{ ip, reason string }
+	run := func(id identity.Identifier, anon bool) (int, []call) {
+		var calls []call
+		mw := identity.Middleware(identity.MiddlewareOptions{
+			Identifier:     id,
+			AllowAnonymous: anon,
+			OnFailure:      func(ip, reason string) { calls = append(calls, call{ip, reason}) },
+		})
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = "203.0.113.7:51234"
+		mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, r)
+		return w.Code, calls
+	}
+
+	code, calls := run(&stubIdentifier{name: "x", err: identity.ErrInvalidCredential}, false)
+	if code != http.StatusUnauthorized || len(calls) != 1 || calls[0] != (call{"203.0.113.7", "invalid credential"}) {
+		t.Errorf("invalid credential: code %d, calls %v", code, calls)
+	}
+	if _, calls := run(&stubIdentifier{name: "x", err: identity.ErrNoCredential}, false); len(calls) != 1 || calls[0].reason != "no credential" {
+		t.Errorf("no credential: calls %v", calls)
+	}
+	// An anonymous request that is let through is no failed login.
+	if code, calls := run(&stubIdentifier{name: "x", err: identity.ErrNoCredential}, true); code != http.StatusOK || len(calls) != 0 {
+		t.Errorf("anonymous allowed: code %d, calls %v", code, calls)
+	}
+	if _, calls := run(&stubIdentifier{name: "x", uc: &identity.UserCtx{Subject: "u"}}, false); len(calls) != 0 {
+		t.Errorf("success: calls %v", calls)
+	}
 }

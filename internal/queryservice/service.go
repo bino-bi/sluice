@@ -79,6 +79,11 @@ type Options struct {
 	// refuses a two-part table name that DuckDB would read as
 	// catalog.table. Nil skips the check.
 	Catalogs func() []string
+
+	// SourceDown reports whether the last health test of a data source
+	// failed. The service asks it for the catalogs of a query that failed
+	// in DuckDB without a known cause. Nil skips the check.
+	SourceDown func(catalog string) bool
 }
 
 // Limits controls request-level bounds the service enforces before it
@@ -92,6 +97,10 @@ type Limits struct {
 	// default, no caller (including an untrusted agent) can request more
 	// than the default row count.
 	MaxRowsCeiling int64
+
+	// MaxResultBytes caps the size of a result, see executor.Request.
+	// Zero means no cap.
+	MaxResultBytes int64
 
 	// DefaultTimeout is applied when QueryRequest.Timeout is zero.
 	DefaultTimeout time.Duration

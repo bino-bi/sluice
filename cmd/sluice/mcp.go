@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +19,8 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
+	"github.com/bino-bi/sluice/internal/transport/tlsutil"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // newMCPCmd returns the `sluice mcp` subcommand: a Model Context Protocol
@@ -59,10 +60,18 @@ Authentication:
   HTTP Authorization / X-Api-Key header instead, and each request is
   authenticated (fail-closed) rather than pinned.
 
+Approvals:
+  This command serves no approval link, so it does not start when an
+  ApprovalPolicy is loaded. Run "sluice serve" with mcp.enabled instead.
+
 Exit codes:
   0  clean shutdown
   1  startup / auth failure`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode, err := mcp.ParseTransport(transport)
+			if err != nil {
+				return &exitError{Code: 1, Err: err}
+			}
 			parent := cmd.Context()
 			if parent == nil {
 				parent = context.Background()
@@ -80,7 +89,11 @@ Exit codes:
 				deps.Close(shutdownCtx)
 			}()
 
-			mode := mcp.TransportMode(transport)
+			// An approver decides over the REST API, which this command
+			// does not start. A held query could never be released.
+			if len(deps.registry.Current().ByKind[apitypes.KindApprovalPolicy]) > 0 {
+				return &exitError{Code: 1, Err: errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")}
+			}
 
 			// For stdio, resolve the static credential into a pinned identity
 			// now. For HTTP, the auth middleware runs per request instead.
@@ -105,19 +118,7 @@ Exit codes:
 				}
 			}
 
-			srv, err := mcp.New(mcp.Config{
-				Enabled:        true,
-				Transport:      mode,
-				HTTPListen:     deps.server.MCP.Listen,
-				SessionIdleMax: deps.server.MCP.SessionIdleMax,
-				AllowAnonymous: allowAnon,
-			}, mcp.Deps{
-				Service:    deps.service,
-				Identifier: deps.identifier,
-				Catalogs:   registryCatalogLister{r: deps.sourceReg},
-				Logger:     deps.log,
-				PinnedUser: pinned,
-			})
+			srv, err := newMCPServer(deps, mode, allowAnon, pinned)
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}
@@ -135,6 +136,41 @@ Exit codes:
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "static API key to authenticate as (stdio)")
 	cmd.Flags().BoolVar(&allowAnon, "allow-anonymous", false, "run without a credential (queries default-denied unless a policy allows the anonymous subject)")
 	return cmd
+}
+
+// newMCPServer builds the MCP server of `sluice serve` and of `sluice mcp`.
+// The transport and the anonymous switch come from the server config or
+// from the flags of `sluice mcp`, the rest from the server config.
+func newMCPServer(deps *runtimeDeps, transport mcp.TransportMode, allowAnon bool, pinned *identity.UserCtx) (*mcp.Server, error) {
+	scfg := deps.server
+	cfg := mcp.Config{
+		Enabled:        true,
+		Transport:      transport,
+		HTTPListen:     scfg.MCP.Listen,
+		SessionIdleMax: scfg.MCP.SessionIdleMax,
+		AllowAnonymous: allowAnon,
+		Tracing:        scfg.Tracing.Enabled,
+	}
+	// Validate guarantees cert+key are both set when the block exists.
+	if t := scfg.MCP.TLS; t != nil {
+		cfg.TLS = &tlsutil.Config{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
+	}
+	mdeps := mcp.Deps{
+		Service:    deps.service,
+		Identifier: deps.identifier,
+		Catalogs:   registryCatalogLister{r: deps.sourceReg},
+		Logger:     deps.log,
+		PinnedUser: pinned,
+		AuthFailed: deps.authFailed("mcp"),
+	}
+	// A nil pointer in the interface field would not read as "no limit".
+	if deps.globalLimiter != nil {
+		mdeps.GlobalLimiter = deps.globalLimiter
+	}
+	if deps.perIPLimiter != nil {
+		mdeps.PerIPLimiter = deps.perIPLimiter
+	}
+	return mcp.New(cfg, mdeps)
 }
 
 // resolveMCPPinnedUser resolves mcp.tokenRef / mcp.apiKeyRef into the
@@ -176,11 +212,11 @@ func resolveMCPCredential(ctx context.Context, r *secrets.Resolver, field, ref s
 	if ref == "" {
 		return "", nil
 	}
-	sec, err := r.Resolve(ctx, ref)
+	sec, err := r.ResolveString(ctx, ref)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", field, err)
 	}
-	return strings.TrimRight(string(sec), "\r\n"), nil
+	return sec, nil
 }
 
 // resolveStaticIdentity verifies a static credential through the composite

@@ -57,32 +57,27 @@ The answer holds the rows as text and as `structuredContent`.
 --8<-- "examples/mcp-tools/server.yaml:mcp"
 ```
 
-`sluice mcp --transport streamable_http` listens on `mcp.listen` too. Stdio without a credential does not start. With `--allow-anonymous` or `mcp.allowAnonymous`, a client without a credential runs as an anonymous subject. Default deny still applies.
+`mcp.listen` is required for this transport. Set `mcp.tls` to serve HTTPS, see [Deployment](../operations/deployment.md). `limits.globalRps` and `limits.perIpRps` count REST queries and MCP requests together, before login. A request over the limit gets 429 `ERR_RATE_LIMITED`. The limits count HTTP requests: one request can carry several tool calls.
+
+`sluice mcp --transport streamable_http` listens on `mcp.listen` too. `sluice mcp` does not start when an `ApprovalPolicy` is loaded, see [Approvals](../policies/approvals.md). Stdio without a credential does not start. With `--allow-anonymous` or `mcp.allowAnonymous`, a client without a credential runs as an anonymous subject. Default deny still applies.
+
+Over HTTP, Sluice keeps no session state. A tool call runs as the subject of its own request. The value of the `Mcp-Session-Id` header has no effect on a tool call. A `GET` that asks for an event stream gets 405. A `notifications/cancelled` message has no effect. Close the request to stop a running call.
 
 ## Which tables an agent sees
 
-`list_tables` and `list_accessible_tables` show a table only when both are true:
-
-- A policy allows the subject to read the table.
-- Sluice has loaded the schema of its data source. `describe_table` on one table that the subject can read does that. A query does it only for a table with a column mask.
-
-A fresh server lists nothing. A reload empties the list again. So call `describe_table` first:
+`list_tables` and `list_accessible_tables` show every table that a policy allows the subject to read. The data source has a third table, `customers`, that no policy allows:
 
 ```bash
---8<-- "examples/mcp-tools/steps/06-describe-table.sh"
-```
-
-Then `list_tables` shows every table that the subject can read:
-
-```bash
---8<-- "examples/mcp-tools/steps/07-list-tables-again.sh"
+--8<-- "examples/mcp-tools/steps/03-list-tables.sh"
 ```
 
 ```text
---8<-- "examples/mcp-tools/expected/07-list-tables-again.txt"
+--8<-- "examples/mcp-tools/expected/03-list-tables.txt"
 ```
 
-`describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its loaded tables. A catalog without loaded tables stays visible.
+Sluice reads the tables of a data source on the first call, and again after a reload. A data source that is down is left out. Sluice keeps the columns of at most 10 000 tables. With more tables, the lists are not complete.
+
+`describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its tables. A catalog that is empty or down stays visible.
 
 ## Audit records
 

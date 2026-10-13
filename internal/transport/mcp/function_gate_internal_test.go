@@ -5,6 +5,8 @@ package mcp
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -74,5 +76,59 @@ func TestToolExecuteSQL_FunctionGateRejects(t *testing.T) {
 	}
 	if !strings.Contains(text, "ACL_REJECTED") || !strings.Contains(text, "query_table") {
 		t.Fatalf("tool error text = %q, want ACL_REJECTED naming query_table", text)
+	}
+}
+
+// capturePolicy keeps the input of the last evaluation.
+type capturePolicy struct{ in policy.Input }
+
+func (p *capturePolicy) Evaluate(_ context.Context, in policy.Input) (*policy.Decision, error) {
+	p.in = in
+	return &policy.Decision{Outcome: policy.OutcomeAllow}, nil
+}
+
+func (p *capturePolicy) Explain(context.Context, policy.Input) (*pkgapi.ExplainResult, error) {
+	return &pkgapi.ExplainResult{}, nil
+}
+
+// Over HTTP the policy sees the headers of the tool call as request.*, and
+// the address of its subject. Stdio has no request, so it sees none.
+func TestToolExecuteSQL_FillsRequestFacts(t *testing.T) {
+	t.Parallel()
+	pol := &capturePolicy{}
+	// The executor fails after the policy ran. Only the policy input counts.
+	s := &Server{lg: slog.New(slog.DiscardHandler), deps: Deps{Service: queryservice.New(queryservice.Options{
+		Parser:   pgquery.New(parser.Options{}),
+		Policy:   pol,
+		Rewriter: passRewriter{},
+		Executor: unreachableExecutor{},
+		Audit:    discardAudit{},
+	})}}
+	// No subject: the address must not depend on one (mcp.allowAnonymous).
+	ctx := context.WithValue(context.Background(), remoteIPKey{}, "10.1.2.3")
+	req := &sdkmcp.CallToolRequest{Extra: &sdkmcp.RequestExtra{Header: http.Header{
+		"User-Agent": {"agent/1"},
+		"X-Region":   {"eu"},
+		"X-Api-Key":  {"k.secret"},
+	}}}
+	if _, _, err := s.toolExecuteSQL(ctx, req, ExecuteSQLArgs{SQL: "SELECT 1"}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	f := pol.in.Request
+	if f == nil {
+		t.Fatal("the policy got no request facts")
+	}
+	if f.RemoteIP.String() != "10.1.2.3" || f.UserAgent != "agent/1" || f.Headers["x-region"] != "eu" {
+		t.Errorf("facts = %+v", f)
+	}
+	if _, ok := f.Headers["x-api-key"]; ok {
+		t.Error("the API key reached the policy")
+	}
+
+	if _, _, err := s.toolExecuteSQL(ctx, &sdkmcp.CallToolRequest{}, ExecuteSQLArgs{SQL: "SELECT 1"}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if pol.in.Request != nil {
+		t.Errorf("a call without an HTTP request got facts: %+v", pol.in.Request)
 	}
 }

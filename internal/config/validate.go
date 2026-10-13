@@ -18,6 +18,7 @@ import (
 func (c *ServerConfig) Validate() error {
 	var errs []error
 	errs = append(errs, validateTLSBlock("rest.tls", c.REST.TLS)...)
+	errs = append(errs, validateTLSBlock("mcp.tls", c.MCP.TLS)...)
 	errs = append(errs, validateTLSBlock("admin.tls", c.Admin.TLS)...)
 	if c.Tracing.Enabled && c.Tracing.Endpoint == "" {
 		errs = append(errs, errors.New("tracing.endpoint: required when tracing is enabled"))
@@ -32,6 +33,17 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.Logging.MaxErrorBytes < 0 {
 		errs = append(errs, fmt.Errorf("logging.maxErrorBytes: %d is negative (0 turns the cut off)", c.Logging.MaxErrorBytes))
+	}
+	errs = append(errs, validatePolicyEngine(c.Policies)...)
+	if c.DataSources.Directory != "" {
+		errs = append(errs, errors.New(
+			"datasources.directory: not read: DataSource manifests load from policies.directory, remove the key"))
+	}
+	// A plain text is the token itself.
+	if secrets.IsRef(c.Admin.Token) {
+		if err := checkSecretRef("admin.token", c.Admin.Token); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if c.DataSources.Reload {
 		errs = append(errs, errors.New(
@@ -101,7 +113,55 @@ func (c *ServerConfig) Validate() error {
 		errs = append(errs, errors.New(
 			"mcp.enabled with transport=stdio requires a pinned credential for the serve-embedded transport: set mcp.tokenRef or mcp.apiKeyRef, or mcp.allowAnonymous: true to run default-denied anonymous (docs/reference/mcp.md)"))
 	}
+	if c.Audit.ChainKeyRef != "" {
+		if err := checkSecretRef("audit.chainKeyRef", c.Audit.ChainKeyRef); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.Limits.MaxResultBytes < 0 {
+		errs = append(errs, errors.New("limits.maxResultBytes: must not be negative (0 turns the cap off)"))
+	}
+	// The names that the MCP transport accepts (mcp.ParseTransport).
+	switch c.MCP.Transport {
+	case "", "stdio":
+	case "streamable_http", "http", "streamable-http", "streamablehttp":
+		// net/http binds port 80 on every interface for an empty address.
+		if c.MCP.Enabled && c.MCP.Listen == "" {
+			errs = append(errs, errors.New("mcp.listen: required with mcp.transport "+c.MCP.Transport))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("mcp.transport: unknown transport %q (stdio or streamable_http)", c.MCP.Transport))
+	}
 	return errors.Join(errs...)
+}
+
+// validatePolicyEngine checks the engine names and what an engine needs.
+// The start would fail on the same faults, `sluice config validate` must
+// find them first.
+func validatePolicyEngine(p PoliciesConfig) []error {
+	needsModuleDir := false
+	var errs []error
+	switch p.Engine {
+	case "", "yaml":
+	case "opa":
+		needsModuleDir = true
+	case "composite":
+		for i, m := range p.Composite.Members {
+			switch m {
+			case "yaml", "rebac":
+			case "opa":
+				needsModuleDir = true
+			default:
+				errs = append(errs, fmt.Errorf("policies.composite.members[%d]: unknown member %q (yaml, opa, rebac)", i, m))
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf("policies.engine: unknown engine %q (yaml, opa, composite)", p.Engine))
+	}
+	if needsModuleDir && p.OPA.ModuleDir == "" {
+		errs = append(errs, errors.New("policies.opa.moduleDir: required when the opa engine is used"))
+	}
+	return errs
 }
 
 // checkSecretRef parses ref so unimplemented providers (vault/aws-sm/

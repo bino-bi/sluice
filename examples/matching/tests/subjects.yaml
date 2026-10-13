@@ -110,3 +110,23 @@ cases:
     identity: { subject: u, claims: { email: u@example.org } }
     sql: "SELECT 1 FROM ops.main.matches"
     expect: { outcome: deny }
+
+  - name: an address inside ipRanges matches
+    identity: { subject: dora, groups: [staff] }
+    request: { remoteIp: 10.20.3.4 }
+    sql: "SELECT id FROM shop.main.door_log"
+    expect:
+      outcome: allow
+
+  - name: an address outside ipRanges does not match
+    identity: { subject: dora, groups: [staff] }
+    request: { remoteIp: 192.168.1.9 }
+    sql: "SELECT id FROM shop.main.door_log"
+    expect:
+      outcome: deny
+
+  - name: without an address ipRanges does not match
+    identity: { subject: dora, groups: [staff] }
+    sql: "SELECT id FROM shop.main.door_log"
+    expect:
+      outcome: deny

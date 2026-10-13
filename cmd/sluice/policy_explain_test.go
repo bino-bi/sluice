@@ -122,3 +122,32 @@ func TestPolicyExplain_SQLAndTableCombine(t *testing.T) {
 		t.Fatalf("resource %q missing parsed or explicit table", res)
 	}
 }
+
+// --table without --sql asks about a read of the table, so a policy with
+// actions: [SELECT] applies.
+func TestPolicyExplain_TableOnlyIsARead(t *testing.T) {
+	dir := t.TempDir()
+	policy := strings.Replace(explainAllowPolicyYAML,
+		`catalogs: ["warehouse"]`, "catalogs: [\"warehouse\"]\n          actions: [\"SELECT\"]", 1)
+	if err := os.WriteFile(filepath.Join(dir, "allow.yaml"), []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := newRootCmd()
+	root.SetArgs([]string{"policy", "explain",
+		"--policies-dir", dir, "--user", "alice", "--groups", "analytics",
+		"--table", "warehouse.public.orders", "--json",
+	})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v (out=%s)", err, out.String())
+	}
+	var result pkgapi.ExplainResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode ExplainResult: %v (out=%s)", err, out.String())
+	}
+	if result.Effective.Decision != "allow" {
+		t.Errorf("decision = %q, want allow", result.Effective.Decision)
+	}
+}

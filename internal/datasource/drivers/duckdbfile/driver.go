@@ -48,15 +48,11 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("duckdb_file: stat %q: %w", path, err)
 	}
-	// MVP is always read-only (matches apitypes.AttachReadonly).
-	readonly := true
-	if b, ok := spec.Raw["readonly"].(bool); ok && !b {
-		_ = b // v2 will plumb RW mode through here
-	}
+	// Always read-only (matches apitypes.AttachReadonly).
 	return &driver{
 		name:     spec.Name,
 		path:     path,
-		readonly: readonly,
+		readonly: true,
 		attached: make(map[string]bool),
 	}, nil
 }

@@ -91,7 +91,7 @@ func TestApprovalDecision_FailureIsLogged(t *testing.T) {
 		Logger:     slog.New(slog.NewJSONHandler(&log, nil)),
 	})
 	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/approvals/apr_1/accept?token=acc", nil))
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/approvals/apr_1/accept?token=acc", nil))
 	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "disk") {
 		t.Fatalf("status = %d, body = %s, want 500 without the cause", w.Code, w.Body.String())
 	}

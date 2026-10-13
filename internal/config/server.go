@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type MCPConfig struct {
 	Enabled        bool          `mapstructure:"enabled"`
 	Transport      string        `mapstructure:"transport"` // "stdio" | "streamable_http"
 	Listen         string        `mapstructure:"listen"`
+	TLS            *TLSConfig    `mapstructure:"tls"`
 	SessionIdleMax time.Duration `mapstructure:"sessionIdleMax"`
 
 	// TokenRef is a secret:// reference to a static JWT bearer token that
@@ -82,7 +84,9 @@ type DuckDBConfig struct {
 	ConnMaxIdle time.Duration `mapstructure:"connMaxIdle"`
 }
 
-// DataSourcesConfig locates the directory of DataSource YAML manifests.
+// DataSourcesConfig controls how data sources are attached. Directory is
+// not read: DataSource manifests load from policies.directory, and Validate
+// refuses the key.
 type DataSourcesConfig struct {
 	Directory string `mapstructure:"directory"`
 	FailFast  bool   `mapstructure:"failFast"`
@@ -134,6 +138,11 @@ type AuditConfig struct {
 	// SQLSampleBytes caps the leading bytes of request SQL copied into
 	// each audit record's sql_sample. 0 disables sampling entirely.
 	SQLSampleBytes int `mapstructure:"sqlSampleBytes"`
+
+	// ChainKeyRef is a secret:// reference to the key of the hash chain,
+	// at least 32 bytes. With it every new record has a keyed hash. Empty
+	// keeps the plain chain.
+	ChainKeyRef string `mapstructure:"chainKeyRef"`
 }
 
 // FileSinkConfig configures the append-only audit log file.
@@ -207,6 +216,7 @@ type IdentityConfig struct {
 type LimitsConfig struct {
 	MaxRows             int64         `mapstructure:"maxRows"`
 	MaxRowsCeiling      int64         `mapstructure:"maxRowsCeiling"`
+	MaxResultBytes      int64         `mapstructure:"maxResultBytes"`
 	MaxSQLBytes         int           `mapstructure:"maxSqlBytes"`
 	QueryTimeout        time.Duration `mapstructure:"queryTimeout"`
 	MaxQueryTimeout     time.Duration `mapstructure:"maxQueryTimeout"`
@@ -310,8 +320,7 @@ func DefaultServerConfig() ServerConfig {
 			ConnMaxIdle: 5 * time.Minute,
 		},
 		DataSources: DataSourcesConfig{
-			Directory: "./datasources.d",
-			FailFast:  true,
+			FailFast: true,
 		},
 		Policies: PoliciesConfig{
 			Directory: "./policies.d",
@@ -337,6 +346,7 @@ func DefaultServerConfig() ServerConfig {
 		Limits: LimitsConfig{
 			MaxRows:         100_000,
 			MaxRowsCeiling:  100_000,
+			MaxResultBytes:  64 << 20,
 			MaxSQLBytes:     1 << 20,
 			QueryTimeout:    30 * time.Second,
 			MaxQueryTimeout: 30 * time.Second,
@@ -381,13 +391,9 @@ func DefaultServerConfig() ServerConfig {
 func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 	v := viper.New()
 
-	// Defaults are set before the YAML is read so absent keys fall back
-	// cleanly. mapstructure tags drive unmarshal.
-	setDefaults(v, DefaultServerConfig())
-
 	v.SetEnvPrefix("SLUICE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "__"))
-	v.AutomaticEnv()
+	bindEnv(v, reflect.TypeFor[ServerConfig](), "")
 
 	if path != "" {
 		v.SetConfigFile(path)
@@ -407,6 +413,8 @@ func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 		}
 	}
 
+	// The defaults are the base. Unmarshal sets what the file, the
+	// environment and the flags hold.
 	cfg := DefaultServerConfig()
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("config: unmarshal: %w", err)
@@ -414,83 +422,52 @@ func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 	return &cfg, nil
 }
 
-// setDefaults mirrors DefaultServerConfig into viper's default layer so
-// AutomaticEnv can find the keys it needs to replace.
-func setDefaults(v *viper.Viper, d ServerConfig) {
-	v.SetDefault("rest.listen", d.REST.Listen)
-	v.SetDefault("rest.maxBodyBytes", d.REST.MaxBodyBytes)
-	v.SetDefault("rest.requestTimeout", d.REST.RequestTimeout)
+// CheckServerKeys reports the keys of the file at path that the server
+// config does not have. LoadServer ignores such a key, so a typo keeps the
+// default without a word. A file that cannot be read is no error here:
+// LoadServer has already reported or accepted that.
+func CheckServerKeys(path string) error {
+	v := viper.New()
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
+		return nil
+	}
+	var cfg ServerConfig
+	if err := v.UnmarshalExact(&cfg); err != nil {
+		// The decoder names the Go type for a key at the top level.
+		msg := strings.TrimPrefix(err.Error(), "decoding failed due to the following error(s):\n\n")
+		msg = strings.ReplaceAll(msg, "'config.ServerConfig'", "the top level")
+		return fmt.Errorf("server config has unknown keys:\n%s", msg)
+	}
+	return nil
+}
 
-	v.SetDefault("mcp.enabled", d.MCP.Enabled)
-	v.SetDefault("mcp.transport", d.MCP.Transport)
-	v.SetDefault("mcp.sessionIdleMax", d.MCP.SessionIdleMax)
-	v.SetDefault("mcp.tokenRef", d.MCP.TokenRef)
-	v.SetDefault("mcp.apiKeyRef", d.MCP.APIKeyRef)
-	v.SetDefault("mcp.allowAnonymous", d.MCP.AllowAnonymous)
-
-	v.SetDefault("admin.enabled", d.Admin.Enabled)
-	v.SetDefault("admin.listen", d.Admin.Listen)
-
-	v.SetDefault("duckdb.memoryLimit", d.DuckDB.MemoryLimit)
-	v.SetDefault("duckdb.threads", d.DuckDB.Threads)
-	v.SetDefault("duckdb.maxOpen", d.DuckDB.MaxOpen)
-	v.SetDefault("duckdb.maxIdle", d.DuckDB.MaxIdle)
-	v.SetDefault("duckdb.connMaxIdle", d.DuckDB.ConnMaxIdle)
-
-	v.SetDefault("datasources.directory", d.DataSources.Directory)
-	v.SetDefault("datasources.failFast", d.DataSources.FailFast)
-
-	v.SetDefault("policies.directory", d.Policies.Directory)
-	v.SetDefault("policies.reload", d.Policies.Reload)
-	v.SetDefault("policies.engine", d.Policies.Engine)
-	v.SetDefault("policies.composite.members", d.Policies.Composite.Members)
-	v.SetDefault("policies.opa.moduleDir", d.Policies.OPA.ModuleDir)
-	v.SetDefault("policies.opa.query", d.Policies.OPA.Query)
-	v.SetDefault("policies.rebac.cacheTtl", d.Policies.Rebac.CacheTTL)
-	v.SetDefault("policies.rebac.cacheSize", d.Policies.Rebac.CacheSize)
-
-	v.SetDefault("logging.level", d.Logging.Level)
-	v.SetDefault("logging.format", d.Logging.Format)
-	v.SetDefault("logging.maxErrorBytes", d.Logging.MaxErrorBytes)
-	v.SetDefault("tracing.enabled", d.Tracing.Enabled)
-	v.SetDefault("tracing.endpoint", d.Tracing.Endpoint)
-	v.SetDefault("tracing.protocol", d.Tracing.Protocol)
-	v.SetDefault("tracing.insecure", d.Tracing.Insecure)
-	v.SetDefault("tracing.sampleRatio", d.Tracing.SampleRatio)
-
-	v.SetDefault("audit.failClosed", d.Audit.FailClosed)
-	v.SetDefault("audit.sqlSampleBytes", d.Audit.SQLSampleBytes)
-	v.SetDefault("limits.maxRows", d.Limits.MaxRows)
-	v.SetDefault("limits.maxRowsCeiling", d.Limits.MaxRowsCeiling)
-	v.SetDefault("limits.maxSqlBytes", d.Limits.MaxSQLBytes)
-	v.SetDefault("limits.queryTimeout", d.Limits.QueryTimeout)
-	v.SetDefault("limits.maxQueryTimeout", d.Limits.MaxQueryTimeout)
-	v.SetDefault("limits.maxConcurrent", d.Limits.MaxConcurrent)
-	v.SetDefault("limits.disableCrossCatalog", d.Limits.DisableCrossCatalog)
-	v.SetDefault("limits.globalRps", d.Limits.GlobalRPS)
-	v.SetDefault("limits.globalBurst", d.Limits.GlobalBurst)
-	v.SetDefault("limits.perIpRps", d.Limits.PerIPRPS)
-	v.SetDefault("limits.perIpBurst", d.Limits.PerIPBurst)
-	v.SetDefault("limits.perIpMaxBuckets", d.Limits.PerIPMaxBuckets)
-	v.SetDefault("limits.defaultSubjectRps", d.Limits.DefaultSubjectRPS)
-	v.SetDefault("limits.defaultSubjectBurst", d.Limits.DefaultSubjectBurst)
-
-	v.SetDefault("cache.rewrite.enabled", d.Cache.Rewrite.Enabled)
-	v.SetDefault("cache.rewrite.size", d.Cache.Rewrite.Size)
-	v.SetDefault("cache.rewrite.ttl", d.Cache.Rewrite.TTL)
-
-	v.SetDefault("approval.publicBaseUrl", d.Approval.PublicBaseURL)
-	v.SetDefault("approval.syncWait", d.Approval.SyncWait)
-	v.SetDefault("approval.requestTtl", d.Approval.RequestTTL)
-	v.SetDefault("approval.grantTtl", d.Approval.GrantTTL)
-	v.SetDefault("approval.maxPending", d.Approval.MaxPending)
-	v.SetDefault("approval.sqlSampleBytes", d.Approval.SQLSampleBytes)
-	v.SetDefault("approval.persist", d.Approval.Persist)
-	v.SetDefault("approval.stateDir", d.Approval.StateDir)
-
-	v.SetDefault("budget.enabled", d.Budget.Enabled)
-	v.SetDefault("budget.stateDir", d.Budget.StateDir)
-	v.SetDefault("budget.flushInterval", d.Budget.FlushInterval)
-	v.SetDefault("budget.failClosed", d.Budget.FailClosed)
-	v.SetDefault("budget.retentionDays", d.Budget.RetentionDays)
+// bindEnv makes every scalar key of the config known to viper, so that
+// its SLUICE_* variable is read. A key that viper does not know is not
+// looked up in the environment, also not with AutomaticEnv. Only leaves
+// are bound, never a block: a variable that is not set then leaves an
+// optional block nil, and a nil block is not validated. A list of blocks,
+// such as approval.webhooks, has no variable.
+func bindEnv(v *viper.Viper, t reflect.Type, prefix string) {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		key := f.Tag.Get("mapstructure")
+		if key == "" {
+			continue
+		}
+		if prefix != "" {
+			key = prefix + "." + key
+		}
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		switch {
+		case ft.Kind() == reflect.Struct:
+			bindEnv(v, ft, key)
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+		default:
+			_ = v.BindEnv(key)
+		}
+	}
 }

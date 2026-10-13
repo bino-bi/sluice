@@ -306,3 +306,43 @@ func TestEngine_DeterministicOrdering(t *testing.T) {
 		}
 	}
 }
+
+// A metadata tool asks "may this subject read the table" without a
+// statement. It names the action, so a clause with actions can match.
+func TestEngine_ActionWithoutStatement(t *testing.T) {
+	allowSelect := allowAll(0)
+	allowSelect.Spec.Match.Any[0].Resources.Actions = []apitypes.Action{apitypes.ActionSelect}
+	eng := New(Options{})
+	if err := eng.ApplySnapshot(context.Background(), makeSnapshot(allowSelect)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	in := Input{
+		User:   &identity.UserCtx{Subject: "u"},
+		Tables: []parser.TableRef{{Catalog: "pg", Schema: "public", Table: "orders"}},
+	}
+	dec, err := eng.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if dec.Outcome != OutcomeDeny {
+		t.Errorf("without an action: outcome = %s, want deny", dec.Outcome)
+	}
+	in.Action = apitypes.ActionSelect
+	dec, err = eng.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if dec.Outcome != OutcomeAllow {
+		t.Errorf("as a SELECT: outcome = %s, want allow", dec.Outcome)
+	}
+}
+
+func TestEngine_ApplyNilSnapshot(t *testing.T) {
+	eng := New(Options{})
+	if err := eng.ApplySnapshot(context.Background(), nil); err != nil {
+		t.Fatalf("apply nil: %v", err)
+	}
+	if eng.Snapshot() == nil {
+		t.Error("no snapshot after ApplySnapshot(nil)")
+	}
+}

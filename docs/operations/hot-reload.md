@@ -93,7 +93,7 @@ After a file change, the log shows the cause. So does `sluice policy validate`:
 --8<-- "examples/reload/expected/07-validate.txt"
 ```
 
-`ERR_CONFIG_INVALID` means Sluice cannot load a file: broken YAML, an unknown kind, a wrong field value. `ERR_POLICY_INVALID` means a policy does not compile, as here with an unknown tag:
+`ERR_CONFIG_INVALID` means Sluice cannot load a file: broken YAML, an unknown kind, a wrong field value. `ERR_POLICY_INVALID` means a policy or a Rego module does not compile. Here a policy has an unknown tag:
 
 ```bash
 --8<-- "examples/reload/steps/12-reload-fails-compile.sh"
@@ -117,9 +117,9 @@ After a file change, the log shows the cause. So does `sluice policy validate`:
 
 ## Limits
 
-- Sluice watches the policy directory for `.yaml` and `.yml` files that are not hidden.
+- Sluice watches the policy directory for `.yaml` and `.yml` files, and `policies.opa.moduleDir` for `.rego` files. Hidden files do not count.
 - It misses directories created after the start.
-- A duplicate JWT issuer or a broken OPA module does not stop the reload. Sluice warns and keeps the old state of that part.
+- A duplicate JWT issuer, or an `hmacSecretRef` that cannot be resolved, does not stop the reload. Sluice warns and keeps the old JWT bindings. An API key whose `hashRef` cannot be resolved stops working until the next reload.
 - An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`.
 
 ## See also

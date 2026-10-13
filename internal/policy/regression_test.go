@@ -174,6 +174,41 @@ func TestEnforcementModeShadow(t *testing.T) {
 	if len(dec.Shadow) != 1 || dec.Shadow[0].Name != "audit-deny" {
 		t.Errorf("audit-mode deny must be recorded as shadow, got %+v", dec.Shadow)
 	}
+	// The entry says what the policy would have done, so a rollout in
+	// DryRun mode shows which queries it would stop.
+	if len(dec.Shadow) == 1 && dec.Shadow[0].Would != "deny" {
+		t.Errorf("shadow entry of a deny: would = %q, want deny", dec.Shadow[0].Would)
+	}
+}
+
+// A shadow reject policy says "reject" only when one of its rules fired. A
+// shadow allow, filter or mask says nothing: its kind tells what it does.
+func TestShadowWould(t *testing.T) {
+	reject := func(expr string) *apitypes.QueryRejectPolicy {
+		return &apitypes.QueryRejectPolicy{
+			TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindQueryRejectPolicy},
+			Metadata: apitypes.ObjectMeta{Name: "dry-reject", Priority: 100},
+			Spec: apitypes.QueryRejectSpec{
+				EnforcementMode: apitypes.EnforcementDryRun,
+				Match:           apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"*"}}}}},
+				Reject:          apitypes.RejectSpec{Rules: []apitypes.RejectRule{{Name: "r", Expression: expr}}},
+			},
+		}
+	}
+	orders := parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"}
+	for expr, want := range map[string]string{"true": "reject", "false": ""} {
+		eng := New(Options{})
+		if err := eng.ApplySnapshot(context.Background(), makeSnapshot(allowAll(0), reject(expr))); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		dec, err := eng.Evaluate(context.Background(), Input{Tables: []parser.TableRef{orders}, AST: stubAST{kind: parser.StmtSelect}})
+		if err != nil || dec.Outcome != OutcomeAllow {
+			t.Fatalf("rule %q: outcome %v, err %v, want allow", expr, dec, err)
+		}
+		if len(dec.Shadow) != 1 || dec.Shadow[0].Would != want {
+			t.Errorf("rule %q: shadow = %+v, want one entry with would = %q", expr, dec.Shadow, want)
+		}
+	}
 }
 
 // TestDeepEqualNumericStrictTyping guards the claim type-confusion fix: a

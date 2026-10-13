@@ -87,6 +87,13 @@ type Record struct {
 	// capped by the queryservice. Recorded verbatim: treat as
 	// operator-trust-domain data, like sql_sample.
 	ClientMeta map[string]string `json:"client_meta,omitempty"`
+	// PoliciesShadow lists the policies that matched in Audit or DryRun
+	// mode, and a column mask of a composite member that lost to the mask
+	// of an earlier member. They did not shape the decision.
+	PoliciesShadow []apitypes.AppliedPolicy `json:"policies_shadow,omitempty"`
+	// HashAlg is HashAlgHMAC when Hash is keyed. Empty means the plain
+	// SHA-256 chain, as in every record written before the key existed.
+	HashAlg string `json:"hash_alg,omitempty"`
 
 	PriorHash string `json:"prior_hash"`
 	Hash      string `json:"hash,omitempty"`
@@ -276,6 +283,16 @@ func canonicalFields(r *Record) ([]canonicalField, error) {
 	if len(r.ClientMeta) > 0 {
 		// json.Marshal sorts string-keyed maps, so this is canonical.
 		if err := addJSON("client_meta", r.ClientMeta); err != nil {
+			return nil, err
+		}
+	}
+	if len(r.PoliciesShadow) > 0 {
+		if err := addJSON("policies_shadow", r.PoliciesShadow); err != nil {
+			return nil, err
+		}
+	}
+	if r.HashAlg != "" {
+		if err := addJSON("hash_alg", r.HashAlg); err != nil {
 			return nil, err
 		}
 	}

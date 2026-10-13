@@ -3,6 +3,9 @@
 package policy
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -43,7 +46,10 @@ func evaluateApproval(matched []*CompiledPolicy, in Input, dec *Decision) {
 // fire for this request. An empty When triggers on selector match alone.
 // When the AST is unavailable (regex fallback) a policy with a non-empty
 // When is treated as triggered — fail-closed, since we cannot inspect the
-// columns or comparisons.
+// columns or comparisons. For the same reason a column trigger fires when
+// the statement reads columns it does not name, and a predicate trigger
+// fires when its column is used in a condition that cannot be read as a
+// comparison with a value.
 func approvalTriggers(ca *CompiledApproval, in Input) bool {
 	if len(ca.Columns) == 0 && len(ca.Predicates) == 0 {
 		return true
@@ -52,6 +58,9 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 		return true
 	}
 	shape := in.Shape
+	if shape.AccessesAllColumns && len(ca.Columns) > 0 {
+		return true
+	}
 	for _, m := range ca.Columns {
 		for _, col := range shape.AccessedColumns {
 			if matchColumn(m, col) {
@@ -60,6 +69,11 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 		}
 	}
 	for _, tr := range ca.Predicates {
+		for _, col := range shape.UnreadPredicateColumns {
+			if matchColumn(tr.Column, col) {
+				return true
+			}
+		}
 		for _, cmp := range shape.Comparisons {
 			if triggerMatches(tr, cmp) {
 				return true
@@ -69,15 +83,18 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 	return false
 }
 
-// matchColumn matches a wildcard against a column reference by both its
-// full dotted form and its bare last segment (so `email` matches
-// `u.email`).
+// matchColumn matches a wildcard against a column reference: the dotted
+// name as written and each of its parts. So `email` matches `u.email`, and
+// a pattern for a STRUCT column matches `profile.city`. A part can also be
+// a table alias; that fails closed.
 func matchColumn(m apitypes.Matcher, col string) bool {
 	if m.Match(col) {
 		return true
 	}
-	if bare := lastSegment(col); bare != col {
-		return m.Match(bare)
+	for _, part := range strings.Split(col, ".") {
+		if m.Match(part) {
+			return true
+		}
 	}
 	return false
 }
@@ -86,20 +103,20 @@ func triggerMatches(tr compiledTrigger, cmp parser.Comparison) bool {
 	if !matchColumn(tr.Column, cmp.Column) {
 		return false
 	}
-	if tr.Op != "" && tr.Op != "*" && tr.Op != cmp.Op {
+	// IN compares with each list value, so it also matches "=".
+	if tr.Op != "" && tr.Op != "*" && tr.Op != cmp.Op && (tr.Op != "=" || cmp.Op != "in") {
 		return false
 	}
-	if tr.Value != "" && tr.Value != cmp.Value {
+	if tr.Value != "" && tr.Value != cmp.Value && !sameNumber(tr.Value, cmp.Value) {
 		return false
 	}
 	return true
 }
 
-func lastSegment(dotted string) string {
-	for i := len(dotted) - 1; i >= 0; i-- {
-		if dotted[i] == '.' {
-			return dotted[i+1:]
-		}
-	}
-	return dotted
+// sameNumber reports whether a and b are the same number written in two
+// ways: 7 and 7.0.
+func sameNumber(a, b string) bool {
+	x, errX := strconv.ParseFloat(strings.TrimSpace(a), 64)
+	y, errY := strconv.ParseFloat(strings.TrimSpace(b), 64)
+	return errX == nil && errY == nil && x == y
 }

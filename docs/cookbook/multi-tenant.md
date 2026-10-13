@@ -80,7 +80,7 @@ A `WHERE` clause cannot widen the filter. The acme key asks for beta rows and ge
 
 ## Limits
 
-- A subject without the `tenantId` claim gets `ERR_INTERNAL` and no rows.
+- A subject without the `tenantId` claim gets `ACL_DENIED` and no rows.
 
 ## See also
 

@@ -5,6 +5,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,5 +129,76 @@ func TestLoadServer_RejectsMalformedYAML(t *testing.T) {
 	}
 	if _, err := LoadServer(path, nil); err == nil {
 		t.Fatal("expected error for malformed YAML")
+	}
+}
+
+// Every scalar key is readable from the environment, also one without a
+// default. SLUICE_ADMIN__TOKEN alone used to be ignored, which left the
+// admin API without a token.
+func TestLoadServer_EnvSetsKeyWithoutDefault(t *testing.T) {
+	t.Setenv("SLUICE_ADMIN__TOKEN", "s3cret")
+	t.Setenv("SLUICE_MCP__LISTEN", ":7000")
+	t.Setenv("SLUICE_DUCKDB__TEMPDIR", "/var/tmp/sluice")
+	t.Setenv("SLUICE_IDENTITY__APIKEYPEPPER", "secret://env/PEPPER")
+	t.Setenv("SLUICE_REST__TLS__CERTFILE", "/etc/sluice/tls.crt")
+	t.Setenv("SLUICE_MCP__TLS__KEYFILE", "/etc/sluice/mcp.key")
+	t.Setenv("SLUICE_AUDIT__FILE__PATH", "/var/log/sluice")
+	t.Setenv("SLUICE_AUDIT__S3__INSECURE", "true")
+	t.Setenv("SLUICE_POLICIES__COMPOSITE__MEMBERS", "yaml,opa")
+	t.Setenv("SLUICE_LIMITS__QUERYTIMEOUT", "7s")
+	t.Setenv("SLUICE_LIMITS__MAXRESULTBYTES", "1024")
+
+	cfg, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.Admin.Token != "s3cret" || cfg.MCP.Listen != ":7000" || cfg.DuckDB.TempDir != "/var/tmp/sluice" ||
+		cfg.Identity.APIKeyPepper != "secret://env/PEPPER" {
+		t.Errorf("scalar keys not read: admin.token %q, mcp.listen %q, duckdb.tempDir %q, identity.apiKeyPepper %q",
+			cfg.Admin.Token, cfg.MCP.Listen, cfg.DuckDB.TempDir, cfg.Identity.APIKeyPepper)
+	}
+	if cfg.REST.TLS == nil || cfg.REST.TLS.CertFile != "/etc/sluice/tls.crt" {
+		t.Errorf("rest.tls.certFile not read: %+v", cfg.REST.TLS)
+	}
+	if cfg.MCP.TLS == nil || cfg.MCP.TLS.KeyFile != "/etc/sluice/mcp.key" {
+		t.Errorf("mcp.tls.keyFile not read: %+v", cfg.MCP.TLS)
+	}
+	if cfg.Audit.File == nil || cfg.Audit.File.Path != "/var/log/sluice" {
+		t.Errorf("audit.file.path not read: %+v", cfg.Audit.File)
+	}
+	if cfg.Audit.S3 == nil || !cfg.Audit.S3.Insecure {
+		t.Errorf("audit.s3.insecure not read: %+v", cfg.Audit.S3)
+	}
+	if got := strings.Join(cfg.Policies.Composite.Members, ","); got != "yaml,opa" {
+		t.Errorf("policies.composite.members = %q, want yaml,opa", got)
+	}
+	if cfg.Limits.MaxResultBytes != 1024 {
+		t.Errorf("limits.maxResultBytes = %d, want 1024", cfg.Limits.MaxResultBytes)
+	}
+	if def := DefaultServerConfig(); def.Limits.MaxResultBytes != 64<<20 {
+		t.Errorf("default limits.maxResultBytes = %d, want 64 MiB", def.Limits.MaxResultBytes)
+	}
+	if cfg.Limits.QueryTimeout != 7*time.Second {
+		t.Errorf("limits.queryTimeout = %v, want 7s", cfg.Limits.QueryTimeout)
+	}
+}
+
+// A bound variable that is not set must not create an optional block: a
+// block that exists is validated, and an empty one fails for everyone.
+func TestLoadServer_NoEnvKeepsOptionalBlocksNil(t *testing.T) {
+	cfg, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.REST.TLS != nil || cfg.MCP.TLS != nil || cfg.Admin.TLS != nil || cfg.Audit.Syslog != nil || cfg.Audit.S3 != nil {
+		t.Errorf("optional blocks exist without config: rest.tls %v, mcp.tls %v, admin.tls %v, audit.syslog %v, audit.s3 %v",
+			cfg.REST.TLS, cfg.MCP.TLS, cfg.Admin.TLS, cfg.Audit.Syslog, cfg.Audit.S3)
+	}
+	want := DefaultServerConfig()
+	if !reflect.DeepEqual(*cfg, want) {
+		t.Errorf("config without file and environment differs from the defaults:\n got  %+v\n want %+v", *cfg, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("default config does not validate: %v", err)
 	}
 }

@@ -262,3 +262,186 @@ func itoa(i int) string {
 	}
 	return string(buf[n:])
 }
+
+func (m *memSink) byType(t audit.EventType) []*audit.Record {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*audit.Record
+	for _, r := range m.records {
+		if r.EventType == t {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func TestDispatcher_AuthFailureWritesARecord(t *testing.T) {
+	sink := &memSink{}
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{Sinks: []audit.Sink{sink}, GenesisSeed: []byte("auth")})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	defer func() { _ = d.Close(context.Background()) }()
+
+	d.AuthFailure("rest", "203.0.113.7", "invalid credential")
+	if err := d.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	recs := sink.byType(audit.EventAuthEvent)
+	if len(recs) != 1 {
+		t.Fatalf("auth-event records = %d, want 1", len(recs))
+	}
+	r := recs[0]
+	if r.Origin != "rest" || r.RemoteIP != "203.0.113.7" || r.Message != "invalid credential" ||
+		r.ErrorCode != "ERR_UNAUTHORIZED" || r.Decision != audit.DecisionError {
+		t.Errorf("record = %+v", r)
+	}
+	if r.Subject.ID != "" || r.Hash == "" || r.PriorHash == "" {
+		t.Errorf("subject %+v, hash %q, prior %q: want no subject and a chained record", r.Subject, r.Hash, r.PriorHash)
+	}
+}
+
+// A flood of failed logins must not fill the audit log.
+func TestDispatcher_AuthFailureIsRateLimited(t *testing.T) {
+	sink := &memSink{}
+	now := time.Unix(1_700_000_000, 0)
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks: []audit.Sink{sink}, GenesisSeed: []byte("auth"), Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	defer func() { _ = d.Close(context.Background()) }()
+
+	for range 100 {
+		d.AuthFailure("mcp", "203.0.113.7", "no credential")
+	}
+	if err := d.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := len(sink.byType(audit.EventAuthEvent)); got != audit.AuthEventBurst {
+		t.Errorf("records = %d, want the burst of %d", got, audit.AuthEventBurst)
+	}
+	// One second later the bucket holds AuthEventRate new tokens.
+	now = now.Add(time.Second)
+	for range 100 {
+		d.AuthFailure("mcp", "203.0.113.7", "no credential")
+	}
+	if err := d.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, want := len(sink.byType(audit.EventAuthEvent)), audit.AuthEventBurst+audit.AuthEventRate; got != want {
+		t.Errorf("records = %d, want %d", got, want)
+	}
+}
+
+// With a full queue a query record waits for EnqueueDeadline. An auth
+// event must give up at once.
+func TestDispatcher_AuthFailureDoesNotWaitForAFullQueue(t *testing.T) {
+	sink := &gateSink{entered: make(chan string, 8), gate: make(chan struct{}), seed: "seedtip"}
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks:           []audit.Sink{sink},
+		QueueSize:       1,
+		EnqueueDeadline: 5 * time.Second,
+		FlushInterval:   -1,
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	// The worker holds the first record in the sink, the second fills the queue.
+	for _, id := range []string{"q1", "q2"} {
+		if err := d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: id}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	<-sink.entered
+
+	start := time.Now()
+	d.AuthFailure("rest", "203.0.113.7", "invalid credential")
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("AuthFailure took %v with a full queue, want no wait", took)
+	}
+
+	close(sink.gate)
+	if err := d.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	for _, r := range sink.records {
+		if r.EventType == audit.EventAuthEvent {
+			t.Error("the auth event was written although the queue was full")
+		}
+	}
+	// The dropped event left no gap in the chain.
+	if len(sink.records) != 2 || sink.records[1].PriorHash != sink.records[0].Hash {
+		t.Errorf("chain broken after a dropped auth event: %d records", len(sink.records))
+	}
+}
+
+// Query records that wait for a full queue hold the dispatcher lock. An
+// auth event must not queue behind them: the 401 would be late.
+func TestDispatcher_AuthFailureDoesNotWaitBehindQueryRecords(t *testing.T) {
+	sink := &gateSink{entered: make(chan string, 8), gate: make(chan struct{}), seed: "seedtip"}
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks:           []audit.Sink{sink},
+		QueueSize:       1,
+		EnqueueDeadline: 2 * time.Second,
+		FlushInterval:   -1,
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	for _, id := range []string{"q1", "q2"} {
+		if err := d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: id}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	<-sink.entered
+	// This record finds the queue full and waits, with the lock held.
+	waiting := make(chan struct{})
+	go func() {
+		defer close(waiting)
+		_ = d.Enqueue(context.Background(), &audit.Record{EventType: audit.EventQuery, QueryID: "q3"})
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	d.AuthFailure("rest", "203.0.113.7", "invalid credential")
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Errorf("AuthFailure took %v behind a waiting query record, want no wait", took)
+	}
+	close(sink.gate)
+	<-waiting
+	_ = d.Close(context.Background())
+}
+
+// Each listener has its own budget: a flood on one must not hide the
+// failed logins on another.
+func TestDispatcher_AuthFailureBudgetPerOrigin(t *testing.T) {
+	sink := &memSink{}
+	now := time.Unix(1_700_000_000, 0)
+	d, err := audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks: []audit.Sink{sink}, GenesisSeed: []byte("auth"), Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	defer func() { _ = d.Close(context.Background()) }()
+	for range 100 {
+		d.AuthFailure("admin", "203.0.113.7", "no credential")
+	}
+	d.AuthFailure("rest", "203.0.113.8", "invalid credential")
+	if err := d.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rest := 0
+	for _, r := range sink.byType(audit.EventAuthEvent) {
+		if r.Origin == "rest" {
+			rest++
+		}
+	}
+	if rest != 1 {
+		t.Errorf("rest records = %d, want 1 after a flood on admin", rest)
+	}
+}

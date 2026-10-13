@@ -46,7 +46,6 @@ func DefaultRegistry() TypeRegistry {
 	alpha(KindApprovalPolicy, func() Object { return &ApprovalPolicy{} })
 	alpha(KindDataSource, func() Object { return &DataSource{} })
 	alpha(KindSubjectBinding, func() Object { return &SubjectBinding{} })
-	alpha(KindAuditSink, func() Object { return &AuditSink{} })
 	// v1-beta kinds resolved by their own runtime packages.
 	beta(KindRelationshipPolicy, func() Object { return &RelationshipPolicy{} })
 	beta(KindDataClassification, func() Object { return &DataClassification{} })
@@ -168,6 +167,10 @@ func decodeOne(doc []byte, o *decodeOptions) (Object, error) {
 	if tm.APIVersion == "" || tm.Kind == "" {
 		return nil, errors.New("apiVersion and kind are required")
 	}
+	// The kind existed, but its objects never reached the audit pipeline.
+	if tm.Kind == "AuditSink" {
+		return nil, errors.New("kind AuditSink is not supported: set audit.file, audit.syslog or audit.s3 in the server config")
+	}
 	obj, ok := o.registry.Lookup(tm)
 	if !ok {
 		return nil, fmt.Errorf("unknown kind %s/%s", tm.APIVersion, tm.Kind)
@@ -253,8 +256,6 @@ func validate(obj Object) error {
 		return validateDataSource(x)
 	case *SubjectBinding:
 		return validateSubjectBinding(x)
-	case *AuditSink:
-		return validateAuditSink(x)
 	}
 	return nil
 }
@@ -394,6 +395,12 @@ func validateRelationship(p *RelationshipPolicy) error {
 	if p.Spec.Backend.StoreID == "" {
 		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.backend.storeId", Reason: "required"}
 	}
+	if t := p.Spec.Backend.Type; t != "" && t != "openfga" {
+		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.backend.type", Reason: fmt.Sprintf("unknown backend %q (openfga)", t)}
+	}
+	if p.Spec.Backend.CacheTTL != 0 {
+		return noEffect(p, "spec.backend.cacheTtl", "set policies.rebac.cacheTtl in the server config")
+	}
 	if len(p.Spec.Checks) == 0 {
 		return &ValidationError{Kind: p.GetKind(), Name: p.Metadata.Name, Field: "spec.checks", Reason: "at least one check is required"}
 	}
@@ -421,8 +428,31 @@ func validateQueryReject(p *QueryRejectPolicy) error {
 	return nil
 }
 
+// noEffect builds the error for a field that Sluice reads and never acts
+// on. Refusing it keeps an operator from relying on it.
+func noEffect(o Object, field, instead string) error {
+	return &ValidationError{
+		Kind: o.GetKind(), Name: o.GetObjectMeta().Name, Field: field,
+		Reason: "not supported: " + instead,
+	}
+}
+
 func validateDataSource(d *DataSource) error {
 	s := d.Spec
+	switch {
+	case s.Readonly != nil && !*s.Readonly:
+		return noEffect(d, "spec.readonly", "every data source is attached read-only")
+	case s.AttachMode != "" && s.AttachMode != AttachReadonly:
+		return noEffect(d, "spec.attachMode", "every data source is attached read-only")
+	case len(s.Schemas) > 0:
+		return noEffect(d, "spec.schemas", "a data source exposes all its schemas, limit access with the resources of a SqlAccessPolicy")
+	case len(s.Tables) > 0:
+		return noEffect(d, "spec.tables", "a data source exposes all its tables, limit access with the resources of a SqlAccessPolicy")
+	case s.HealthCheck != nil:
+		return noEffect(d, "spec.healthCheck", "every data source gets the built-in health test every 30 seconds")
+	case s.Prefix != "":
+		return noEffect(d, "spec.prefix", "name the files in spec.allowedPaths")
+	}
 	switch s.Type {
 	case DSPostgres, DSMySQL:
 		if s.Connection == "" {
@@ -493,46 +523,13 @@ func validateDataSource(d *DataSource) error {
 
 func validateSubjectBinding(b *SubjectBinding) error {
 	s := b.Spec
+	if s.GroupsSource != "" {
+		return noEffect(b, "spec.groupsSource", "groups come from spec.claims.groups or spec.apiKeys[].groups")
+	}
 	if s.JWKSURL != "" && (s.Issuer == "" || s.Audience == "") {
 		return &ValidationError{
 			Kind: b.GetKind(), Name: b.Metadata.Name, Field: "spec",
 			Reason: "jwksUrl requires both issuer and audience",
-		}
-	}
-	return nil
-}
-
-func validateAuditSink(a *AuditSink) error {
-	s := a.Spec
-	switch s.Type {
-	case AuditFile:
-		if s.Path == "" {
-			return &ValidationError{
-				Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.path",
-				Reason: "required for file sink",
-			}
-		}
-	case AuditS3, AuditSyslog:
-		// These sinks exist, but only via server config — AuditSink
-		// manifests are not wired to the dispatcher. Rejected so an
-		// operator never believes a manifest configured them.
-		return &ValidationError{
-			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",
-			Reason: fmt.Sprintf("audit sink type %q is configured via audit.%s in sluice.yaml — AuditSink manifests are not wired to the dispatcher in this build", s.Type, s.Type),
-		}
-	case AuditPostgres, AuditOTLP:
-		// Declared by the manifest grammar but no implementation writes
-		// records yet. Rejected so an operator never believes durable
-		// delivery is configured when it is not; the guard drops per type
-		// as each sink lands.
-		return &ValidationError{
-			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",
-			Reason: fmt.Sprintf("audit sink type %q parsed but unimplemented — only \"file\" writes records in this build", s.Type),
-		}
-	default:
-		return &ValidationError{
-			Kind: a.GetKind(), Name: a.Metadata.Name, Field: "spec.type",
-			Reason: fmt.Sprintf("unknown audit sink type %q", s.Type),
 		}
 	}
 	return nil

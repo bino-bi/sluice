@@ -69,12 +69,28 @@ func (e *Engine) SnapshotInfo() (version int64, digest string, keyHeaders []stri
 // ApplySnapshot compiles src and swaps it into place. On failure the
 // previous snapshot stays live and the error is returned.
 func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
-	compiled, err := Compile(ctx, src)
+	apply, err := e.Prepare(ctx, src)
 	if err != nil {
 		return err
 	}
-	e.snapshot.Store(compiled)
+	apply()
 	return nil
+}
+
+// Prepare implements PolicyEngine.
+func (e *Engine) Prepare(ctx context.Context, src *config.Snapshot) (func(), error) {
+	compiled, err := Compile(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		// The registry numbers a snapshot when it publishes it, which
+		// can be after Prepare.
+		if src != nil {
+			compiled.Version = src.Version
+		}
+		e.snapshot.Store(compiled)
+	}, nil
 }
 
 // Input is the per-request evaluation input.
@@ -85,6 +101,10 @@ type Input struct {
 	Tables  []parser.TableRef
 	Request *RequestFacts
 	Now     time.Time
+
+	// Action is the action of a request without a statement, such as the
+	// check whether a subject may read a table. AST wins when it is set.
+	Action apitypes.Action
 }
 
 // Evaluate produces a Decision for the given input. The returned
@@ -271,10 +291,11 @@ func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (map[*Comp
 // ActionOf maps the parsed statement kind to the policy Action verb used
 // for resource action scoping. Unknown / unparsed statements yield the
 // empty action, which never satisfies an action-constrained selector.
-// Every engine that matches selectors must use it.
+// Without a statement the action is in.Action. Every engine that matches
+// selectors must use it.
 func ActionOf(in Input) apitypes.Action {
 	if in.AST == nil {
-		return ""
+		return in.Action
 	}
 	switch in.AST.Statement() {
 	case parser.StmtSelect, parser.StmtExplain:

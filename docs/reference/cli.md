@@ -15,13 +15,13 @@ Every command accepts `--help`. A `bool` flag takes no value. The binary also ha
 |---|---|---|
 | 0 | all | Success. |
 | 1 | all | Wrong flags, a file that cannot be read, or a failed start. |
-| 1 | `policy test` | A policy does not compile. |
 | 1 | `datasource check` | A policy file is not valid, or the name is unknown. |
 | 2 | `serve` | A listener failed, for example the port is in use. |
 | 2 | `datasource check` | The directory holds no `DataSource` object. |
 | 3 | `config validate`, `policy validate`, `policy explain` | A policy or the server config is not valid. |
-| 3 | `policy test` | A policy file is not valid, a case failed, or no case ran. |
-| 4 | `audit verify` | The hash chain is broken, a line is not JSON, or the anchor differs. |
+| 3 | `policy test` | A policy file is not valid or does not compile, a case failed, or no case ran. |
+| 1 | `audit verify` | The chain is keyed and `--key-ref` is missing. |
+| 4 | `audit verify` | The hash chain is broken, a line is not JSON, the anchor or the key differs, or the directory has no record. |
 
 ## apikey hash
 
@@ -47,6 +47,7 @@ Validate the audit-log hash chain under `<audit-dir>`.
 |---|---|---|---|
 | `--anchor` | string |  | expected prior_hash of the first record: the hex SHA-256 of the genesis |
 | `--json` | bool |  | print the report as JSON |
+| `--key-ref` | string |  | secret reference of the chain key (audit.chainKeyRef) |
 
 See [Audit log](../security/audit.md).
 
@@ -62,7 +63,7 @@ Show a subject's budget usage for a day (default today, UTC).
 | `--json` | bool |  | print JSON |
 | `--state-dir` | string | `./state` | budget state directory |
 
-The state directory must exist. The command creates `budget.db` there if the file is missing.
+The command only reads `budget.db` in the state directory. A missing file is an error. A running server writes the numbers of today every `budget.flushInterval`.
 
 ## config validate
 
@@ -73,7 +74,7 @@ Validate the server config and the policy directory.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--config` | string |  | path to the server config (optional) |
-| `--strict` | bool |  | reject unknown YAML fields in policies |
+| `--strict` | bool |  | reject unknown fields in policies and unknown keys in the server config |
 
 The policy directory is optional. `sluice serve` runs the same checks at start.
 
@@ -107,7 +108,7 @@ Run the MCP server for AI agents (stdio by default).
 | `--policies-dir` | string |  | policy directory (overrides policies.directory) |
 | `--transport` | string | `stdio` | transport: stdio or streamable_http (also http, streamable-http, streamablehttp) |
 
-Without `--jwt`, the command reads the token from `SLUICE_MCP_TOKEN`. With `http`, `streamable-http` or `streamablehttp`, the command also needs `--api-key`, `--jwt` or `--allow-anonymous` at start. See [MCP tools](mcp.md).
+Without `--jwt`, the command reads the token from `SLUICE_MCP_TOKEN`. The command does not start when an `ApprovalPolicy` is loaded. See [MCP tools](mcp.md).
 
 ## policy explain
 
@@ -181,7 +182,7 @@ Export the JSON Schema of a policy kind.
 |---|---|---|---|
 | `--kind` | string |  | policy kind to export, for example SqlAccessPolicy |
 
-Without `--kind` the command ends with exit status 1. So does `--kind RowFilterPolicy`.
+Without `--kind` the output is one schema with a `oneOf` over all kinds.
 
 ## serve
 

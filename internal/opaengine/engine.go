@@ -66,19 +66,20 @@ func New(opts Options) (*Engine, error) {
 // Name implements policy.PolicyEngine.
 func (e *Engine) Name() string { return "opa" }
 
-// ApplySnapshot recompiles the rego modules. The snapshot is not used
-// directly (rego reads its own modules from ModuleDir); it is accepted to
-// satisfy the interface and so a config reload triggers a module reload.
-func (e *Engine) ApplySnapshot(ctx context.Context, _ *config.Snapshot) error {
+// Prepare compiles the rego modules. The snapshot is not used (rego reads
+// its own modules from ModuleDir); it is accepted so that a config reload
+// also loads the modules again. A module that does not compile is a
+// policy.ErrSnapshotInvalid, and the old modules stay active.
+func (e *Engine) Prepare(ctx context.Context, _ *config.Snapshot) (func(), error) {
 	if e.moduleDir == "" {
-		return fmt.Errorf("opaengine: moduleDir is required")
+		return nil, fmt.Errorf("%w: opaengine: moduleDir is required", policy.ErrSnapshotInvalid)
 	}
 	modules, err := loadModules(e.moduleDir)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("%w: %w", policy.ErrSnapshotInvalid, err)
 	}
 	if len(modules) == 0 {
-		return fmt.Errorf("opaengine: no .rego modules found under %s", e.moduleDir)
+		return nil, fmt.Errorf("%w: opaengine: no .rego modules found under %s", policy.ErrSnapshotInvalid, e.moduleDir)
 	}
 	opts := []func(*rego.Rego){rego.Query(e.query)}
 	for name, src := range modules {
@@ -86,9 +87,18 @@ func (e *Engine) ApplySnapshot(ctx context.Context, _ *config.Snapshot) error {
 	}
 	pq, err := rego.New(opts...).PrepareForEval(ctx)
 	if err != nil {
-		return fmt.Errorf("opaengine: prepare: %w", err)
+		return nil, fmt.Errorf("%w: opaengine: prepare: %w", policy.ErrSnapshotInvalid, err)
 	}
-	e.prepared.Store(&pq)
+	return func() { e.prepared.Store(&pq) }, nil
+}
+
+// ApplySnapshot implements policy.PolicyEngine.
+func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
+	apply, err := e.Prepare(ctx, src)
+	if err != nil {
+		return err
+	}
+	apply()
 	return nil
 }
 

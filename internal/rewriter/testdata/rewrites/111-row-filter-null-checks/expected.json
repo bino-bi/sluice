@@ -1,0 +1,13 @@
+{
+  "outcome": "allow",
+  "sql": "SELECT id FROM (SELECT * FROM pg.public.products sluice_src WHERE sluice_src.deleted_at IS NULL AND sluice_src.sku IS NOT NULL AND NOT sluice_src.region IS NULL) products",
+  "changed": true,
+  "applied_policies": [
+    "RowFilterPolicy/null-checks",
+    "SqlAccessPolicy/allow-all"
+  ],
+  "fingerprint": "568ce9ac28a15c3b",
+  "filters": [
+    "pg.public.products"
+  ]
+}

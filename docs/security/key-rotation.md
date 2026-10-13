@@ -70,7 +70,7 @@ Sluice reads a `secret://env/` value from its own process environment. A new or 
 
 ## Limits
 
-- Sluice uses the pepper and the genesis byte for byte. A newline at the end of a secret file is part of the value.
+- Sluice cuts spaces and line ends at the end of the pepper and the genesis. `sluice apikey hash --pepper secret://...` does the same.
 - Without a reload, Sluice can use an old mask salt for up to 10 minutes.
 - With `claims.subjectId`, the audit log does not show which key a client used.
 

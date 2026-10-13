@@ -69,8 +69,8 @@ stack the server uses.`,
 }
 
 // resolvePepper returns the pepper bytes. A value that starts with
-// "secret://" is resolved through the default resolver; anything else
-// is taken verbatim.
+// "secret://" is resolved through the default resolver and trimmed like
+// the server does; anything else is taken verbatim.
 func resolvePepper(ctx context.Context, v string) ([]byte, error) {
 	if !strings.HasPrefix(v, "secret://") {
 		return []byte(v), nil
@@ -79,5 +79,9 @@ func resolvePepper(ctx context.Context, v string) ([]byte, error) {
 		ctx = context.Background()
 	}
 	r := secrets.NewResolver(secrets.ResolverOptions{})
-	return r.Resolve(ctx, v)
+	pepper, err := r.ResolveString(ctx, v)
+	if err == nil && pepper == "" {
+		err = fmt.Errorf("pepper %s: the secret is empty", v)
+	}
+	return []byte(pepper), err
 }

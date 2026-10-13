@@ -18,6 +18,7 @@ MCP tool errors use the same codes.
 | `ACL_DENIED` | 403 | Access denied by policy |
 | `ACL_REJECTED` | 403 | Query shape rejected by policy |
 | `ERR_DATASOURCE_UNAVAILABLE` | 503 | Data source unavailable |
+| `ERR_POLICY_UNAVAILABLE` | 503 | Policy engine unavailable; request refused (fail-closed) |
 | `ERR_CONFIG_INVALID` | 400 | Server configuration invalid |
 | `ERR_POLICY_INVALID` | 400 | Policy document invalid |
 | `ERR_TIMEOUT` | 504 | Request timed out |

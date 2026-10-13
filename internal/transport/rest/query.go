@@ -12,6 +12,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
@@ -52,6 +53,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		Timeout:  time.Duration(req.TimeoutMS) * time.Millisecond,
 		Format:   format,
 		User:     user,
+		Facts:    policy.NewRequestFacts(r.Header, identity.RemoteIP(r)),
 		Origin:   queryservice.OriginREST,
 		Metadata: req.Meta,
 	}

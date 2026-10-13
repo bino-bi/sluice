@@ -12,7 +12,7 @@ Sluice stands between clients you do not trust and your data. This page lists th
 | Statements | Read-only. Sluice rejects writes and attaches databases `READ_ONLY`. |
 | [Audit log](audit.md) | `audit.failClosed: true`. A client gets rows only after Sluice queued the audit record. |
 | Admin API | Off. Without `admin.token` it accepts every request. |
-| TLS | Off. REST and admin serve plain HTTP until you set `tls`. MCP over HTTP has no `tls` setting. |
+| TLS | Off. REST, MCP over HTTP and admin serve plain HTTP until you set `tls`. |
 | Secrets | Sluice writes no secret value to logs, metrics or the audit log. |
 
 See the [hardening checklist](hardening.md) and the [threat model](threat-model.md).
@@ -26,8 +26,8 @@ In each case the client gets an error and no rows.
 | No policy allows a table | `ACL_DENIED` |
 | A CEL condition fails with an error | `ACL_DENIED` |
 | OPA returns no decision | `ACL_DENIED` |
-| OPA returns an unknown field, or OpenFGA returns an error | `ERR_INTERNAL` |
-| A policy template uses a claim the subject lacks | `ERR_INTERNAL` |
+| OPA returns an unknown field, or OpenFGA returns an error | `ERR_POLICY_UNAVAILABLE` |
+| A policy template uses a claim the subject lacks | `ACL_DENIED` |
 | The audit queue does not take the record | `ERR_AUDIT_UNAVAILABLE` |
 | The approval queue is full | `ERR_RATE_LIMITED` |
 

@@ -105,3 +105,42 @@ func TestHandleQuery_HealthNeverRateLimited(t *testing.T) {
 		t.Fatalf("health: got %d want 200 — probes must not be rate limited", w.Code)
 	}
 }
+
+// A request that the per-IP bucket refuses must not take a token of the
+// global bucket: one client over its limit would starve all others.
+func TestRateLimit_PerIPRefusalLeavesTheGlobalBucket(t *testing.T) {
+	t.Parallel()
+	clock := func() time.Time { return time.Unix(0, 0) }
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier:    &stubIdentifier{},
+		GlobalLimiter: ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 3}, 1, clock),
+		PerIPLimiter:  ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 100, clock),
+	})
+	for range 5 {
+		_ = postQuery(srv, "203.0.113.7:1000")
+	}
+	if w := postQuery(srv, "203.0.113.8:1000"); w.Code == http.StatusTooManyRequests {
+		t.Fatalf("another client got 429: the refused requests emptied the global bucket: %s", w.Body.String())
+	}
+}
+
+// A request over the rate limit never reaches the login, so it reports no
+// failed login either.
+func TestRateLimit_RefusedRequestReportsNoFailedLogin(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier:    &stubIdentifier{err: identity.ErrInvalidCredential},
+		GlobalLimiter: ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 1, func() time.Time { return time.Unix(0, 0) }),
+		AuthFailed:    func(string, string) { calls++ },
+	})
+	if w := postQuery(srv, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("first: got %d want 401", w.Code)
+	}
+	if w := postQuery(srv, ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second: got %d want 429", w.Code)
+	}
+	if calls != 1 {
+		t.Errorf("failed logins reported = %d, want 1", calls)
+	}
+}

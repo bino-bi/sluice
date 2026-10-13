@@ -27,6 +27,7 @@ const (
 
 	// Resource / configuration
 	CodeDataSourceUnavailable Code = "ERR_DATASOURCE_UNAVAILABLE"
+	CodePolicyUnavailable     Code = "ERR_POLICY_UNAVAILABLE"
 	CodeConfigInvalid         Code = "ERR_CONFIG_INVALID"
 	CodePolicyInvalid         Code = "ERR_POLICY_INVALID"
 
@@ -69,6 +70,7 @@ var httpStatusByCode = map[Code]int{
 	CodeACLDenied:             http.StatusForbidden,
 	CodeACLRejected:           http.StatusForbidden,
 	CodeDataSourceUnavailable: http.StatusServiceUnavailable,
+	CodePolicyUnavailable:     http.StatusServiceUnavailable,
 	CodeConfigInvalid:         http.StatusBadRequest,
 	CodePolicyInvalid:         http.StatusBadRequest,
 	CodeTimeout:               http.StatusGatewayTimeout,
@@ -98,6 +100,7 @@ var defaultMessage = map[Code]string{
 	CodeACLDenied:             "access denied by policy",
 	CodeACLRejected:           "query shape rejected by policy",
 	CodeDataSourceUnavailable: "data source unavailable",
+	CodePolicyUnavailable:     "policy engine unavailable; request refused (fail-closed)",
 	CodeConfigInvalid:         "server configuration invalid",
 	CodePolicyInvalid:         "policy document invalid",
 	CodeTimeout:               "request timed out",
@@ -144,6 +147,7 @@ func AllCodes() []Code {
 		CodeACLDenied,
 		CodeACLRejected,
 		CodeDataSourceUnavailable,
+		CodePolicyUnavailable,
 		CodeConfigInvalid,
 		CodePolicyInvalid,
 		CodeTimeout,

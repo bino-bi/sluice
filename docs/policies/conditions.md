@@ -45,9 +45,11 @@ Sluice checks every expression at load. A value alone, such as `query.has_cte`, 
 | `subject.groups` | list | Groups of the subject. |
 | `subject.claims` | map | Claims of the subject. |
 | `subject.auth_method` | string | `jwt` or `api_key`. |
+| `request.remote_ip`, `request.user_agent` | string | IP address and user agent of the client. Empty over stdio. |
+| `request.headers` | map | Request headers, names in lower case: `request.headers["x-region"]`. Credential headers are left out. |
 | `query.tables` | list | Tables as `catalog.schema.table`, lower case. A missing part stays empty: `..orders`. |
 | `query.catalogs` | list | Catalogs that the query reads. |
-| `query.joins` | int | Count of `JOIN` keywords, not of comma joins. |
+| `query.joins` | int | Count of `JOIN` keywords and of commas between `FROM` items. |
 | `query.has_limit`, `query.limit` | boolean, int | The query has a `LIMIT`, and its value, or 0 when that is not a plain number, such as `500 + 1` or `'500'`. |
 | `query.has_where`, `query.where_columns` | boolean, list | The query has a `WHERE`, and its columns. |
 | `query.is_aggregate`, `query.group_by_columns` | boolean, list | The query aggregates, and its `GROUP BY` columns. |
@@ -70,7 +72,7 @@ This allow needs a `LIMIT` and a `query.limit` of at most 100.
 --8<-- "examples/conditions/tests/conditions.yaml:limit"
 ```
 
-A `LIMIT` that is not a plain number and a `UNION` still pass, so this is not a row limit. For that, use a [`QueryRewritePolicy`](guardrails.md).
+A `LIMIT` that is not a plain number still passes, so this is not a row limit. For that, use a [`QueryRewritePolicy`](guardrails.md).
 
 ### A condition that fails
 
@@ -97,7 +99,9 @@ A lookup of a missing claim is an error, not `false`. Sluice then denies the who
 ## Limits
 
 - No variable holds the current time.
-- In a `UNION`, the `query.*` values describe only the first SELECT. They do not see a `WITH`, `ORDER BY` or `LIMIT` of the whole statement. They do not see subqueries. Only `query.tables` and `query.catalogs` cover the whole statement.
+- Most `query.*` values do not read subqueries. See [Rejects and rewrites](guardrails.md).
+- The client sets its headers and its user agent. Trust them only when a proxy that you control sets them.
+- Only queries carry `request.*` values. The MCP tools that list or describe tables, `explain_access` and the admin API see empty values. So a condition on `request.*` can hide a table from the lists that a query may read.
 - A row filter has its own CEL form. See [Row filters](row-filters.md).
 
 ## See also

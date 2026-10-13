@@ -185,10 +185,6 @@ func (r *Registry) addDataSource(ctx context.Context, spec *apitypes.DataSource)
 		Type:    typ,
 		Raw:     marshalSpec(spec.Spec),
 		Secrets: r.opts.Secrets,
-		Filters: pkgds.Filters{
-			Schemas: spec.Spec.Schemas,
-			Tables:  spec.Spec.Tables,
-		},
 	}
 
 	ds, err := factory(ctx, driverSpec)
@@ -217,8 +213,7 @@ func (r *Registry) addDataSource(ctx context.Context, spec *apitypes.DataSource)
 // so this stays allocation-light on the composition hot path.
 func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
 	raw := map[string]any{
-		"type":     string(s.Type),
-		"readonly": s.Readonly,
+		"type": string(s.Type),
 	}
 	if s.Connection != "" {
 		raw["connection"] = s.Connection
@@ -231,9 +226,6 @@ func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
 	}
 	if s.Bucket != "" {
 		raw["bucket"] = s.Bucket
-	}
-	if s.Prefix != "" {
-		raw["prefix"] = s.Prefix
 	}
 	if s.Region != "" {
 		raw["region"] = s.Region
@@ -258,9 +250,6 @@ func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
 	}
 	if s.TokenRef != "" {
 		raw["tokenRef"] = s.TokenRef
-	}
-	if s.AttachMode != "" {
-		raw["attachMode"] = string(s.AttachMode)
 	}
 	return raw
 }

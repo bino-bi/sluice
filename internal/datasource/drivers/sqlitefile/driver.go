@@ -56,15 +56,10 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("sqlite: stat %q: %w", path, err)
 	}
-	readonly := true
-	if b, ok := spec.Raw["readonly"].(bool); ok && !b {
-		// v2 behaviour; MVP always enforces read-only.
-		_ = b
-	}
 	return &driver{
 		name:     spec.Name,
 		path:     path,
-		readonly: readonly,
+		readonly: true,
 	}, nil
 }
 
@@ -173,6 +168,15 @@ ORDER BY table_schema, table_name, ordinal_position
 // driver-specific query path lets admins confirm the catalog is still
 // alive without knowing DuckDB internals.
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
+	// The query below reads DuckDB's own catalog and passes without the
+	// file. DuckDB opens the file again for each statement on it.
+	// The error does not name the path: GET /v1/ready shows it.
+	if _, err := os.Stat(d.path); err != nil {
+		d.mu.Lock()
+		d.lastProbeOK = false
+		d.mu.Unlock()
+		return errors.New("sqlite: health: database file is missing or not readable")
+	}
 	q := opts.Query
 	if q == "" {
 		// Same probe every other driver uses: one row from DuckDB's

@@ -29,8 +29,8 @@ type RejectSpec struct {
 // against the parsed SQL AST by internal/policy; the exact language lands
 // with v1.
 type RejectRule struct {
-	Name       string `yaml:"name" json:"name"`
-	Expression string `yaml:"expression" json:"expression"`
+	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
+	Expression string `yaml:"expression,omitempty" json:"expression,omitempty"`
 	Message    string `yaml:"message,omitempty" json:"message,omitempty"`
 	Code       string `yaml:"code,omitempty" json:"code,omitempty"`
 }

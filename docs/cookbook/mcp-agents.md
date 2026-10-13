@@ -28,7 +28,7 @@ Open a session. The step stores the session id in `data/mcp-session`. It needs c
 --8<-- "examples/mcp-agent/steps/01-initialize.sh"
 ```
 
-Read the columns of `products`. The table list is empty until `describe_table` has read the catalog.
+Read the columns of `products`.
 
 ```bash
 --8<-- "examples/mcp-agent/steps/03-describe-table.sh"

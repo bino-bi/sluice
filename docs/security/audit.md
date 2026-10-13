@@ -56,11 +56,12 @@ What happened: the changed record in line 4 no longer matches its hash.
 |---|---|
 | `timestamp`, `event_type`, `query_id` | Time, event, and the `X-Query-Id` response header |
 | `subject` | `id`, `method` (`api_key` or `jwt`), `issuer`, `email`, `groups`, `remote_ip` |
-| `origin`, `remote_ip` | `rest`, `mcp` or `admin`, and the client address |
+| `origin`, `remote_ip` | `rest`, `mcp` or `admin`, and the IP address of the client |
 | `sql_sample` | The SQL as sent, up to `audit.sqlSampleBytes`. 0 turns it off |
 | `sql_fingerprint`, `rewritten_fingerprint` | Hashes of the sent and the rewritten SQL |
 | `tables`, `catalogs` | What the query reads |
 | `policies_applied` | The policies behind the decision |
+| `policies_shadow` | Policies that matched in `Audit` or `DryRun` mode. `would: deny` or `would: reject` marks one that would have stopped the query. With the `composite` engine, also a column mask that lost to the mask of an earlier member |
 | `decision`, `message` | `allow`, `deny`, `reject` or `error`, with the reason |
 | `error_code` | Not on a policy `deny` or `reject`. A refused write is `error` with `ACL_REJECTED` |
 | `row_count`, `truncated` | Result size, on `query-result` only. Left out when 0 or `false` |
@@ -78,7 +79,10 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `query` | Sluice decides on a query |
 | `query-result` | An allowed query ends |
 | `admin-action` | `GET /admin/subjects/explain` or the MCP tool `explain_access` runs |
+| `auth-event` | A request fails the login on REST, MCP over HTTP or the admin API |
 | `approval-requested`, `approval-approved`, `approval-rejected`, `approval-expired` | An approval changes state |
+
+An `auth-event` record has `origin`, `remote_ip`, the `error_code` `ERR_UNAUTHORIZED` and a `message`: `no credential`, `expired credential` or `invalid credential`. It holds no part of the credential. For each of the three listeners, Sluice writes at most 5 of these records per second, after a burst of 20. `sluice_audit_auth_events_dropped_total` counts the failed logins without a record.
 
 ## Hash chain
 
@@ -95,8 +99,14 @@ Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the recor
 | Exit status | Meaning |
 |---|---|
 | 0 | Chain intact |
-| 1 | Directory or file not readable |
-| 4 | Chain broken, a line that is not JSON, or another anchor |
+| 1 | Directory or file not readable, or a keyed chain without `--key-ref` |
+| 4 | Chain broken, a line that is not JSON, another anchor, a wrong key, or no record at all. Also `--key-ref` on a chain without a keyed record |
+
+### Chain key
+
+Without a key, anyone who can write the files can change a record and compute all later hashes again. Set `audit.chainKeyRef` to a secret of 32 bytes or more. Each new `hash` is then an HMAC-SHA256 with that key, and the record has `hash_alg: hmac-sha256`. Verify needs the same secret: `sluice audit verify <dir> --key-ref secret://env/SLUICE_AUDIT_CHAIN_KEY`.
+
+You can add a key to an existing directory: the first keyed record follows the last record without a key. Sluice logs a warning at that start. After that the key must stay. Sluice does not start without it, or with another key, as a guard against a config mistake. With `--key-ref`, verify fails on a record without a key after a keyed one, and on a chain without any keyed record. So always verify a keyed chain with `--key-ref`. Keep the key away from the host that holds the log.
 
 ## Sinks
 
@@ -123,8 +133,8 @@ Syslog and S3 get copies. Their failures never stop a query. See [Configuration]
 
 ## Limits
 
-- No record for a failed login, a reload, other admin calls, or a request over `limits.globalRps`, `limits.perIpRps` or `limits.maxConcurrent`.
-- The hash has no secret key. Verify does not detect missing newest records, or a change when the later hashes are computed again. Store each `last_hash` on another host. `--json` prints it in full. A changed log no longer contains it.
+- No record for a reload, other admin calls, or a request over `limits.globalRps` or `limits.perIpRps`. In a flood of failed logins, only a part gets a record.
+- Without `audit.chainKeyRef`, verify does not detect a change when the later hashes are computed again. With or without a key, it does not detect missing newest records or a replaced directory. The records before the first keyed one are only as safe as a chain without a key. Store each `last_hash` on another host. `--json` prints it in full.
 - A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
 - On shutdown, Sluice waits up to 10 seconds to write queued records.

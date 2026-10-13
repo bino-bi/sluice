@@ -77,7 +77,7 @@ The REST endpoints need no login.
 
 ## TLS
 
-`rest.tls` and `admin.tls` take the same keys. The lowest version is TLS 1.2.
+`rest.tls`, `mcp.tls` and `admin.tls` take the same keys. The lowest version is TLS 1.2.
 
 | Key | Meaning |
 |---|---|

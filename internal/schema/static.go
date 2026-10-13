@@ -48,3 +48,4 @@ func (s *staticCache) Invalidate(Key)                          {}
 func (s *staticCache) InvalidateCatalog(string)                {}
 func (s *staticCache) InvalidateAll()                          {}
 func (s *staticCache) Refresh(context.Context, []string) error { return nil }
+func (s *staticCache) Load(context.Context, []string)          {}

@@ -532,3 +532,73 @@ func TestParseRefusesIdentifiersOver63Bytes(t *testing.T) {
 		}
 	}
 }
+
+// The query.* values of reject rules and conditions. A value describes the
+// whole statement: every SELECT of a set operation, the ORDER BY and LIMIT
+// of the statement, a WITH and a join at any depth.
+func TestShapeValues(t *testing.T) {
+	type want struct {
+		star, where, agg, orderBy, limit, cte, recursive, union bool
+		limitValue                                              int64
+		joins                                                   int
+		whereCols, groupCols                                    string
+	}
+	cases := []struct {
+		sql  string
+		want want
+	}{
+		{"SELECT id FROM a WHERE x = 1 ORDER BY id LIMIT 5",
+			want{where: true, orderBy: true, limit: true, limitValue: 5, whereCols: "x"}},
+		// Every SELECT of the UNION must have a WHERE and aggregate.
+		{"SELECT id FROM a WHERE x = 1 UNION SELECT id FROM b",
+			want{union: true, whereCols: "x"}},
+		{"SELECT id FROM a WHERE x = 1 UNION SELECT id FROM b WHERE y = 2",
+			want{union: true, where: true, whereCols: "x,y"}},
+		{"SELECT count(*) FROM a UNION ALL SELECT id FROM b",
+			want{union: true}},
+		{"SELECT count(*) FROM a GROUP BY g UNION ALL SELECT max(id) FROM b GROUP BY h",
+			want{union: true, agg: true, groupCols: "g,h"}},
+		// A star in any SELECT of the UNION, not only the first.
+		{"SELECT id FROM a UNION SELECT * FROM b",
+			want{union: true, star: true}},
+		{"SELECT id FROM a UNION SELECT id FROM b UNION SELECT c.* FROM c",
+			want{union: true, star: true}},
+		// ORDER BY and LIMIT of the statement, not of one SELECT in parentheses.
+		{"SELECT id FROM a UNION SELECT id FROM b ORDER BY id LIMIT 7",
+			want{union: true, orderBy: true, limit: true, limitValue: 7}},
+		{"(SELECT id FROM a ORDER BY id LIMIT 3) UNION SELECT id FROM b",
+			want{union: true}},
+		// A WITH of the whole statement and a WITH in a subquery.
+		{"WITH w AS (SELECT id FROM a) SELECT id FROM w UNION SELECT id FROM b",
+			want{union: true, cte: true}},
+		{"SELECT id FROM (WITH RECURSIVE r AS (SELECT 1 AS id) SELECT id FROM r) s",
+			want{cte: true, recursive: true}},
+		// Joins: the keyword, a comma, and both in a subquery.
+		{"SELECT a.id FROM a, b", want{joins: 1}},
+		{"SELECT a.id FROM a JOIN b ON a.id = b.id, c", want{joins: 2}},
+		{"SELECT id FROM (SELECT a.id FROM a JOIN b USING (id) JOIN c USING (id)) s", want{joins: 2}},
+		{"SELECT id FROM a WHERE id IN (SELECT b.id FROM b, c)", want{where: true, joins: 1}},
+		{"SELECT a.id FROM a JOIN b USING (id) UNION SELECT c.id FROM c JOIN d USING (id)", want{union: true, joins: 2}},
+		// A star in a subquery is not the result of the statement.
+		{"SELECT id FROM (SELECT * FROM a) s", want{}},
+		{"EXPLAIN SELECT id FROM a UNION SELECT * FROM b", want{union: true, star: true}},
+	}
+	p := newTestParser(t)
+	for _, tc := range cases {
+		ast, err := p.Parse(context.Background(), tc.sql)
+		if err != nil {
+			t.Errorf("%s: %v", tc.sql, err)
+			continue
+		}
+		s := ast.Shape()
+		got := want{
+			star: s.HasSelectStar, where: s.HasWhere, agg: s.IsAggregate, orderBy: s.HasOrderBy,
+			limit: s.HasLimit, cte: s.HasCTE, recursive: s.IsRecursiveCTE, union: s.HasUnion,
+			limitValue: s.LimitValue, joins: s.Joins,
+			whereCols: strings.Join(s.WhereColumns, ","), groupCols: strings.Join(s.GroupByColumns, ","),
+		}
+		if got != tc.want {
+			t.Errorf("%s:\n got  %+v\n want %+v", tc.sql, got, tc.want)
+		}
+	}
+}

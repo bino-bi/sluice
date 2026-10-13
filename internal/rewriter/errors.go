@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -65,6 +66,9 @@ func ErrorCode(err error) pkgerr.Code {
 		return pkgerr.CodeRewriteFailed
 	case errors.Is(err, ErrStatementRejected):
 		return pkgerr.CodeACLRejected
+	case errors.Is(err, policy.ErrTemplateVarMissing):
+		// A row filter needs a value the subject does not have.
+		return pkgerr.CodeACLDenied
 	case errors.Is(err, context.Canceled):
 		return pkgerr.CodeCanceled
 	case errors.Is(err, context.DeadlineExceeded):

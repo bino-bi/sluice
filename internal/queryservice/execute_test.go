@@ -231,6 +231,7 @@ func TestExecute_HappyPath(t *testing.T) {
 	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
 		SQL:    "SELECT id, name FROM pg.public.orders",
 		Origin: queryservice.OriginREST,
+		User:   &identity.UserCtx{Subject: "alice", RemoteAddr: "10.1.2.3"},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -271,6 +272,11 @@ func TestExecute_HappyPath(t *testing.T) {
 	if result.RowCount != 2 {
 		t.Fatalf("result row_count = %d, want 2", result.RowCount)
 	}
+	// The result record names who got the rows, like the access record.
+	if result.Subject.ID != access.Subject.ID || result.Subject.ID == "" || result.Origin != access.Origin || result.RemoteIP != access.RemoteIP {
+		t.Fatalf("result record: subject %+v origin %q remote_ip %q, want those of the access record (%+v, %q, %q)",
+			result.Subject, result.Origin, result.RemoteIP, access.Subject, access.Origin, access.RemoteIP)
+	}
 }
 
 func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
@@ -288,6 +294,7 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 			MaxRowsCeiling: 10,
 			DefaultTimeout: 30 * time.Second,
 			MaxTimeout:     5 * time.Second,
+			MaxResultBytes: 4096,
 		},
 	})
 	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
@@ -303,6 +310,9 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 	if ex.lastReq.MaxRows != 10 {
 		t.Errorf("MaxRows = %d, want clamped to 10", ex.lastReq.MaxRows)
 	}
+	if ex.lastReq.MaxBytes != 4096 {
+		t.Errorf("MaxBytes = %d, want the limit 4096", ex.lastReq.MaxBytes)
+	}
 	if ex.lastReq.Timeout != 5*time.Second {
 		t.Errorf("Timeout = %s, want clamped to 5s", ex.lastReq.Timeout)
 	}
@@ -311,6 +321,61 @@ func TestExecute_ClampsMaxRowsAndTimeout(t *testing.T) {
 type denyingRateLimiter struct{}
 
 func (denyingRateLimiter) Allow(_, _ string) bool { return false }
+
+// blockingExecutor holds every call until release is closed.
+type blockingExecutor struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingExecutor) Execute(context.Context, executor.Request) (*executor.Response, error) {
+	e.started <- struct{}{}
+	<-e.release
+	return nil, errors.New("released")
+}
+
+// A request refused because every concurrency slot is in use leaves an
+// audit record, and the client gets a query id for it.
+func TestExecute_SlotFullIsAudited(t *testing.T) {
+	a := &fakeAudit{}
+	ex := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    a,
+		Limits:   queryservice.Limits{MaxConcurrent: 1},
+	})
+	req := queryservice.QueryRequest{
+		SQL:    "SELECT id FROM pg.public.orders",
+		Origin: queryservice.OriginREST,
+		User:   &identity.UserCtx{Subject: "alice", RemoteAddr: "10.1.2.3"},
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.Execute(context.Background(), req)
+	}()
+	<-ex.started // the first request holds the only slot
+
+	_, err := svc.Execute(context.Background(), req)
+	ae := pkgerr.FromError(err)
+	if err == nil || ae.Code != pkgerr.CodeRateLimited || ae.QueryID == "" {
+		t.Fatalf("err = %v (query id %q), want ERR_RATE_LIMITED with a query id", err, ae.QueryID)
+	}
+	var refused []*audit.Record
+	for _, rec := range a.all() {
+		if rec.ErrorCode == string(pkgerr.CodeRateLimited) {
+			refused = append(refused, rec)
+		}
+	}
+	if len(refused) != 1 || refused[0].QueryID != ae.QueryID || refused[0].Subject.ID != "alice" || refused[0].Message != "service saturated" {
+		t.Fatalf("records of the refused request = %+v, want one with its query id, the subject and the message", refused)
+	}
+	close(ex.release)
+	<-done
+}
 
 func TestExecute_RateLimitedSubject(t *testing.T) {
 	a := &fakeAudit{}
@@ -762,6 +827,105 @@ func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
 	}
 }
 
+// The audit record of a query lists the policies that matched in Audit or
+// DryRun mode, with what they would have done.
+func TestExecute_AuditsShadowPolicies(t *testing.T) {
+	a := &fakeAudit{}
+	shadow := []pkgapi.AppliedPolicy{{Kind: pkgapi.KindSQLAccessPolicy, Name: "dry-deny", Priority: 100, Would: "deny"}}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow, Shadow: shadow}},
+		&fakeRewriter{},
+		&fakeExecutor{},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	_ = res.Rows.Close()
+	recs := a.all()
+	if len(recs) == 0 || len(recs[0].PoliciesShadow) != 1 || recs[0].PoliciesShadow[0] != shadow[0] {
+		t.Fatalf("query record = %+v, want policies_shadow with the dry-run deny", recs)
+	}
+}
+
+// A policy engine that cannot decide (a ReBAC or OPA backend is down) is
+// an outage: 503 with its own code, not a deny and not ERR_INTERNAL. The
+// audit record carries the code the client gets, and the cause is logged.
+func TestExecute_PolicyErrorCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		code   pkgerr.Code
+		logged bool
+	}{
+		{"backend down", errors.New("openfga: dial tcp: connection refused"), pkgerr.CodePolicyUnavailable, true},
+		{"timeout", fmt.Errorf("openfga check: %w", context.DeadlineExceeded), pkgerr.CodeTimeout, false},
+		{"canceled", context.Canceled, pkgerr.CodeCanceled, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var log bytes.Buffer
+			a := &fakeAudit{}
+			ex := &fakeExecutor{}
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{err: tc.err},
+				Rewriter: &fakeRewriter{},
+				Executor: ex,
+				Audit:    a,
+				Logger:   telemetry.NewLogger(&log, telemetry.LoggingConfig{Format: "json", MaxErrorBytes: 4096}),
+			})
+			_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+			ae := pkgerr.FromError(err)
+			if ae == nil || ae.Code != tc.code {
+				t.Fatalf("err = %v, want %s", err, tc.code)
+			}
+			if strings.Contains(ae.Message, "openfga") {
+				t.Errorf("client message %q holds the cause", ae.Message)
+			}
+			if recs := a.all(); len(recs) != 1 || recs[0].ErrorCode != string(tc.code) || recs[0].Decision != audit.DecisionError {
+				t.Fatalf("audit records = %+v, want one error record with %s", recs, tc.code)
+			}
+			got := log.String()
+			if tc.logged != (strings.Contains(got, `"level":"ERROR"`) && strings.Contains(got, "connection refused") && strings.Contains(got, ae.QueryID)) {
+				t.Errorf("log = %q, logged want %v", got, tc.logged)
+			}
+		})
+	}
+}
+
+// A row filter that needs a value the subject does not have denies the
+// query. The audit record says deny and holds the reason, the client gets
+// the plain code.
+func TestExecute_MissingTemplateValueIsDeny(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{err: fmt.Errorf("row filter shop.main.orders: %w: claim tenant_id", policy.ErrTemplateVarMissing)},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	ae := pkgerr.FromError(err)
+	if err == nil || ae.Code != pkgerr.CodeACLDenied {
+		t.Fatalf("err = %v, want ACL_DENIED", err)
+	}
+	if strings.Contains(ae.Message, "tenant_id") {
+		t.Errorf("client message %q names the template value", ae.Message)
+	}
+	recs := a.all()
+	if len(recs) != 1 {
+		t.Fatalf("audit records = %d, want 1", len(recs))
+	}
+	// As for a policy deny, the record has no error code.
+	if recs[0].Decision != audit.DecisionDeny || recs[0].ErrorCode != "" || !strings.Contains(recs[0].Message, "tenant_id") {
+		t.Errorf("record = decision %q code %q message %q, want deny, no code and the reason", recs[0].Decision, recs[0].ErrorCode, recs[0].Message)
+	}
+}
+
 // The audit record of a failed execution carries the code the client
 // gets. A statement DuckDB refused is logged with its cause, because the
 // client only gets the code.
@@ -779,6 +943,9 @@ func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
 		{"rejected, long cause", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrRejected, errors.New(cause+strings.Repeat("A", 100000))), pkgerr.CodeQueryFailed, true},
 		{"timeout", context.DeadlineExceeded, pkgerr.CodeTimeout, false},
 		{"other", errors.New("boom"), pkgerr.CodeInternal, false},
+		// The statement ran as the client wrote it, so a parser error of
+		// DuckDB is a syntax error of the client.
+		{"parser, statement as sent", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrSyntax, errors.New("Parser Error: x")), pkgerr.CodeSyntax, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -807,8 +974,65 @@ func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
 			if len(got) > 8192 {
 				t.Fatalf("log line has %d bytes, want the cause cut", len(got))
 			}
-			if tc.logged && !(strings.Contains(got, `"level":"WARN"`) && strings.Contains(got, ae.QueryID) && strings.Contains(got, cause)) {
+			if tc.logged && (!strings.Contains(got, `"level":"WARN"`) || !strings.Contains(got, ae.QueryID) || !strings.Contains(got, cause)) {
 				t.Fatalf("log = %q, want a WARN line with the query_id and the cause", got)
+			}
+		})
+	}
+}
+
+// A parser error of DuckDB on SQL that Sluice rewrote is a fault of the
+// rewrite, not of the client.
+func TestExecute_ParserErrorOnRewrittenSQLStaysInternal(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{result: &rewriter.RewriteResult{SQL: "SELECT 1 +", Changed: true}},
+		&fakeExecutor{err: fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrSyntax, errors.New("Parser Error: x"))},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeInternal {
+		t.Fatalf("err = %v, want ERR_INTERNAL", err)
+	}
+}
+
+// DuckDB reports a source that went away with an error that says nothing
+// about the cause (a removed SQLite file gives "Invalid Error"). The last
+// health test of the data sources of the query decides between
+// ERR_INTERNAL and ERR_DATASOURCE_UNAVAILABLE.
+func TestExecute_ExecErrorChecksTheDataSourceHealth(t *testing.T) {
+	for name, tc := range map[string]struct {
+		down bool
+		want pkgerr.Code
+	}{
+		"source down": {true, pkgerr.CodeDataSourceUnavailable},
+		"source fine": {false, pkgerr.CodeInternal},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &fakeAudit{}
+			var asked []string
+			svc := queryservice.New(queryservice.Options{
+				Parser:   &fakeParser{},
+				Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+				Rewriter: &fakeRewriter{},
+				Executor: &fakeExecutor{err: fmt.Errorf("%w: %w", executor.ErrExecute, errors.New("Invalid Error: unable to open database file"))},
+				Audit:    a,
+				SourceDown: func(catalog string) bool {
+					asked = append(asked, catalog)
+					return tc.down
+				},
+			})
+			_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+			if ae := pkgerr.FromError(err); err == nil || ae.Code != tc.want {
+				t.Fatalf("err = %v, want %s", err, tc.want)
+			}
+			if fmt.Sprint(asked) != "[pg]" {
+				t.Errorf("asked for %v, want the catalog of the query", asked)
+			}
+			if recs := a.all(); len(recs) != 1 || recs[0].ErrorCode != string(tc.want) {
+				t.Errorf("audit records = %+v, want one with %s", recs, tc.want)
 			}
 		})
 	}

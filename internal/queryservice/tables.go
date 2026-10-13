@@ -49,8 +49,10 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 		tables = append(tables, in.Table)
 	}
 
+	// Without SQL the question is about a read of the table.
 	result, err := s.opts.Policy.Explain(ctx, policy.Input{
 		User: in.User, AST: ast, Shape: shape, Tables: tables, Now: start,
+		Action: pkgapi.ActionSelect,
 	})
 	rec := &audit.Record{
 		EventType: audit.EventAdminAction,
@@ -62,6 +64,7 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 		Message:   "policy explain",
 	}
 	if err != nil {
+		err = s.policyErrToAPI(err, qid)
 		setErrorCode(rec, err)
 		rec.Decision = audit.DecisionError
 	} else if result != nil {
@@ -69,7 +72,7 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 	}
 	s.emit(ctx, rec, start)
 	if err != nil {
-		return nil, toAPIError(err, qid)
+		return nil, err
 	}
 	return result, nil
 }
@@ -103,6 +106,7 @@ func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *
 	if s.opts.Schema == nil {
 		return all, nil
 	}
+	s.loadCatalogs(ctx, "")
 	known := map[string]bool{}
 	visible := map[string]bool{}
 	for _, e := range s.opts.Schema.All() {
@@ -145,6 +149,7 @@ const (
 // The second return value is the cursor for the next page ("" when the
 // listing is exhausted).
 func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx, page Page) ([]parser.TableRef, string, error) {
+	s.loadCatalogs(ctx, catalog)
 	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
 		if e.Key.Catalog != catalog {
 			return false
@@ -239,9 +244,32 @@ func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *
 // it may query without probing by trial and error. The second return
 // value is the next-page cursor ("" when exhausted).
 func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, catalog string, page Page) ([]parser.TableRef, string, error) {
+	s.loadCatalogs(ctx, catalog)
 	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
 		return catalog == "" || e.Key.Catalog == catalog
 	})
+}
+
+// loadCatalogs makes the schema cache read the tables of every attached
+// catalog, or only of catalog when that is set. A query loads a schema
+// only for a filtered or masked table, so without this a listing shows
+// nothing after a start or a reload. A data source that is down is left
+// out.
+func (s *Service) loadCatalogs(ctx context.Context, catalog string) {
+	if s.opts.Schema == nil || s.opts.Catalogs == nil {
+		return
+	}
+	var want []string
+	for _, c := range s.opts.Catalogs() {
+		if catalog != "" && c != catalog {
+			continue
+		}
+		if s.opts.SourceDown != nil && s.opts.SourceDown(c) {
+			continue
+		}
+		want = append(want, c)
+	}
+	s.opts.Schema.Load(ctx, want)
 }
 
 // tableVisible reports whether user may read ref — i.e. the policy engine
@@ -251,7 +279,9 @@ func (s *Service) tableVisible(ctx context.Context, user *identity.UserCtx, ref 
 	if s.opts.Policy == nil {
 		return false
 	}
-	dec, err := s.opts.Policy.Evaluate(ctx, policy.Input{User: user, Tables: []parser.TableRef{ref}})
+	dec, err := s.opts.Policy.Evaluate(ctx, policy.Input{
+		User: user, Tables: []parser.TableRef{ref}, Action: pkgapi.ActionSelect,
+	})
 	if err != nil || dec == nil {
 		return false
 	}

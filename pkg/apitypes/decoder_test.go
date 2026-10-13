@@ -126,55 +126,12 @@ spec:
 	}
 }
 
-func TestDecodeRejectsUnimplementedAuditSink(t *testing.T) {
+// A manifest of kind AuditSink never reached the audit pipeline: the sinks
+// come from audit.* in the server config. It is refused, also in strict
+// mode, with a message that names the place that works.
+func TestDecodeRejectsAuditSinkKind(t *testing.T) {
 	t.Parallel()
-	_, err := Decode(strings.NewReader(`
-apiVersion: sluice.bino.bi/v1alpha1
-kind: AuditSink
-metadata:
-  name: siem
-spec:
-  type: postgres
-  connection: postgres://audit
-`))
-	var ve *ValidationError
-	if !errors.As(err, &ve) {
-		t.Fatalf("expected *ValidationError, got %T: %v", err, err)
-	}
-	if ve.Field != "spec.type" {
-		t.Errorf("Field = %q, want spec.type", ve.Field)
-	}
-	if !strings.Contains(ve.Reason, "parsed but unimplemented") {
-		t.Errorf("Reason = %q, want parsed-but-unimplemented", ve.Reason)
-	}
-}
-
-func TestDecodeRejectsServerConfigAuditSinkManifest(t *testing.T) {
-	t.Parallel()
-	_, err := Decode(strings.NewReader(`
-apiVersion: sluice.bino.bi/v1alpha1
-kind: AuditSink
-metadata:
-  name: siem
-spec:
-  type: s3
-  bucket: audit-bucket
-`))
-	var ve *ValidationError
-	if !errors.As(err, &ve) {
-		t.Fatalf("expected *ValidationError, got %T: %v", err, err)
-	}
-	if ve.Field != "spec.type" {
-		t.Errorf("Field = %q, want spec.type", ve.Field)
-	}
-	if !strings.Contains(ve.Reason, "audit.s3 in sluice.yaml") {
-		t.Errorf("Reason = %q, want pointer to server config", ve.Reason)
-	}
-}
-
-func TestDecodeAcceptsFileAuditSink(t *testing.T) {
-	t.Parallel()
-	objs, err := Decode(strings.NewReader(`
+	const doc = `
 apiVersion: sluice.bino.bi/v1alpha1
 kind: AuditSink
 metadata:
@@ -182,12 +139,65 @@ metadata:
 spec:
   type: file
   path: /var/lib/sluice/audit
-`))
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
+`
+	for _, strict := range []bool{false, true} {
+		_, err := Decode(strings.NewReader(doc), WithStrictUnknown(strict))
+		if err == nil || !strings.Contains(err.Error(), "audit.file") {
+			t.Errorf("strict=%v: err = %v, want a pointer to audit.* in the server config", strict, err)
+		}
 	}
-	if len(objs) != 1 {
-		t.Fatalf("objects = %d, want 1", len(objs))
+}
+
+// A field that Sluice never acted on is refused when it is set, so that an
+// operator does not rely on it.
+func TestDecodeRejectsFieldsWithoutEffect(t *testing.T) {
+	t.Parallel()
+	ds := func(spec string) string {
+		return "apiVersion: sluice.bino.bi/v1alpha1\nkind: DataSource\nmetadata:\n  name: t\nspec:\n  type: sqlite\n  path: /data/shop.db\n" + spec
+	}
+	binding := "apiVersion: sluice.bino.bi/v1alpha1\nkind: SubjectBinding\nmetadata:\n  name: b\nspec:\n  issuer: https://idp.test\n"
+	rebac := func(backend string) string {
+		return "apiVersion: sluice.bino.bi/v1beta1\nkind: RelationshipPolicy\nmetadata:\n  name: r\nspec:\n" +
+			"  match:\n    any:\n      - resources:\n          tables: [\"docs\"]\n" +
+			"  backend:\n    endpoint: http://fga:8080\n    storeId: s1\n" + backend +
+			"  checks:\n    - objectTemplate: \"doc:{{table}}\"\n      relation: viewer\n"
+	}
+	cases := []struct {
+		name      string
+		yaml      string
+		wantField string // empty = decode must succeed
+	}{
+		{"plain data source", ds(""), ""},
+		{"readonly true", ds("  readonly: true\n"), ""},
+		{"readonly false", ds("  readonly: false\n"), "spec.readonly"},
+		{"attachMode readonly", ds("  attachMode: readonly\n"), ""},
+		{"attachMode readwrite", ds("  attachMode: readwrite\n"), "spec.attachMode"},
+		{"schemas", ds("  schemas: [main]\n"), "spec.schemas"},
+		{"tables", ds("  tables: [orders]\n"), "spec.tables"},
+		{"healthCheck", ds("  healthCheck:\n    query: SELECT 1\n    interval: 10s\n"), "spec.healthCheck"},
+		{"prefix", "apiVersion: sluice.bino.bi/v1alpha1\nkind: DataSource\nmetadata:\n  name: t\nspec:\n  type: s3\n  bucket: b\n  prefix: sales/\n", "spec.prefix"},
+		{"binding without groupsSource", binding, ""},
+		{"groupsSource", binding + "  groupsSource: claims\n", "spec.groupsSource"},
+		{"backend without type", rebac(""), ""},
+		{"backend type openfga", rebac("    type: openfga\n"), ""},
+		{"backend type spicedb", rebac("    type: spicedb\n"), "spec.backend.type"},
+		{"backend cacheTtl", rebac("    cacheTtl: 30s\n"), "spec.backend.cacheTtl"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Decode(strings.NewReader(tc.yaml))
+			if tc.wantField == "" {
+				if err != nil {
+					t.Fatalf("Decode: %v, want no error", err)
+				}
+				return
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) || ve.Field != tc.wantField {
+				t.Fatalf("err = %v, want a ValidationError on %s", err, tc.wantField)
+			}
+		})
 	}
 }
 

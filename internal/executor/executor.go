@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -42,6 +43,12 @@ type Request struct {
 	// MaxRows caps the number of rows the RowIterator will yield.
 	// 0 means "no cap" (the transport still enforces a size cap).
 	MaxRows int64
+
+	// MaxBytes caps the size of the rows the RowIterator will yield, as
+	// valueBytes counts it. The iterator stops before the row that would
+	// cross the cap, also when that is the first row. 0 means "no cap".
+	// With a cap, Scan takes only *any destinations.
+	MaxBytes int64
 
 	// Timeout is the wall-clock cap on this execute. Zero falls through
 	// to Config.DefaultStatementTimeout.
@@ -150,7 +157,15 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		conn:     conn,
 		cancel:   cancel,
 		maxRows:  req.MaxRows,
+		maxBytes: req.MaxBytes,
 		rowCount: rowCount,
+	}
+	if req.MaxBytes > 0 {
+		iter.row = make([]any, len(cols))
+		iter.rowPtrs = make([]any, len(cols))
+		for i := range iter.row {
+			iter.rowPtrs[i] = &iter.row[i]
+		}
 	}
 	resp := &Response{
 		Columns:  colInfo,
@@ -174,6 +189,8 @@ func wrapRunErr(err error) error {
 		return fmt.Errorf("%w: %w", ErrExecute, err)
 	case rejectsStatement(err):
 		return fmt.Errorf("%w: %w: %w", ErrExecute, ErrRejected, err)
+	case isParserError(err):
+		return fmt.Errorf("%w: %w: %w", ErrExecute, ErrSyntax, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrExecute, err)
 	}
@@ -197,6 +214,11 @@ func rejectsStatement(err error) bool {
 	return false
 }
 
+func isParserError(err error) bool {
+	var de *duckdb.Error
+	return errors.As(err, &de) && de.Type == duckdb.ErrorTypeParser
+}
+
 // sqlRowIterator is the JSON/CSV RowIterator backed by *sql.Rows. Scan
 // delegates straight through so callers get Go-native types (int64,
 // float64, string, time.Time, []byte, bool, nil). The transport layer
@@ -210,6 +232,55 @@ type sqlRowIterator struct {
 	parent   *Response
 	closed   bool
 	iterErr  error
+
+	// With a byte cap, Next reads the row into row to know its size
+	// before it hands the row out.
+	maxBytes int64
+	bytes    int64
+	row      []any
+	rowPtrs  []any
+}
+
+// valueBytes estimates the size of a value in a result: 8 bytes per value
+// plus the length of a text, byte or big number value, and the sum of the
+// parts for a nested value. Every value counts, so a list of NULLs has a
+// size too. It is no wire size: JSON can need a few times more for a
+// number or a control character.
+func valueBytes(v any) int64 {
+	n := int64(8)
+	switch x := v.(type) {
+	case string:
+		n += int64(len(x))
+	case []byte:
+		n += int64(len(x))
+	case []any:
+		for _, e := range x {
+			n += valueBytes(e)
+		}
+	case map[string]any:
+		for k, e := range x {
+			n += int64(len(k)) + valueBytes(e)
+		}
+	case duckdb.OrderedMap:
+		for _, e := range x.Keys() {
+			n += valueBytes(e)
+		}
+		for _, e := range x.Values() {
+			n += valueBytes(e)
+		}
+	case duckdb.Union:
+		n += int64(len(x.Tag)) + valueBytes(x.Value)
+	case *big.Int:
+		// A BIGNUM has no fixed size. Three bits give at most one digit.
+		if x != nil {
+			n += int64(x.BitLen() / 3)
+		}
+	case duckdb.Decimal:
+		if x.Value != nil {
+			n += int64(x.Value.BitLen() / 3)
+		}
+	}
+	return n
 }
 
 // Next advances the iterator, tracking the row count and enforcing
@@ -225,6 +296,19 @@ func (it *sqlRowIterator) Next() bool {
 	if !it.rows.Next() {
 		return false
 	}
+	if it.maxBytes > 0 {
+		if err := it.rows.Scan(it.rowPtrs...); err != nil {
+			it.iterErr = fmt.Errorf("%w: scan: %w", ErrExecute, err)
+			return false
+		}
+		for _, v := range it.row {
+			it.bytes += valueBytes(v)
+		}
+		if it.bytes > it.maxBytes {
+			it.parent.Truncated = true
+			return false
+		}
+	}
 	*it.rowCount++
 	return true
 }
@@ -233,6 +317,19 @@ func (it *sqlRowIterator) Next() bool {
 func (it *sqlRowIterator) Scan(dest ...any) error {
 	if it.closed {
 		return errors.New("executor: Scan after Close")
+	}
+	if it.maxBytes > 0 {
+		if len(dest) != len(it.row) {
+			return fmt.Errorf("%w: scan: %d destinations for %d columns", ErrExecute, len(dest), len(it.row))
+		}
+		for i, d := range dest {
+			p, ok := d.(*any)
+			if !ok {
+				return fmt.Errorf("%w: scan: destination %d is %T, a byte cap needs *any", ErrExecute, i, d)
+			}
+			*p = it.row[i]
+		}
+		return nil
 	}
 	if err := it.rows.Scan(dest...); err != nil {
 		it.iterErr = fmt.Errorf("%w: scan: %w", ErrExecute, err)

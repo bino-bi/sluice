@@ -4,6 +4,7 @@ package pgquery
 
 import (
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/parser"
 )
@@ -17,12 +18,12 @@ func statementKind(raw *pg.RawStmt) parser.StmtKind {
 	}
 	switch v := raw.Stmt.Node.(type) {
 	case *pg.Node_SelectStmt:
-		return parser.StmtSelect
+		return selectKind(v.SelectStmt)
 	case *pg.Node_ExplainStmt:
 		// EXPLAIN ANALYZE runs its body, and the rewrite passes only secure
 		// a SELECT body. Any other body is classified as what it is.
 		body := v.ExplainStmt.GetQuery()
-		if body.GetSelectStmt() != nil {
+		if sel := body.GetSelectStmt(); sel != nil && selectKind(sel) == parser.StmtSelect {
 			return parser.StmtExplain
 		}
 		return statementKind(&pg.RawStmt{Stmt: body})
@@ -59,4 +60,28 @@ func statementKind(raw *pg.RawStmt) parser.StmtKind {
 		return parser.StmtDDL
 	}
 	return parser.StmtUnsupported
+}
+
+// selectKind classifies a SELECT. SELECT ... INTO creates a table, and a
+// CTE can hold an INSERT, UPDATE, DELETE or MERGE, at any depth. DuckDB
+// refuses both today; the statement gate must not rely on that.
+func selectKind(sel *pg.SelectStmt) parser.StmtKind {
+	kind := parser.StmtSelect
+	if sel == nil {
+		return kind
+	}
+	walkMessages(sel.ProtoReflect(), func(m protoreflect.Message) bool {
+		switch v := m.Interface().(type) {
+		case *pg.SelectStmt:
+			if v.IntoClause != nil {
+				kind = parser.StmtDDL
+			}
+		case *pg.CommonTableExpr:
+			if q := v.Ctequery; q != nil && q.GetSelectStmt() == nil {
+				kind = statementKind(&pg.RawStmt{Stmt: q})
+			}
+		}
+		return kind == parser.StmtSelect
+	})
+	return kind
 }

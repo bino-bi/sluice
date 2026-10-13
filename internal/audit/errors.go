@@ -17,3 +17,7 @@ var ErrClosed = errors.New("audit: dispatcher closed")
 // does not match the recomputed value, or when a file's first record does
 // not chain to the previous file's last hash.
 var ErrChainBroken = errors.New("audit: chain broken")
+
+// ErrKeyRequired is returned by Verify for a record with a keyed hash
+// when no key was given. The chain is then neither intact nor broken.
+var ErrKeyRequired = errors.New("audit: the chain is keyed, the key is required")

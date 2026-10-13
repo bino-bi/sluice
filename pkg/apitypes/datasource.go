@@ -44,7 +44,10 @@ type DataSourceSpec struct {
 	TokenRef string `yaml:"tokenRef,omitempty" json:"tokenRef,omitempty"`
 
 	// common
-	Readonly    bool        `yaml:"readonly" json:"readonly"`
+	// Readonly, Schemas, Tables, AttachMode and HealthCheck have no
+	// effect: every data source is attached read-only and exposes all its
+	// tables. The decoder refuses a value that asks for anything else.
+	Readonly    *bool       `yaml:"readonly,omitempty" json:"readonly,omitempty"`
 	Schemas     []string    `yaml:"schemas,omitempty" json:"schemas,omitempty"`
 	Tables      []string    `yaml:"tables,omitempty" json:"tables,omitempty"`
 	AttachMode  AttachMode  `yaml:"attachMode,omitempty" json:"attachMode,omitempty"`

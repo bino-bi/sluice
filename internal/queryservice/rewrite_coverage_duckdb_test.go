@@ -1891,6 +1891,204 @@ func TestExecute_DuckDBOnlyStatementsNotExecuted(t *testing.T) {
 	}
 }
 
+// SET and SHOW name no table, so only an allow policy that names no table
+// matches them. A setting DuckDB accepts would stay on the pooled
+// connection for later requests of any subject, and SHOW lists tables a
+// deny policy covers. Neither reaches the executor.
+func TestExecute_SetAndShowNotExecuted(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowWithoutTables)
+	for _, sql := range []string{
+		"SET threads = 1",
+		"SET search_path = 'shop.main'",
+		"RESET threads",
+		"SHOW TABLES",
+		"SHOW ALL",
+		"SHOW search_path",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_UNSUPPORTED_SYNTAX", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeUnsupportedSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_UNSUPPORTED_SYNTAX", sql, ae.Code, ae.Message)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	// The refused search_path is not active: a name without catalog does
+	// not resolve to the attached table.
+	if rows, err := runRows(svc, "SELECT count(*) FROM customers"); err == nil {
+		t.Errorf("table name without catalog served %v after a refused SET search_path", rows)
+	}
+}
+
+// A SELECT can write: SELECT ... INTO creates a table, and a CTE can hold
+// an INSERT or DELETE. DuckDB refuses both today, but the statement gate
+// must stop them itself.
+func TestExecute_WritingSelectNotExecuted(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowWithoutTables)
+	for sql, want := range map[string]pkgerr.Code{
+		"SELECT 1 INTO t":                 pkgerr.CodeUnsupportedSyntax,
+		"EXPLAIN ANALYZE SELECT 1 INTO t": pkgerr.CodeUnsupportedSyntax,
+		"SELECT 1 UNION SELECT 2 INTO t":  pkgerr.CodeUnsupportedSyntax,
+		"WITH x AS (INSERT INTO memory.main.t VALUES (1) RETURNING *) SELECT * FROM x":               pkgerr.CodeACLRejected,
+		"SELECT * FROM (WITH x AS (DELETE FROM shop.main.orders RETURNING *) SELECT * FROM x) s":     pkgerr.CodeACLRejected,
+		"EXPLAIN ANALYZE WITH x AS (UPDATE shop.main.orders SET id = 1 RETURNING *) SELECT * FROM x": pkgerr.CodeACLRejected,
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want %s", sql, rows, want)
+		} else if ae := pkgerr.FromError(err); ae.Code != want {
+			t.Errorf("%s: code = %s (%s), want %s", sql, ae.Code, ae.Message, want)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+}
+
+// {{ subject.groups }} gives a list. In binds one parameter per group, and
+// a subject without the claim of another filter is denied.
+func TestExecute_RowFilterListTemplate(t *testing.T) {
+	const seed = `
+CREATE TABLE leads (id INTEGER, team VARCHAR);
+INSERT INTO leads VALUES (1, 'analytics'), (2, 'sales'), (3, NULL);
+CREATE TABLE regions (id INTEGER, region VARCHAR);
+INSERT INTO regions VALUES (1, 'eu');`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-leads
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["leads", "regions"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: own-teams
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["leads"] }
+  filter:
+    predicate:
+      column: team
+      op: In
+      values: ["{{ subject.groups }}"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: own-region
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["regions"] }
+  filter:
+    predicate:
+      column: region
+      op: Equals
+      value: "{{ subject.claims.region }}"
+`
+	svc, ex, a := newSeededHelloSluiceService(t, nil, seed, policies)
+	rows, err := runRows(svc, "SELECT id FROM shop.main.leads ORDER BY id")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := fmt.Sprint(rows); got != "[[1]]" {
+		t.Fatalf("rows = %s, want [[1]]", got)
+	}
+
+	before := ex.calls
+	_, err = runRows(svc, "SELECT id FROM shop.main.regions")
+	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeACLDenied {
+		t.Fatalf("missing claim: err = %v, want ACL_DENIED", err)
+	}
+	if ex.calls != before {
+		t.Error("missing claim: executor was reached")
+	}
+	recs := a.all()
+	if last := recs[len(recs)-1]; last.Decision != audit.DecisionDeny {
+		t.Errorf("missing claim: audit decision = %q, want deny", last.Decision)
+	}
+}
+
+// pg_query reads these statements, DuckDB's parser does not. On a table
+// without filter, mask or limit the text goes to DuckDB as sent, and the
+// client gets ERR_SYNTAX, not ERR_INTERNAL.
+func TestExecute_PlainStatementDuckDBCannotParse(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t, approvalOnAdminUsers)
+	for _, sql := range []string{
+		"SELECT INTERVAL '1 02' DAY TO HOUR FROM shop.main.orders",
+		`SELECT U&'\0041' FROM shop.main.orders`,
+		"SELECT 1 at FROM shop.main.orders",
+		"SELECT id FROM shop.main.orders FOR UPDATE",
+		"SELECT id FROM shop.main.orders WHERE id = 0x1",
+	} {
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_SYNTAX", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_SYNTAX", sql, ae.Code, ae.Message)
+		}
+	}
+}
+
+// The null check ops of a row filter run in DuckDB.
+func TestExecute_RowFilterNullChecks(t *testing.T) {
+	const seed = `
+CREATE TABLE tickets (id INTEGER, closed_at VARCHAR, owner VARCHAR);
+INSERT INTO tickets VALUES (1, NULL, 'ann'), (2, '2026-01-01', 'bob'), (3, NULL, NULL);`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-tickets
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["tickets"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: open-with-owner
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["tickets"] }
+  filter:
+    predicate:
+      all:
+        - column: closed_at
+          op: IsNull
+        - column: owner
+          op: IsNotNull
+`
+	svc, _, _ := newSeededHelloSluiceService(t, nil, seed, policies)
+	rows, err := runRows(svc, "SELECT id FROM shop.main.tickets ORDER BY id")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := fmt.Sprint(rows); got != "[[1]]" {
+		t.Fatalf("rows = %s, want [[1]]", got)
+	}
+}
+
 // orders has a row filter and no mask. A post-query mask on a table read
 // only in a subquery must not refuse a star over orders.
 func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {
@@ -1994,5 +2192,158 @@ func TestExecute_FormerMaskRefusalsServeMaskedValues(t *testing.T) {
 		if got := fmt.Sprint(rows); got != want {
 			t.Errorf("%s: rows = %s, want %s", sql, got, want)
 		}
+	}
+}
+
+const approvalOnAdminUsers = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-shop
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: approve-admin-reads
+  priority: 100
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["admin_users"] }
+  when:
+    columnsAccessed: ["username"]
+    predicates:
+      - { column: "role", op: "=", value: "superuser" }
+`
+
+// An ApprovalPolicy with columnsAccessed must hold every statement that
+// DuckDB would answer with the column, also when the statement does not
+// name it. The service has no broker here, so a held query fails before
+// the executor, and a query that is not held is served by DuckDB.
+func TestExecute_ApprovalTriggersAgainstDuckDB(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, approvalOnAdminUsers)
+	held := []string{
+		// columnsAccessed: the column by name, in any case.
+		"SELECT username FROM shop.main.admin_users",
+		`SELECT "USERNAME" FROM shop.main.admin_users`,
+		`SELECT a."UserName" FROM shop.main.admin_users a`,
+		"SELECT greatest(username, '') FROM shop.main.admin_users",
+		// columnsAccessed: the column without its name.
+		"SELECT * FROM shop.main.admin_users",
+		"SELECT a FROM shop.main.admin_users a",
+		`SELECT "A" FROM shop.main.admin_users a`,
+		`SELECT a FROM shop.main.admin_users "A"`,
+		`SELECT "ADMIN_USERS" FROM shop.main.admin_users`,
+		"SELECT (a).username FROM shop.main.admin_users a",
+		"SELECT #2 FROM shop.main.admin_users",
+		"SELECT '' ||#2 FROM shop.main.admin_users",
+		"SELECT id FROM shop.main.admin_users WHERE 'root' =#2",
+		"SELECT main.admin_users FROM shop.main.admin_users, (SELECT 1 AS z) main",
+		"SELECT shop.admin_users FROM shop.main.admin_users WHERE EXISTS (SELECT 1 FROM (SELECT 1 AS z) shop)",
+		"SELECT x FROM shop.main.admin_users a(i, x, r)",
+		"SELECT j FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j",
+		"SELECT j.c2 FROM (shop.main.admin_users a JOIN shop.main.orders o ON o.id = a.id) AS j(c1, c2)",
+		"SELECT id FROM shop.main.admin_users NATURAL JOIN (SELECT 'root' AS username) u",
+		// predicates: the value, and a condition that hides the value.
+		"SELECT id FROM shop.main.admin_users WHERE role = 'superuser'",
+		`SELECT id FROM shop.main.admin_users WHERE "ROLE" = 'superuser'`,
+		"SELECT id FROM shop.main.admin_users WHERE role IN ('analyst', 'superuser')",
+		"SELECT id FROM shop.main.admin_users WHERE lower(role) = 'superuser'",
+		"SELECT id FROM shop.main.admin_users WHERE role NOT IN ('analyst')",
+		"SELECT id FROM shop.main.admin_users WHERE NOT (role <> 'superuser')",
+		"SELECT id FROM shop.main.admin_users WHERE role = 'superuser'::VARCHAR",
+		"SELECT id FROM shop.main.admin_users a WHERE (a).role = 'superuser'",
+	}
+	for _, sql := range held {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want held for approval", sql, rows)
+		} else if !strings.Contains(err.Error(), "approval") {
+			t.Errorf("%s: err = %v, want held for approval", sql, err)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	served := []string{
+		"SELECT id FROM shop.main.admin_users",
+		"SELECT id, role FROM shop.main.admin_users WHERE role = 'analyst'",
+		"SELECT id FROM shop.main.admin_users WHERE role IN ('analyst', 'auditor')",
+		// The wrapper BI tools put around a query.
+		"SELECT * FROM (SELECT id, role FROM shop.main.admin_users) AS virtual_table LIMIT 100",
+		"WITH t AS (SELECT id FROM shop.main.admin_users) SELECT * FROM t",
+		"SELECT a.id FROM shop.main.admin_users a WHERE a.id = 1",
+		"SELECT t.*, o.id AS oid FROM (SELECT id, role FROM shop.main.admin_users) t JOIN shop.main.orders o ON o.id = t.id",
+		"SELECT role, count(*) AS admin_users FROM shop.main.admin_users GROUP BY role ORDER BY admin_users DESC",
+	}
+	for _, sql := range served {
+		if _, err := runRows(svc, sql); err != nil {
+			t.Errorf("%s: %v, want served without approval", sql, err)
+		}
+	}
+}
+
+// A field of a STRUCT column is a read of the column.
+func TestExecute_ApprovalStructColumn(t *testing.T) {
+	const seed = `
+CREATE TABLE docs (id INTEGER, secret STRUCT(a VARCHAR, b INTEGER));
+INSERT INTO docs VALUES (1, {'a': 'top', 'b': 2});`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-shop
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["*"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: approve-secret
+  priority: 100
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["docs"] }
+  when:
+    columnsAccessed: ["secret"]
+`
+	svc, ex, _ := newSeededHelloSluiceService(t, nil, seed, policies)
+	for _, sql := range []string{
+		"SELECT secret FROM shop.main.docs",
+		"SELECT secret.a FROM shop.main.docs",
+		"SELECT d.secret.a FROM shop.main.docs d",
+		"SELECT docs.secret.a FROM shop.main.docs",
+		"SELECT (secret).a FROM shop.main.docs",
+		"SELECT secret['a'] FROM shop.main.docs",
+		"SELECT secret.* FROM shop.main.docs",
+		"SELECT id FROM shop.main.docs WHERE secret.a = 'top'",
+	} {
+		before := ex.calls
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want held for approval", sql, rows)
+		} else if !strings.Contains(err.Error(), "approval") {
+			t.Errorf("%s: err = %v, want held for approval", sql, err)
+		}
+		if ex.calls != before {
+			t.Errorf("%s: executor was reached", sql)
+		}
+	}
+	if rows, err := runRows(svc, "SELECT id FROM shop.main.docs"); err != nil || fmt.Sprint(rows) != "[[1]]" {
+		t.Errorf("id alone: rows %v, err %v, want [[1]] without approval", rows, err)
 	}
 }

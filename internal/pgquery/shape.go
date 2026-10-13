@@ -7,19 +7,20 @@ import (
 	"strconv"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/bino-bi/sluice/internal/parser"
 )
 
-// extractShape builds the parser.QueryShape for raw. Only the top-level
-// Stmt is inspected; values inside nested subqueries are ignored on
-// purpose — QueryRejectPolicy rules key off the outer query.
+// extractShape builds the parser.QueryShape for raw. The values feed
+// QueryRejectPolicy rules and conditions; fillSelectShape states what each
+// one covers.
 func extractShape(raw *pg.RawStmt, tables []parser.TableRef, catalogs []string) parser.QueryShape {
 	shape := parser.QueryShape{Catalogs: catalogs}
 	if raw == nil || raw.Stmt == nil {
 		return shape
 	}
-	shape.AccessedColumns, shape.Comparisons = collectAccess(raw)
+	collectAccess(raw, &shape)
 	shape.Functions, shape.UnsupportedFrom, shape.HasParams = collectFunctions(raw)
 	switch v := raw.Stmt.Node.(type) {
 	case *pg.Node_SelectStmt:
@@ -36,36 +37,64 @@ func extractShape(raw *pg.RawStmt, tables []parser.TableRef, catalogs []string) 
 	return shape
 }
 
-// fillSelectShape populates shape from a top-level SelectStmt. For set
-// operations the left arm is used as the representative (the rewriter
-// inspects each arm separately when it needs to).
+// fillSelectShape populates shape from the top-level SelectStmt:
+//
+//   - ORDER BY and LIMIT are the clauses of the whole statement, not those
+//     of one SELECT of a set operation.
+//   - HasWhere and IsAggregate hold only when every SELECT of a set
+//     operation has them, since a rule uses them to require a WHERE or an
+//     aggregate. HasSelectStar holds when any of them has a star. The
+//     column lists cover all of them. Subqueries are not read.
+//   - A WITH and a join count at any depth. A comma between FROM items is
+//     a join.
 func fillSelectShape(s *pg.SelectStmt, tables []parser.TableRef, shape *parser.QueryShape) {
-	if s.Larg != nil {
-		// UNION / EXCEPT / INTERSECT — use the left arm for flags.
-		shape.HasUnion = true
-		fillSelectShape(s.Larg, tables, shape)
-		return
-	}
-
-	shape.IsAggregate = len(s.GroupClause) > 0 || s.HavingClause != nil || hasAggFunc(s.TargetList)
-	shape.HasCTE = s.WithClause != nil && len(s.WithClause.Ctes) > 0
+	shape.HasUnion = s.Larg != nil
 	shape.HasOrderBy = len(s.SortClause) > 0
-	shape.HasWhere = s.WhereClause != nil
-	shape.GroupByColumns = columnRefNames(s.GroupClause)
-	shape.WhereColumns = whereColumnNames(s.WhereClause)
-	shape.Joins = countJoins(s.FromClause)
-	shape.HasSelectStar = hasSelectStar(s.TargetList)
-
 	if s.LimitCount != nil {
 		shape.HasLimit = true
 		shape.LimitValue = integerLiteral(s.LimitCount)
 	}
 
-	if s.WithClause != nil {
-		shape.IsRecursiveCTE = s.WithClause.Recursive
+	shape.HasWhere, shape.IsAggregate = true, true
+	for _, arm := range setOperationArms(s, nil) {
+		shape.HasSelectStar = shape.HasSelectStar || hasSelectStar(arm.TargetList)
+		shape.HasWhere = shape.HasWhere && arm.WhereClause != nil
+		shape.IsAggregate = shape.IsAggregate &&
+			(len(arm.GroupClause) > 0 || arm.HavingClause != nil || hasAggFunc(arm.TargetList))
+		shape.WhereColumns = append(shape.WhereColumns, whereColumnNames(arm.WhereClause)...)
+		shape.GroupByColumns = append(shape.GroupByColumns, columnRefNames(arm.GroupClause)...)
 	}
 
+	walkMessages(s.ProtoReflect(), func(m protoreflect.Message) bool {
+		switch v := m.Interface().(type) {
+		case *pg.WithClause:
+			if len(v.Ctes) > 0 {
+				shape.HasCTE = true
+			}
+			shape.IsRecursiveCTE = shape.IsRecursiveCTE || v.Recursive
+		case *pg.JoinExpr:
+			shape.Joins++
+		case *pg.SelectStmt:
+			if n := len(v.FromClause); n > 1 {
+				shape.Joins += n - 1
+			}
+		}
+		return true
+	})
+
 	_ = tables // Reserved for future cross-catalog detection.
+}
+
+// setOperationArms appends the SELECTs of a set operation to out, left to
+// right. A plain SELECT is its own single arm.
+func setOperationArms(s *pg.SelectStmt, out []*pg.SelectStmt) []*pg.SelectStmt {
+	if s == nil {
+		return out
+	}
+	if s.Larg == nil && s.Rarg == nil {
+		return append(out, s)
+	}
+	return setOperationArms(s.Rarg, setOperationArms(s.Larg, out))
 }
 
 // hasSelectStar reports whether any target-list entry is A_Star or a
@@ -195,8 +224,14 @@ func columnRefName(n *pg.Node) string {
 	if !ok || cr.ColumnRef == nil {
 		return ""
 	}
-	parts := make([]string, 0, len(cr.ColumnRef.Fields))
-	for _, f := range cr.ColumnRef.Fields {
+	return columnRefNameOf(cr.ColumnRef)
+}
+
+// columnRefNameOf joins the name parts of cr. A star is not a part: t.*
+// gives "t".
+func columnRefNameOf(cr *pg.ColumnRef) string {
+	parts := make([]string, 0, len(cr.Fields))
+	for _, f := range cr.Fields {
 		if f == nil {
 			continue
 		}
@@ -268,26 +303,6 @@ func whereColumnNames(where *pg.Node) []string {
 	}
 	walk(where)
 	return out
-}
-
-// countJoins counts join operators in a FROM clause list.
-func countJoins(from []*pg.Node) int {
-	n := 0
-	var walk func(*pg.Node)
-	walk = func(node *pg.Node) {
-		if node == nil {
-			return
-		}
-		if je, ok := node.Node.(*pg.Node_JoinExpr); ok && je.JoinExpr != nil {
-			n++
-			walk(je.JoinExpr.Larg)
-			walk(je.JoinExpr.Rarg)
-		}
-	}
-	for _, f := range from {
-		walk(f)
-	}
-	return n
 }
 
 // integerLiteral extracts an int64 from an A_Const-wrapping Integer node,

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policytest"
 )
 
@@ -58,6 +59,11 @@ Exit codes:
 						_, _ = fmt.Fprintln(cmd.ErrOrStderr(), ve.Error())
 					}
 					return &exitError{Code: 3}
+				}
+				// A policy that decodes but does not compile, such as an
+				// unknown tag in a selector.
+				if errors.Is(err, policy.ErrSnapshotInvalid) {
+					return &exitError{Code: 3, Err: err}
 				}
 				return &exitError{Code: 1, Err: err}
 			}

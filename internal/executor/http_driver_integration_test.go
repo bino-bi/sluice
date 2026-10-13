@@ -53,7 +53,6 @@ func TestHTTPDriverAllFormatsAndHeadersThroughHardenedExecutor(t *testing.T) {
 				srv.URL + "/bucket/plan.xlsx",
 			},
 			HeadersRef: "secret://test/headers",
-			Readonly:   true,
 		},
 	}
 

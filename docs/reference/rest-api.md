@@ -10,12 +10,11 @@ Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `re
 |---|---|---|---|
 | `POST` | `/v1/query` | API key or JWT | Runs one SQL statement. |
 | `GET` | `/v1/approvals/{id}` | API key or JWT | Returns the state of an approval to its owner. |
-| `GET`, `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. |
-| `GET`, `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. |
+| `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. A `GET` returns an HTML page with a button that sends the `POST`. |
+| `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. A `GET` returns such a page too. |
 | `GET` | `/v1/health` | none | Returns 200 with `status` and `version` while the server runs. |
 | `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
 | `GET` | `/v1/version` | none | Returns `version`, `commit`, `build_time`, `go` and `parser_version` of the build. |
-| `GET` | `/openapi.json` | none | Returns an OpenAPI document that names paths but describes no operation. |
 
 Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
 
@@ -51,7 +50,7 @@ The table has 4 rows, so `truncated` is `true`.
 | `columns` | array | Column names. |
 | `rows` | array | One array per row. |
 | `row_count` | int | Number of returned rows. |
-| `truncated` | bool | `true` when the row limit cut the result. |
+| `truncated` | bool | `true` when the row limit or `limits.maxResultBytes` cut the result. |
 | `warning` | object | Set when truncated, with `code` `ERR_RESULT_TRUNCATED`. |
 
 With `format: csv` the body is CSV:
@@ -99,7 +98,7 @@ A 404 for an unknown path and a 405 are plain text. The approval routes answer 4
 
 ## Approval routes
 
-The routes exist when the server config sets `approval.publicBaseUrl`. Send the token as `?token=` or as an `X-Approval-Token` header. See [Approvals](../policies/approvals.md).
+The routes exist when the server config sets `approval.publicBaseUrl`. Send the token as `?token=` or as an `X-Approval-Token` header. The table shows the answers to a `POST`, and to a `GET` in the last row. See [Approvals](../policies/approvals.md).
 
 | Request | Answer |
 |---|---|
@@ -107,7 +106,7 @@ The routes exist when the server config sets `approval.publicBaseUrl`. Send the 
 | Same decision again | 200, `note: already decided` |
 | Other decision later | 409. After the query ran: 200, state `consumed` |
 | Unknown id or wrong token | 404 |
-| `HEAD`, or a header `Purpose`, `Sec-Purpose` or `X-Moz` with the value `prefetch` or `preview` | 204, no change |
+| `GET` or `HEAD`, any id and token | 200, the same HTML page, no change |
 
 `GET /v1/approvals/{id}` returns the state:
 

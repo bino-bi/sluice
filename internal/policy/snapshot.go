@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
@@ -247,15 +249,14 @@ func predicateHeaderTemplates(p *CompiledPredicate) []string {
 	for _, v := range p.Values {
 		if v.Template != nil && len(v.Template.Path) == 3 &&
 			v.Template.Path[0] == "request" && v.Template.Path[1] == "headers" {
-			out = append(out, v.Template.Path[2])
+			out = append(out, strings.ToLower(v.Template.Path[2]))
 		}
 	}
 	return out
 }
 
 // compilePolicy dispatches on Kind. Non-policy kinds (DataSource,
-// SubjectBinding, AuditSink) produce (nil, nil) — the caller filters them
-// out.
+// SubjectBinding) produce (nil, nil) — the caller filters them out.
 func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource) (*CompiledPolicy, error) {
 	meta := obj.GetObjectMeta()
 	base := &CompiledPolicy{
@@ -377,7 +378,7 @@ func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource)
 		return base, nil
 	}
 
-	// DataSource / SubjectBinding / AuditSink: not policies.
+	// DataSource / SubjectBinding: not policies.
 	return nil, nil
 }
 
@@ -419,8 +420,9 @@ func compileApproval(spec apitypes.ApprovalSpec) (*CompiledApproval, error) {
 	if spec.When == nil {
 		return out, nil
 	}
+	// Column names are matched in lower case, as the parser reports them.
 	for _, pat := range spec.When.ColumnsAccessed {
-		m, err := apitypes.CompileWildcard(pat)
+		m, err := apitypes.CompileWildcard(strings.ToLower(pat))
 		if err != nil {
 			return nil, fmt.Errorf("spec.when.columnsAccessed %q: %w", pat, err)
 		}
@@ -430,7 +432,7 @@ func compileApproval(spec apitypes.ApprovalSpec) (*CompiledApproval, error) {
 		if tr.Column == "" {
 			return nil, fmt.Errorf("spec.when.predicates[%d]: column is required", i)
 		}
-		m, err := apitypes.CompileWildcard(tr.Column)
+		m, err := apitypes.CompileWildcard(strings.ToLower(tr.Column))
 		if err != nil {
 			return nil, fmt.Errorf("spec.when.predicates[%d].column %q: %w", i, tr.Column, err)
 		}
@@ -530,6 +532,16 @@ func compileMaskArgs(spec apitypes.MaskSpec) (pkgmask.Args, error) {
 		}
 		if err := provider.ValidateArgs(out); err != nil {
 			return pkgmask.Args{}, fmt.Errorf("mask %q: %w", spec.Type, err)
+		}
+		// The provider only checks that a reference is set. A value that
+		// is no secret reference would fail every query on the table.
+		for name, ref := range map[string]string{"saltRef": src.SaltRef, "keyRef": src.KeyRef} {
+			if ref == "" {
+				continue
+			}
+			if err := secrets.CheckRef(ref); err != nil {
+				return pkgmask.Args{}, fmt.Errorf("mask %q: %s: %w", spec.Type, name, err)
+			}
 		}
 	default:
 		return pkgmask.Args{}, fmt.Errorf("mask type %q: unknown", spec.Type)

@@ -63,6 +63,26 @@ func TestAPIKeyValidKeyAuthorizes(t *testing.T) {
 	if uc.Issuer != "test-suite" {
 		t.Errorf("Issuer = %q", uc.Issuer)
 	}
+	// httptest sets 192.0.2.1:1234. Policies match the address as an IP.
+	if uc.RemoteAddr != "192.0.2.1" {
+		t.Errorf("RemoteAddr = %q; want the address without the port", uc.RemoteAddr)
+	}
+}
+
+func TestRemoteIP(t *testing.T) {
+	for addr, want := range map[string]string{
+		"10.0.0.5:1234":       "10.0.0.5",
+		"[2001:db8::1]:443":   "2001:db8::1",
+		"10.0.0.5":            "10.0.0.5",
+		"":                    "",
+		"[fe80::1%eth0]:8080": "fe80::1%eth0",
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = addr
+		if got := identity.RemoteIP(r); got != want {
+			t.Errorf("RemoteIP(%q) = %q; want %q", addr, got, want)
+		}
+	}
 }
 
 func TestAPIKeyAcceptsAuthorizationHeaderForm(t *testing.T) {

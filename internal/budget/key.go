@@ -14,8 +14,3 @@ func splitKey(k string) (subject, issuer string) {
 	}
 	return k, ""
 }
-
-func subjectOf(k string) string {
-	s, _ := splitKey(k)
-	return s
-}

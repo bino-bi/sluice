@@ -39,6 +39,7 @@ A suite is a YAML file without `apiVersion`. The test runner ignores unknown key
 | `cases[].identity.subject` | Subject id. Without it, the case has no subject. |
 | `cases[].identity.groups`, `.claims` | Groups and claims. Claims can nest. |
 | `cases[].identity.issuer`, `.email` | Issuer and email. |
+| `cases[].request.headers`, `.userAgent`, `.remoteIp` | Headers, user agent and address of the request, for the `request.*` values and for `ipRanges`. |
 | `cases[].sql` | One SQL statement. |
 | `cases[].expect` | The checks. Every field is optional. |
 
@@ -108,8 +109,8 @@ With `--json`:
 | Exit status | When |
 |---|---|
 | 0 | All cases pass. |
-| 1 | Bad flag, missing tests path, broken suite file, or a policy compile error such as an unknown tag. |
-| 3 | A policy with an invalid field, a failing case, or no case at all. |
+| 1 | Bad flag, missing tests path or broken suite file. |
+| 3 | A policy with an invalid field, a policy that does not compile, a failing case, or no case at all. |
 
 ## Limits
 

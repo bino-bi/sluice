@@ -30,7 +30,34 @@ var kindSchemas = map[apitypes.Kind]reflect.Type{
 	apitypes.KindDataClassification: reflect.TypeFor[apitypes.DataClassification](),
 	apitypes.KindDataSource:         reflect.TypeFor[apitypes.DataSource](),
 	apitypes.KindSubjectBinding:     reflect.TypeFor[apitypes.SubjectBinding](),
-	apitypes.KindAuditSink:          reflect.TypeFor[apitypes.AuditSink](),
+}
+
+// schemaOptions holds the types the schema inference cannot derive.
+//
+// A row filter predicate holds predicates, and the inference stops at a
+// type that holds itself. So a predicate is a reference to one shared
+// definition, built by schemaDefs. The reference has a type of its own
+// because the inference adds "null" to the type of a pointer field: next
+// to a bare reference that would allow nothing but null.
+//
+// A duration is written as text ("10s") or as a number of seconds (1.5),
+// not as the integer of its Go type.
+var schemaOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+	reflect.TypeFor[apitypes.Predicate](): {Type: "object", Ref: "#/$defs/Predicate"},
+	reflect.TypeFor[apitypes.Duration]():  {Types: []string{"string", "number"}},
+}}
+
+// predicateBody has the fields of a predicate under another type name, so
+// that the inference builds its schema and resolves the predicates inside
+// to the reference.
+type predicateBody apitypes.Predicate
+
+func schemaDefs() (map[string]*jsonschema.Schema, error) {
+	body, err := jsonschema.ForType(reflect.TypeFor[predicateBody](), schemaOptions)
+	if err != nil {
+		return nil, fmt.Errorf("infer schema for Predicate: %w", err)
+	}
+	return map[string]*jsonschema.Schema{"Predicate": body}, nil
 }
 
 func newSchemaCmd() *cobra.Command {
@@ -57,21 +84,26 @@ across every registered Kind. With --kind, only that Kind's schema is emitted.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 
+			defs, err := schemaDefs()
+			if err != nil {
+				return &exitError{Code: 1, Err: err}
+			}
 			if kindFilter != "" {
 				t, ok := kindSchemas[apitypes.Kind(kindFilter)]
 				if !ok {
 					return &exitError{Code: 1, Msg: fmt.Sprintf("unknown kind %q (known: %s)", kindFilter, knownKinds())}
 				}
-				schema, err := jsonschema.ForType(t, nil)
+				schema, err := jsonschema.ForType(t, schemaOptions)
 				if err != nil {
 					return &exitError{Code: 1, Err: fmt.Errorf("infer schema for %s: %w", kindFilter, err)}
 				}
+				schema.Defs = defs
 				return writeJSON(out, schema)
 			}
 
 			oneOf := make([]*jsonschema.Schema, 0, len(kindSchemas))
 			for _, k := range sortedKinds() {
-				s, err := jsonschema.ForType(kindSchemas[k], nil)
+				s, err := jsonschema.ForType(kindSchemas[k], schemaOptions)
 				if err != nil {
 					return &exitError{Code: 1, Err: fmt.Errorf("infer schema for %s: %w", k, err)}
 				}
@@ -85,6 +117,7 @@ across every registered Kind. With --kind, only that Kind's schema is emitted.`,
 				Title:       "Sluice Policy",
 				Description: "Union schema covering every policy Kind accepted by sluice.",
 				OneOf:       oneOf,
+				Defs:        defs,
 			}
 			return writeJSON(out, root)
 		},

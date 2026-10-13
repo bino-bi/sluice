@@ -45,7 +45,7 @@ A query on another table:
 
 `exclude`, `conditions` and `enforcementMode` work as on [every policy](index.md).
 
-`resources.actions` limits a clause to statement types: `SELECT`, `INSERT`, `UPDATE` or `DELETE`, in upper case. `EXPLAIN SELECT` counts as `SELECT`. `SHOW` has no action: a clause with `actions` never matches it.
+`resources.actions` limits a clause to statement types: `SELECT`, `INSERT`, `UPDATE` or `DELETE`, in upper case. `EXPLAIN SELECT` counts as `SELECT`.
 
 ## More examples
 

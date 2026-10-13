@@ -176,8 +176,9 @@ SELECT count(*) FROM t
 
 // A statement DuckDB refuses for a name or a value is the statement's
 // fault and carries ErrRejected: one case per DuckDB error type. A file
-// read stopped by the hardening and a parser error do not: upstream they
-// must stay internal errors.
+// read stopped by the hardening does not: upstream it must stay an
+// internal error. A parser error carries ErrSyntax instead: upstream it is
+// the client's fault only for a statement that ran as sent.
 func TestExecutorRejectedStatement(t *testing.T) {
 	e := newExec(t, executor.Config{})
 	for sql, rejected := range map[string]bool{
@@ -204,6 +205,9 @@ func TestExecutorRejectedStatement(t *testing.T) {
 		}
 		if got := errors.Is(err, executor.ErrRejected); got != rejected {
 			t.Errorf("%s: ErrRejected = %v, want %v (%v)", sql, got, rejected, err)
+		}
+		if got, want := errors.Is(err, executor.ErrSyntax), sql == "SELECT 1 +"; got != want {
+			t.Errorf("%s: ErrSyntax = %v, want %v (%v)", sql, got, want, err)
 		}
 	}
 }
@@ -271,5 +275,65 @@ func TestExecutorCanceledContextStaysCanceled(t *testing.T) {
 	}
 	if errors.Is(err, executor.ErrConnUnavailable) {
 		t.Fatal("canceled context must not classify as ErrConnUnavailable")
+	}
+}
+
+// drain reads every row into *any values and returns the row count.
+func drain(t *testing.T, resp *executor.Response) int {
+	t.Helper()
+	n := 0
+	for resp.Rows.Next() {
+		vals := make([]any, len(resp.Columns))
+		ptrs := make([]any, len(vals))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := resp.Rows.Scan(ptrs...); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		n++
+	}
+	if err := resp.Rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return n
+}
+
+func TestExecutorMaxBytes(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	for _, tc := range []struct {
+		name          string
+		sql           string
+		maxBytes      int64
+		maxRows       int64
+		wantRows      int
+		wantTruncated bool
+	}{
+		// A row counts 8 bytes per value plus the length of its text.
+		{"stops before the row that crosses the cap", "SELECT repeat('x', 1000) FROM range(10)", 3500, 0, 3, true},
+		{"a result under the cap passes", "SELECT repeat('x', 1000) FROM range(3)", 3500, 0, 3, false},
+		{"one row that holds a whole table", "SELECT list(i) FROM range(100000) AS t(i)", 1000, 0, 0, true},
+		{"a list of NULLs has a size too", "SELECT list(NULL) FROM range(100000)", 1000, 0, 0, true},
+		{"nested values count their parts", "SELECT {'a': [repeat('x', 600)], 'b': MAP {'k': repeat('y', 600)}}", 1000, 0, 0, true},
+		{"a big number counts its digits", "SELECT ('1' || repeat('0', 100000))::BIGNUM", 1000, 0, 0, true},
+		{"0 turns the cap off", "SELECT list(i) FROM range(100000) AS t(i)", 0, 0, 1, false},
+		{"the row cap still applies", "SELECT i FROM range(100) AS t(i)", 1 << 20, 10, 10, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := e.Execute(context.Background(), executor.Request{SQL: tc.sql, MaxBytes: tc.maxBytes, MaxRows: tc.maxRows})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			defer func() { _ = resp.Rows.Close() }()
+			if got := drain(t, resp); got != tc.wantRows {
+				t.Errorf("rows = %d, want %d", got, tc.wantRows)
+			}
+			if resp.Truncated != tc.wantTruncated {
+				t.Errorf("Truncated = %v, want %v", resp.Truncated, tc.wantTruncated)
+			}
+			if *resp.RowCount != int64(tc.wantRows) {
+				t.Errorf("RowCount = %d, want %d", *resp.RowCount, tc.wantRows)
+			}
+		})
 	}
 }

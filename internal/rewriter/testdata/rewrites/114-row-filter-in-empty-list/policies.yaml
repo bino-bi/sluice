@@ -1,0 +1,32 @@
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-all
+  priority: 0
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          tables: ["*"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: by-subject
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          tables: ["orders"]
+  filter:
+    predicate:
+      all:
+        - column: team
+          op: In
+          values: ["{{ subject.groups }}"]
+        - not:
+            column: team
+            op: NotIn
+            values: ["{{ subject.groups }}"]

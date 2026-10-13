@@ -22,4 +22,10 @@ The maintainer approved these three changes to diagram 2 (component map) on 2026
 | New node `HTTP` | The `http` data source type had no node | `pkg/apitypes/datasource.go:62` |
 | Edge `Admin --> identity` removed | The admin listener checks a static bearer token. It does not use the identity layer | `internal/transport/admin/auth.go:16-31` |
 
-Diagrams 1, 3, 4 and 5 are unchanged. No label in them is proven wrong.
+One label of diagram 4 (approval flow) changed on 2026-10-13, with the code change that makes a `GET` of an approval link show a page. The copy in `diagrams/approvals.mmd` holds the new version.
+
+| Change | Reason | Evidence |
+|---|---|---|
+| Label `GET or POST accept_url (capability token)` is now `POST accept_url (capability token)` | Only a `POST` decides an approval. A `GET` returns a page with a button | `internal/transport/rest/routes.go:43-47` |
+
+Diagrams 1, 3 and 5 are unchanged. No label in them is proven wrong.

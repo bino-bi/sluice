@@ -76,9 +76,9 @@ Sluice caches each answer for `policies.rebac.cacheTtl` (default 10s). A reload 
 ## Limits
 
 - A check decides on a whole table. It does not filter rows.
-- If OpenFGA fails, the query gets 500 `ERR_INTERNAL`. If it does not answer within `backend.timeout`, the query gets 504 `ERR_TIMEOUT`.
+- If OpenFGA fails, the query gets 503 `ERR_POLICY_UNAVAILABLE`. If it does not answer within `backend.timeout`, the query gets 504 `ERR_TIMEOUT`.
 - Write placeholders without spaces. Sluice sends `{{ table }}` and unknown placeholders as plain text.
-- With `enforcementMode: Audit` or `DryRun`, a failed check does not deny. `GET /admin/subjects/explain` lists the policy under `shadow` for passed and failed checks alike.
+- With `enforcementMode: Audit` or `DryRun`, a failed check does not deny. The policy is listed under `shadow`, with `would: deny` for a failed check.
 - The selector cannot use `resources.tags`.
 
 ## See also

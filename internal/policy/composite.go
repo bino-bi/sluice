@@ -50,14 +50,31 @@ func (c *Composite) Name() string {
 	return "composite(" + strings.Join(names, ",") + ")"
 }
 
-// ApplySnapshot fans out to every member in order; the first error is
-// returned (members that already accepted keep the new snapshot).
-func (c *Composite) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
+// Prepare prepares every member. The returned function applies them all,
+// so a snapshot that one member refuses is applied to none.
+func (c *Composite) Prepare(ctx context.Context, src *config.Snapshot) (func(), error) {
+	applies := make([]func(), 0, len(c.members))
 	for _, m := range c.members {
-		if err := m.ApplySnapshot(ctx, src); err != nil {
-			return err
+		apply, err := m.Prepare(ctx, src)
+		if err != nil {
+			return nil, err
 		}
+		applies = append(applies, apply)
 	}
+	return func() {
+		for _, apply := range applies {
+			apply()
+		}
+	}, nil
+}
+
+// ApplySnapshot implements PolicyEngine.
+func (c *Composite) ApplySnapshot(ctx context.Context, src *config.Snapshot) error {
+	apply, err := c.Prepare(ctx, src)
+	if err != nil {
+		return err
+	}
+	apply()
 	return nil
 }
 

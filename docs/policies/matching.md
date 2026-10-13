@@ -56,6 +56,7 @@ Every field that you set must match.
 | `roles` | The `roles` claim holds one of the roles. Without the claim, the groups count. |
 | `apiKeys` | The subject used an API key and its [subject id](subjects.md) is listed. |
 | `jwtClaims` | Every claim check passes. |
+| `ipRanges` | The address of the client is in one of the CIDR ranges, such as `10.20.0.0/16`. Behind a proxy, this is the address of the proxy. |
 
 A check has `claim`, `op` and a value. A dot in `claim` steps into a nested claim.
 
