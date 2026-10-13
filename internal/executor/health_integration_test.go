@@ -4,6 +4,7 @@ package executor_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -72,5 +73,46 @@ func TestHealthSweepThroughSQLiteAttach(t *testing.T) {
 	}
 	if s.LastCheck.IsZero() || s.LastError != "" {
 		t.Fatalf("unexpected status after healthy probe: %+v", s)
+	}
+}
+
+// A SQLite file that is removed while attached fails the probe. DuckDB
+// only says "Invalid Error: Unable to open database" for a query on it, so
+// the probe is what tells an outage from a fault.
+func TestProbeFailsForRemovedSQLiteFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gone.sqlite")
+	createSQLiteFixture(t, dbPath)
+	ds := &apitypes.DataSource{
+		TypeMeta: apitypes.TypeMeta{APIVersion: "sluice.io/v1alpha1", Kind: apitypes.KindDataSource},
+		Metadata: apitypes.ObjectMeta{Name: "fixture"},
+		Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSQLite, Path: dbPath, Readonly: true},
+	}
+	reg, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{ds}},
+		HealthInterval: -1,
+		FailFast:       true,
+	})
+	if err != nil {
+		t.Fatalf("datasource.New: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	e, err := executor.New(context.Background(), executor.Config{AttachHook: reg.AttachHook()})
+	if err != nil {
+		t.Fatalf("executor.New: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+	pool := datasource.NewSQLPool(e.DB())
+
+	if err := reg.Probe(context.Background(), "fixture", pool); err != nil {
+		t.Fatalf("probe with the file in place: %v", err)
+	}
+	if err := os.Remove(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Probe(context.Background(), "fixture", pool); err == nil {
+		t.Fatal("probe passed after the file was removed")
+	}
+	if reg.Statuses()[0].Healthy {
+		t.Error("status stayed healthy after the file was removed")
 	}
 }

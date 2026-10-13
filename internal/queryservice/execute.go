@@ -361,6 +361,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			apiErr = pkgerr.Wrap(pkgerr.CodeSyntax, execErr).WithQueryID(qid).
 				WithMessage("DuckDB cannot parse the statement")
 		}
+		if pkgerr.FromError(apiErr).Code == pkgerr.CodeInternal && s.sourceDown(ctx, rec.Catalogs) {
+			apiErr = pkgerr.Wrap(pkgerr.CodeDataSourceUnavailable, execErr).WithQueryID(qid)
+		}
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
@@ -593,6 +596,22 @@ func endQuerySpan(span trace.Span, rec *audit.Record) {
 		}
 	}
 	span.End()
+}
+
+// sourceDown probes the data sources of a query that failed in DuckDB.
+// DuckDB reports a source that went away with an error type that says
+// nothing: a removed SQLite file gives "Invalid Error". So the health
+// probe decides whether the failure is an outage.
+func (s *Service) sourceDown(ctx context.Context, catalogs []string) bool {
+	if s.opts.ProbeCatalog == nil || ctx.Err() != nil {
+		return false
+	}
+	for _, c := range catalogs {
+		if s.opts.ProbeCatalog(ctx, c) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func execErrToAPI(err error, qid string) error {

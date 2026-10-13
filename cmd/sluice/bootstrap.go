@@ -307,6 +307,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Keys:            secrets.NewKeyStore(deps.resolver),
 		Salts:           secrets.NewSaltStore(deps.resolver),
 		Catalogs:        deps.sourceReg.Catalogs,
+		ProbeCatalog: func(ctx context.Context, catalog string) error {
+			return deps.sourceReg.Probe(ctx, catalog, datasource.NewSQLPool(deps.exec.DB()))
+		},
 		Limits: queryservice.Limits{
 			DefaultMaxRows:         scfg.Limits.MaxRows,
 			MaxRowsCeiling:         scfg.Limits.MaxRowsCeiling,

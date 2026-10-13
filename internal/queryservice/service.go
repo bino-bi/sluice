@@ -79,6 +79,11 @@ type Options struct {
 	// refuses a two-part table name that DuckDB would read as
 	// catalog.table. Nil skips the check.
 	Catalogs func() []string
+
+	// ProbeCatalog runs the health check of one data source. The service
+	// calls it for the catalogs of a query that failed in DuckDB without
+	// a known cause. Nil skips the check.
+	ProbeCatalog func(ctx context.Context, catalog string) error
 }
 
 // Limits controls request-level bounds the service enforces before it
