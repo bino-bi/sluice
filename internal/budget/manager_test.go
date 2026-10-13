@@ -4,9 +4,13 @@ package budget_test
 
 import (
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/bino-bi/sluice/internal/budget"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
@@ -86,16 +90,51 @@ func TestBudget_SurvivesRestart(t *testing.T) {
 	m2 := newManager(t, path)
 	defer func() { _ = m2.Close(context.Background()) }()
 	m2.SetSpecs(map[string]budget.Spec{"carol": {RowsPerDay: 100}}, nil)
-	u, err := m2.Usage(context.Background(), "carol", "")
-	if err != nil {
-		t.Fatalf("Usage: %v", err)
-	}
-	if u.RowsPerDay != 60 {
-		t.Errorf("rows after restart = %d, want 60 (persisted)", u.RowsPerDay)
-	}
 	// 60 more hits the 100 cap? 60+60=120 > 100.
 	m2.Record("carol", "", 0, 60)
 	if err := m2.Check(context.Background(), "carol", ""); err == nil {
 		t.Error("budget not enforced against persisted+new usage")
+	}
+}
+
+// ReadUsage is what `sluice budget show` runs. It must only read: no file
+// for a wrong path, no row deleted, no counter written.
+func TestReadUsage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b.db")
+	m := newManager(t, path)
+	m.Record("carol", "", 2*time.Second, 60)
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// A row older than the retention time, which opening the manager would
+	// delete.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO budget_usage (day, subject, issuer, cpu_ms, rows_served, updated_at) VALUES ('2020-01-01', 'carol', '', 5000, 7, '2020-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert old row: %v", err)
+	}
+	_ = db.Close()
+
+	today, err := budget.ReadUsage(context.Background(), path, "carol", "")
+	if err != nil || today.RowsPerDay != 60 || today.CPUSecondsPerDay != 2 {
+		t.Errorf("today = %+v, %v; want 60 rows and 2 cpu seconds", today, err)
+	}
+	old, err := budget.ReadUsage(context.Background(), path, "carol", "2020-01-01")
+	if err != nil || old.RowsPerDay != 7 || old.CPUSecondsPerDay != 5 {
+		t.Errorf("old day = %+v, %v; want the row to be still there with 7 rows", old, err)
+	}
+	if again, _ := budget.ReadUsage(context.Background(), path, "carol", "2020-01-01"); again.RowsPerDay != 7 {
+		t.Error("a read deleted the old row")
+	}
+
+	missing := filepath.Join(dir, "nope", "budget.db")
+	if _, err := budget.ReadUsage(context.Background(), missing, "carol", ""); err == nil {
+		t.Error("a missing store gave no error")
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !os.IsNotExist(err) {
+		t.Error("a read created the state directory")
 	}
 }

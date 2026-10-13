@@ -36,12 +36,11 @@ Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also ha
 |---|---|---|
 | 0 | all | Success. |
 | 1 | all | Wrong flags, a file that cannot be read, or a failed start. |
-| 1 | ~policy test~ | A policy does not compile. |
 | 1 | ~datasource check~ | A policy file is not valid, or the name is unknown. |
 | 2 | ~serve~ | A listener failed, for example the port is in use. |
 | 2 | ~datasource check~ | The directory holds no ~DataSource~ object. |
 | 3 | ~config validate~, ~policy validate~, ~policy explain~ | A policy or the server config is not valid. |
-| 3 | ~policy test~ | A policy file is not valid, a case failed, or no case ran. |
+| 3 | ~policy test~ | A policy file is not valid or does not compile, a case failed, or no case ran. |
 | 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, or the anchor differs. |
 `
 
@@ -52,7 +51,7 @@ var notes = map[string]string{
 
 	"audit verify": `See [Audit log](../security/audit.md).`,
 
-	"budget show": `The state directory must exist. The command creates ~budget.db~ there if the file is missing.`,
+	"budget show": `The command only reads ~budget.db~ in the state directory. A missing file is an error. A running server writes the numbers of today every ~budget.flushInterval~.`,
 
 	"config validate": `The policy directory is optional. ~sluice serve~ runs the same checks at start.`,
 
@@ -82,7 +81,7 @@ var notes = map[string]string{
 --8<-- "examples/cli/expected/03-validate-broken.txt"
 ~~~`,
 
-	"schema export": `Without ~--kind~ the command ends with exit status 1. So does ~--kind RowFilterPolicy~.`,
+	"schema export": `Without ~--kind~ the output is one schema with a ~oneOf~ over all kinds.`,
 
 	"serve": `Starts the REST API. The MCP server and the admin API start when the server config enables them. ~SIGINT~ and ~SIGTERM~ stop the server. ~SIGHUP~ reloads the policies. A binary built with ~-tags=pure_parser~ does not start.`,
 }

@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -158,27 +159,26 @@ func (m *Manager) Record(subject, issuer string, cpu time.Duration, rows int64) 
 	u.rows += rows
 }
 
-// Usage reports a subject's usage for a given UTC day (default today). For
-// today the authoritative in-memory counters are returned (the DB is only a
-// backup that flush mirrors); for past days the persisted rows are summed.
-func (m *Manager) Usage(_ context.Context, subject, day string) (Spec, error) {
+// ReadUsage reads the stored usage of a subject for a UTC day (default
+// today) from the store at path. It only reads: it creates no file, deletes
+// no old row and writes no counter, so it is safe next to a running server.
+// The numbers of today are those of the last flush of that server.
+func ReadUsage(ctx context.Context, path, subject, day string) (Spec, error) {
+	// sql.Open does not touch the file, and a read-only open of a missing
+	// file gives an error that says little.
+	if _, err := os.Stat(path); err != nil {
+		return Spec{}, fmt.Errorf("budget store %s not found: check --state-dir", path)
+	}
 	if day == "" {
-		day = m.today()
+		day = time.Now().UTC().Format("2006-01-02")
 	}
-	if day == m.today() {
-		var cpuMS, rows int64
-		m.mu.Lock()
-		for k, u := range m.counters {
-			if subjectOf(k) == subject {
-				cpuMS += u.cpuMS
-				rows += u.rows
-			}
-		}
-		m.mu.Unlock()
-		return Spec{CPUSecondsPerDay: cpuMS / 1000, RowsPerDay: rows}, nil
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return Spec{}, err
 	}
+	defer func() { _ = db.Close() }()
 	var cpuMS, rows int64
-	err := m.db.QueryRow(
+	err = db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(cpu_ms),0), COALESCE(SUM(rows_served),0) FROM budget_usage WHERE day=? AND subject=?`,
 		day, subject).Scan(&cpuMS, &rows)
 	if err != nil {

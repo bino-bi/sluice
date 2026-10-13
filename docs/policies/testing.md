@@ -109,8 +109,8 @@ With `--json`:
 | Exit status | When |
 |---|---|
 | 0 | All cases pass. |
-| 1 | Bad flag, missing tests path, broken suite file, or a policy compile error such as an unknown tag. |
-| 3 | A policy with an invalid field, a failing case, or no case at all. |
+| 1 | Bad flag, missing tests path or broken suite file. |
+| 3 | A policy with an invalid field, a policy that does not compile, a failing case, or no case at all. |
 
 ## Limits
 
