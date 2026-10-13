@@ -190,8 +190,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions are accepted under the DCO
 
 This project is developed with the help of AI tools. AI is used to:
 
-- write the documentation and large parts of the code comments
-- write release notes and changelog entries
+- help write the documentation and large parts of the code comments
+- help write release notes and changelog entries
 - generate the examples under `examples/`
+- perform small refactorings, code adjustments and style guide enforcement
+- review the codebase to check that it matches the docs, the threat model, the roadmap and similar documents
 
 This lets the maintainer, a solo developer, focus on the code and the core problem. The maintainer reviews all AI-generated text and examples before they are merged.
