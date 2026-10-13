@@ -807,7 +807,7 @@ func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
 			if len(got) > 8192 {
 				t.Fatalf("log line has %d bytes, want the cause cut", len(got))
 			}
-			if tc.logged && !(strings.Contains(got, `"level":"WARN"`) && strings.Contains(got, ae.QueryID) && strings.Contains(got, cause)) {
+			if tc.logged && (!strings.Contains(got, `"level":"WARN"`) || !strings.Contains(got, ae.QueryID) || !strings.Contains(got, cause)) {
 				t.Fatalf("log = %q, want a WARN line with the query_id and the cause", got)
 			}
 		})
