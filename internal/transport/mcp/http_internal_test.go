@@ -169,3 +169,27 @@ func TestRun_BadTLSFailsBeforeBind(t *testing.T) {
 		t.Fatalf("Run = %v, want a tls error", err)
 	}
 }
+
+func TestParseTransport(t *testing.T) {
+	for in, want := range map[string]TransportMode{
+		"":                TransportStdio,
+		"stdio":           TransportStdio,
+		"streamable_http": TransportStreamableHTTP,
+		"http":            TransportStreamableHTTP,
+		"streamable-http": TransportStreamableHTTP,
+		"streamablehttp":  TransportStreamableHTTP,
+	} {
+		got, err := ParseTransport(in)
+		if err != nil || got != want {
+			t.Errorf("ParseTransport(%q) = %q, %v, want %q", in, got, err, want)
+		}
+	}
+	if _, err := ParseTransport("sse"); err == nil {
+		t.Error("ParseTransport(sse) = nil error, want an unknown transport")
+	}
+	// New refuses the value too, so a wrong mcp.transport fails at start
+	// and not when the listener runs.
+	if _, err := New(Config{Transport: "sse"}, Deps{Service: testService()}); err == nil {
+		t.Error("New accepted the transport sse")
+	}
+}

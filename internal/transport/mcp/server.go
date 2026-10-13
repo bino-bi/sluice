@@ -28,6 +28,19 @@ const (
 	TransportStreamableHTTP TransportMode = "streamable_http"
 )
 
+// ParseTransport maps a value of mcp.transport or --transport to its
+// mode. The HTTP transport has three short names.
+func ParseTransport(s string) (TransportMode, error) {
+	switch s {
+	case "", "stdio":
+		return TransportStdio, nil
+	case "streamable_http", "http", "streamable-http", "streamablehttp":
+		return TransportStreamableHTTP, nil
+	default:
+		return "", fmt.Errorf("mcp: unknown transport %q", s)
+	}
+}
+
 // Config controls the MCP server. Enabled=false is the MVP-safe default —
 // the server is opt-in.
 type Config struct {
@@ -100,13 +113,11 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if deps.Service == nil {
 		return nil, errors.New("mcp: Deps.Service is required")
 	}
-	switch cfg.Transport {
-	case "":
-		cfg.Transport = TransportStdio
-	case "http", "streamable-http", "streamablehttp":
-		// Operator-friendly aliases for the canonical value.
-		cfg.Transport = TransportStreamableHTTP
+	mode, err := ParseTransport(string(cfg.Transport))
+	if err != nil {
+		return nil, err
 	}
+	cfg.Transport = mode
 	// net/http binds port 80 on every interface for an empty address.
 	if cfg.Transport == TransportStreamableHTTP && cfg.HTTPListen == "" {
 		return nil, errors.New("mcp: the streamable_http transport needs mcp.listen")

@@ -68,6 +68,10 @@ Exit codes:
   0  clean shutdown
   1  startup / auth failure`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode, err := mcp.ParseTransport(transport)
+			if err != nil {
+				return &exitError{Code: 1, Err: err}
+			}
 			parent := cmd.Context()
 			if parent == nil {
 				parent = context.Background()
@@ -90,8 +94,6 @@ Exit codes:
 			if len(deps.registry.Current().ByKind[apitypes.KindApprovalPolicy]) > 0 {
 				return &exitError{Code: 1, Err: errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")}
 			}
-
-			mode := mcp.TransportMode(transport)
 
 			// For stdio, resolve the static credential into a pinned identity
 			// now. For HTTP, the auth middleware runs per request instead.

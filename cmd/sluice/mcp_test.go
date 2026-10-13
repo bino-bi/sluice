@@ -217,3 +217,49 @@ audit:
 		t.Fatalf("MCP status = %d, want 429 from the bucket that REST emptied: %s", w.Code, w.Body.String())
 	}
 }
+
+// runMCPCmd runs `sluice mcp` with an empty policy directory and returns
+// its error.
+func runMCPCmd(t *testing.T, args ...string) error {
+	t.Helper()
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	if err := os.MkdirAll(policyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := "policies:\n  reload: false\naudit:\n  file:\n    path: " + filepath.Join(dir, "audit") + "\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newMCPCmd()
+	cmd.SetArgs(append([]string{"--config", cfgPath, "--policies-dir", policyDir}, args...))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	return cmd.ExecuteContext(context.Background())
+}
+
+// A short name of the HTTP transport is the HTTP transport: the command
+// must not ask for the credential that only stdio pins.
+func TestMCPCmd_TransportAliasNeedsNoStdioCredential(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	for _, name := range []string{"http", "streamable-http", "streamablehttp", "streamable_http"} {
+		// The config has no mcp.listen, so the command stops there.
+		err := runMCPCmd(t, "--transport", name)
+		if err == nil || !strings.Contains(err.Error(), "mcp.listen") {
+			t.Errorf("--transport %s: err = %v, want the missing mcp.listen", name, err)
+		}
+	}
+}
+
+func TestMCPCmd_UnknownTransport(t *testing.T) {
+	err := runMCPCmd(t, "--transport", "sse")
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.Code != 1 || !strings.Contains(err.Error(), `"sse"`) {
+		t.Fatalf("err = %v, want exit status 1 that names the transport", err)
+	}
+}
