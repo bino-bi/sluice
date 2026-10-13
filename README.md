@@ -185,3 +185,13 @@ Every source file carries an SPDX header; see [NOTICE](NOTICE) for attribution.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions are accepted under the DCO (`git commit -s`); run `make all` (fmt → vet → lint → test → build) before opening a PR.
+
+## AI usage disclaimer
+
+This project is developed with the help of AI tools. AI is used to:
+
+- write the documentation and large parts of the code comments
+- write release notes and changelog entries
+- generate the examples under `examples/`
+
+This lets the maintainer, a solo developer, focus on the code and the core problem. The maintainer reviews all AI-generated text and examples before they are merged.
