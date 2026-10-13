@@ -35,6 +35,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			s.lg.DebugContext(r.Context(), "mcp: identify failed", "error", err)
+			if s.deps.AuthFailed != nil {
+				s.deps.AuthFailed(identity.RemoteIP(r), identity.FailureReason(err))
+			}
 			w.Header().Set("WWW-Authenticate", `Bearer realm="sluice-mcp"`)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

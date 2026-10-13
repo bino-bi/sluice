@@ -127,3 +127,31 @@ func TestAuthMiddleware(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthMiddleware_FailedLoginIsReported(t *testing.T) {
+	type call struct{ ip, reason string }
+	run := func(id identity.Identifier, allowAnon bool) (int, []call) {
+		var calls []call
+		s := newServerForAuth(id, allowAnon)
+		s.deps.AuthFailed = func(ip, reason string) { calls = append(calls, call{ip, reason}) }
+		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r.RemoteAddr = "203.0.113.7:51234"
+		w := httptest.NewRecorder()
+		s.authMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, r)
+		return w.Code, calls
+	}
+	code, calls := run(&fakeIdentifier{err: identity.ErrJWTExpired}, false)
+	if code != http.StatusUnauthorized || len(calls) != 1 || calls[0] != (call{"203.0.113.7", "expired credential"}) {
+		t.Errorf("expired token: code %d, calls %v", code, calls)
+	}
+	if _, calls := run(&fakeIdentifier{err: identity.ErrNoCredential}, false); len(calls) != 1 || calls[0].reason != "no credential" {
+		t.Errorf("no credential: calls %v", calls)
+	}
+	// An anonymous call that is let through is no failed login.
+	if code, calls := run(&fakeIdentifier{err: identity.ErrNoCredential}, true); code != http.StatusOK || len(calls) != 0 {
+		t.Errorf("anonymous allowed: code %d, calls %v", code, calls)
+	}
+	if _, calls := run(&fakeIdentifier{user: &identity.UserCtx{Subject: "alice"}}, false); len(calls) != 0 {
+		t.Errorf("success: calls %v", calls)
+	}
+}

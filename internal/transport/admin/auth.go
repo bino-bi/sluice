@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/bino-bi/sluice/internal/identity"
 )
 
 // adminAuth is the middleware applied to every protected endpoint. It
@@ -23,6 +25,13 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.Token)) != 1 {
 			s.lg.WarnContext(r.Context(), "admin: auth failed",
 				"remote", r.RemoteAddr, "path", r.URL.Path)
+			if s.deps.AuthFailed != nil {
+				reason := "invalid credential"
+				if r.Header.Get("Authorization") == "" {
+					reason = "no credential"
+				}
+				s.deps.AuthFailed(identity.RemoteIP(r), reason)
+			}
 			writeAuthError(w)
 			return
 		}

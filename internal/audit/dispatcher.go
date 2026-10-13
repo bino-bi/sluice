@@ -9,7 +9,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/internal/version"
+	pkgerr "github.com/bino-bi/sluice/pkg/errors"
+)
+
+// Bounds of the auth-event records, in records per second and as a burst.
+// A flood of failed logins must not fill the audit log.
+const (
+	AuthEventRate  = 5
+	AuthEventBurst = 20
 )
 
 // DispatcherOptions configures a new Dispatcher.
@@ -63,6 +72,8 @@ type Dispatcher struct {
 	closed   bool
 	lastHash string
 	metrics  *metricsSet
+
+	authEvents *ratelimit.KeyedLimiter
 }
 
 // NewDispatcher builds a Dispatcher, emits the genesis record if needed,
@@ -97,6 +108,8 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		queue:   make(chan *Record, opts.QueueSize),
 		quit:    make(chan struct{}),
 		metrics: metricsShared(),
+		authEvents: ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: AuthEventRate, Burst: AuthEventBurst}, 1, opts.Clock),
 	}
 
 	// Seed the chain: prefer the primary sink's LastHash; otherwise write
@@ -170,6 +183,37 @@ func newGenesisRecord(opts DispatcherOptions) *Record {
 // PriorHash + Hash + Timestamp + SluiceVersion before handing it to
 // sinks. r may be mutated; callers must not reuse the same pointer.
 func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
+	return d.enqueue(ctx, r, true)
+}
+
+// AuthFailure writes an auth-event record for a request that failed the
+// login. origin names the transport, reason is one of the fixed texts of
+// identity.FailureReason. The record holds no part of the credential.
+//
+// A flood of failed logins must not fill the audit log or hold up the
+// query records: the events have their own rate limit, and one that finds
+// the queue full is dropped at once. A dropped event is counted, the
+// request gets its 401 either way.
+func (d *Dispatcher) AuthFailure(origin, remoteIP, reason string) {
+	if d.authEvents.Allow("") {
+		err := d.enqueue(context.Background(), &Record{
+			EventType: EventAuthEvent,
+			Origin:    origin,
+			RemoteIP:  remoteIP,
+			Decision:  DecisionError,
+			ErrorCode: string(pkgerr.CodeUnauthorized),
+			Message:   reason,
+		}, false)
+		if err == nil {
+			return
+		}
+	}
+	d.metrics.AuthEventsDropped.WithLabelValues(origin).Inc()
+}
+
+// enqueue is Enqueue. With wait false it gives up at once when the queue
+// is full, and counts no drop.
+func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	if r == nil {
 		return fmt.Errorf("audit: nil record")
 	}
@@ -209,6 +253,10 @@ func (d *Dispatcher) Enqueue(ctx context.Context, r *Record) error {
 		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
 		return nil
 	default:
+	}
+	if !wait {
+		d.pending.Done()
+		return ErrQueueFull
 	}
 
 	// Bounded blocking path.

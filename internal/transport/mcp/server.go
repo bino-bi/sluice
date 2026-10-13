@@ -97,6 +97,11 @@ type Deps struct {
 	// listeners. Nil disables the respective bucket.
 	GlobalLimiter keyLimiter
 	PerIPLimiter  keyLimiter
+
+	// AuthFailed is called for a Streamable HTTP request that fails the
+	// login, with the client address and a fixed reason. Nil means no
+	// call.
+	AuthFailed func(remoteIP, reason string)
 }
 
 // Server wraps sdkmcp.Server and optional HTTP listener.

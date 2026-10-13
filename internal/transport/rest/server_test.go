@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -402,5 +403,27 @@ func TestOpenAPI_NotServed(t *testing.T) {
 	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d want 404", w.Code)
+	}
+}
+
+// A request that fails the login reports the client address and a fixed
+// reason, for the audit record. One over the rate limit never gets there.
+func TestHandleQuery_FailedLoginIsReported(t *testing.T) {
+	t.Parallel()
+	type call struct{ ip, reason string }
+	var calls []call
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier: &stubIdentifier{err: fmt.Errorf("%w: key id svc-7 unknown", identity.ErrInvalidCredential)},
+		AuthFailed: func(ip, reason string) { calls = append(calls, call{ip, reason}) },
+	})
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", strings.NewReader(`{"sql":"SELECT 1"}`))
+	r.RemoteAddr = "203.0.113.7:51234"
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d want 401", w.Code)
+	}
+	if len(calls) != 1 || calls[0] != (call{"203.0.113.7", "invalid credential"}) {
+		t.Errorf("calls = %v, want one with the address and the fixed reason", calls)
 	}
 }

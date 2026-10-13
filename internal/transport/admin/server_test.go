@@ -377,3 +377,24 @@ func TestHandleAuditTail_InternalErrorIsLogged(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminAuth_FailedLoginIsReported(t *testing.T) {
+	t.Parallel()
+	type call struct{ ip, reason string }
+	var calls []call
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true, Token: "secret"}, admin.Deps{
+		AuthFailed: func(ip, reason string) { calls = append(calls, call{ip, reason}) },
+	})
+	for _, auth := range []string{"", "Bearer wrong", "Bearer secret"} {
+		r := httptest.NewRequest(http.MethodGet, "/admin/policies", nil)
+		r.RemoteAddr = "203.0.113.7:51234"
+		if auth != "" {
+			r.Header.Set("Authorization", auth)
+		}
+		srv.Handler().ServeHTTP(httptest.NewRecorder(), r)
+	}
+	want := []call{{"203.0.113.7", "no credential"}, {"203.0.113.7", "invalid credential"}}
+	if len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("calls = %v, want %v", calls, want)
+	}
+}

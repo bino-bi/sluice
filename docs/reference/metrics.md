@@ -11,6 +11,7 @@ Sluice serves Prometheus metrics at `GET /metrics` on the [admin API](admin-api.
 | `sluice_approval_pending` | gauge |  | Approval requests currently awaiting a decision. |
 | `sluice_approval_wait_seconds` | histogram |  | Time a request waited before being decided or timing out. |
 | `sluice_approval_webhook_deliveries_total` | counter | `status` | Approval webhook delivery attempts by status. |
+| `sluice_audit_auth_events_dropped_total` | counter | `origin` | Failed logins without an audit record: over the rate limit of these records, or the queue was full. |
 | `sluice_audit_dropped_total` | counter | `sink`, `reason` | Audit records dropped before reaching a sink. |
 | `sluice_audit_enqueued_total` | counter | `event_type` | Audit records accepted into the dispatcher queue. |
 | `sluice_audit_queue_depth` | gauge | `sink` | Current audit dispatcher queue depth. |

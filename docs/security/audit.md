@@ -79,7 +79,10 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `query` | Sluice decides on a query |
 | `query-result` | An allowed query ends |
 | `admin-action` | `GET /admin/subjects/explain` or the MCP tool `explain_access` runs |
+| `auth-event` | A request fails the login on REST, MCP over HTTP or the admin API |
 | `approval-requested`, `approval-approved`, `approval-rejected`, `approval-expired` | An approval changes state |
+
+An `auth-event` record has `origin`, `remote_ip`, the `error_code` `ERR_UNAUTHORIZED` and a `message`: `no credential`, `expired credential` or `invalid credential`. It holds no part of the credential. Sluice writes at most 5 of these records per second, after a burst of 20. `sluice_audit_auth_events_dropped_total` counts the failed logins without a record.
 
 ## Hash chain
 
@@ -124,7 +127,7 @@ Syslog and S3 get copies. Their failures never stop a query. See [Configuration]
 
 ## Limits
 
-- No record for a failed login, a reload, other admin calls, or a request over `limits.globalRps` or `limits.perIpRps`.
+- No record for a reload, other admin calls, or a request over `limits.globalRps` or `limits.perIpRps`. In a flood of failed logins, only a part gets a record.
 - The hash has no secret key. Verify does not detect missing newest records, or a change when the later hashes are computed again. Store each `last_hash` on another host. `--json` prints it in full. A changed log no longer contains it.
 - A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.

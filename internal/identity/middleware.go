@@ -24,6 +24,24 @@ type MiddlewareOptions struct {
 	// Logger receives slog messages for rejected requests. Nil uses
 	// slog.Default.
 	Logger *slog.Logger
+
+	// OnFailure is called for a request that gets a 401, with the client
+	// address and the FailureReason. Nil means no call.
+	OnFailure func(remoteIP, reason string)
+}
+
+// FailureReason maps an Identify error to one of three fixed texts for
+// the audit record. The text of the error can name a key id or an issuer,
+// so it stays in the log.
+func FailureReason(err error) string {
+	switch {
+	case stderrors.Is(err, ErrNoCredential):
+		return "no credential"
+	case stderrors.Is(err, ErrExpiredCredential), stderrors.Is(err, ErrJWTExpired):
+		return "expired credential"
+	default:
+		return "invalid credential"
+	}
 }
 
 // Middleware returns an HTTP middleware that runs Identifier for every
@@ -46,6 +64,9 @@ func Middleware(opts MiddlewareOptions) func(http.Handler) http.Handler {
 				if stderrors.Is(err, ErrNoCredential) && opts.AllowAnonymous {
 					next.ServeHTTP(w, r)
 					return
+				}
+				if opts.OnFailure != nil {
+					opts.OnFailure(RemoteIP(r), FailureReason(err))
 				}
 				writeAuthnError(w, r, log, err)
 				return

@@ -369,6 +369,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		Registry:   deps.sourceReg,
 		Approvals:  approvalGateway(deps.approvals),
 		Logger:     deps.log,
+		AuthFailed: deps.authFailed("rest"),
 	}
 	// Transport-level buckets sit ahead of identity on /v1/query and on
 	// MCP over HTTP; zero RPS disables them (limits.* is restart-only,
@@ -454,10 +455,20 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Logger:    deps.log,
 			Reloader:  reloaderFromWatcher(deps.watcher),
 			Audit:     auditTailer(deps.auditFile),
+
+			AuthFailed: deps.authFailed("admin"),
 		})
 	}
 
 	return deps, nil
+}
+
+// authFailed returns the hook a transport calls for a request that fails
+// the login. It writes an auth-event audit record with origin.
+func (d *runtimeDeps) authFailed(origin string) func(remoteIP, reason string) {
+	return func(remoteIP, reason string) {
+		d.auditDisp.AuthFailure(origin, remoteIP, reason)
+	}
 }
 
 // applyReload applies a published snapshot to every hot-swappable

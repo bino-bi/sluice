@@ -11,10 +11,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parserbackend"
@@ -358,5 +360,93 @@ func TestMCPTransportNames_ValidateAgreesWithParse(t *testing.T) {
 		if valErr := scfg.Validate(); (parseErr == nil) != (valErr == nil) {
 			t.Errorf("transport %q: ParseTransport = %v, Validate = %v", name, parseErr, valErr)
 		}
+	}
+}
+
+// A failed login on each listener leaves an auth-event record with the
+// origin, the client address and a fixed reason, and no part of the
+// credential.
+func TestBuildRuntime_FailedLoginIsAudited(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	if err := os.MkdirAll(policyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := `
+policies:
+  reload: false
+mcp:
+  enabled: true
+  transport: streamable_http
+  listen: 127.0.0.1:0
+admin:
+  enabled: true
+  listen: 127.0.0.1:0
+  token: s3cret
+audit:
+  file:
+    path: ` + filepath.Join(dir, "audit") + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	deps, err := buildRuntime(ctx, cfgPath, policyDir)
+	if err != nil {
+		t.Fatalf("buildRuntime: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		deps.Close(shutdownCtx)
+	}()
+
+	const secret = "Bearer not-the-token"
+	for _, tc := range []struct {
+		handler http.Handler
+		method  string
+		path    string
+	}{
+		{deps.rest.Handler(), http.MethodPost, "/v1/query"},
+		{deps.mcp.Handler(), http.MethodPost, "/"},
+		{deps.admin.Handler(), http.MethodGet, "/admin/policies"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+		r.RemoteAddr = "203.0.113.7:51234"
+		r.Header.Set("Authorization", secret)
+		w := httptest.NewRecorder()
+		tc.handler.ServeHTTP(w, r)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: status %d, want 401", tc.method, tc.path, w.Code)
+		}
+	}
+	if err := deps.auditDisp.Flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	recs, err := deps.auditFile.Tail(ctx, 10)
+	if err != nil {
+		t.Fatalf("tail: %v", err)
+	}
+	var origins []string
+	for _, r := range recs {
+		if r.EventType != audit.EventAuthEvent {
+			continue
+		}
+		origins = append(origins, r.Origin)
+		if r.RemoteIP != "203.0.113.7" || r.Message != "invalid credential" || r.ErrorCode != "ERR_UNAUTHORIZED" {
+			t.Errorf("record = %+v", r)
+		}
+		line, _ := audit.MarshalLine(r)
+		if strings.Contains(string(line), "not-the-token") {
+			t.Errorf("the record holds a part of the credential: %s", line)
+		}
+	}
+	sort.Strings(origins)
+	if strings.Join(origins, ",") != "admin,mcp,rest" {
+		t.Errorf("auth-event origins = %v, want admin, mcp and rest", origins)
 	}
 }

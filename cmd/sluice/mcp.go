@@ -161,6 +161,7 @@ func newMCPServer(deps *runtimeDeps, transport mcp.TransportMode, allowAnon bool
 		Catalogs:   registryCatalogLister{r: deps.sourceReg},
 		Logger:     deps.log,
 		PinnedUser: pinned,
+		AuthFailed: deps.authFailed("mcp"),
 	}
 	// A nil pointer in the interface field would not read as "no limit".
 	if deps.globalLimiter != nil {

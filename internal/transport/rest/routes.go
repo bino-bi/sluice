@@ -27,6 +27,7 @@ func (s *Server) routes() http.Handler {
 	authMW := identity.Middleware(identity.MiddlewareOptions{
 		Identifier: s.deps.Identifier,
 		Logger:     s.lg,
+		OnFailure:  s.deps.AuthFailed,
 	})
 	// The transport-level rate buckets run before identity so a flood
 	// cannot exhaust JWKS fetches / key hashing; health and approval
