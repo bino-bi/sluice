@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 python3 ../seed.py seed.sql data/shop.db
 
-# The pepper file has no final newline and only the owner can write it.
+# Only the owner can write the pepper file.
 mkdir -p data/secrets
 printf '%s' "server-config-demo-pepper" > data/secrets/apikey-pepper
 chmod 600 data/secrets/apikey-pepper

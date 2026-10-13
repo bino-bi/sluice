@@ -3,6 +3,7 @@
 package rebac
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -112,6 +113,9 @@ func (e *Engine) ApplySnapshot(ctx context.Context, src *config.Snapshot) error 
 			if err != nil {
 				return fmt.Errorf("rebac: %s: resolve tokenRef: %w", rp.Metadata.Name, err)
 			}
+			// The token goes into a header. A final newline of a secret
+			// file would make every request fail.
+			token = bytes.TrimRight(token, " \t\r\n")
 		}
 		cr.checker = e.opts.NewChecker(rp.Spec.Backend, token)
 		out = append(out, cr)

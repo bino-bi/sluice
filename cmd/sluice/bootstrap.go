@@ -423,10 +423,14 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	})
 
 	if scfg.Admin.Enabled {
+		token, err := resolveAdminToken(ctx, deps.resolver, scfg.Admin.Token)
+		if err != nil {
+			return nil, err
+		}
 		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
-			Token:   scfg.Admin.Token,
+			Token:   token,
 		}
 		if t := scfg.Admin.TLS; t != nil {
 			adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
@@ -601,10 +605,28 @@ func (l registryCatalogLister) List(_ context.Context) []queryservice.CatalogInf
 // secret for multi-instance fleets.
 func resolveGenesisSeed(ctx context.Context, r *secrets.Resolver, file *config.FileSinkConfig) ([]byte, error) {
 	if file != nil && file.Genesis != "" {
-		return r.Resolve(ctx, file.Genesis)
+		seed, err := r.ResolveString(ctx, file.Genesis)
+		return []byte(seed), err
 	}
 	host, _ := os.Hostname()
 	return []byte("sluice-genesis:" + host + ":" + version.Current().CommitFull), nil
+}
+
+// resolveAdminToken returns the admin token. A value that starts with
+// "secret://" is a reference, anything else is the token itself. An empty
+// secret is an error: an empty token turns the check of the admin API off.
+func resolveAdminToken(ctx context.Context, r *secrets.Resolver, token string) (string, error) {
+	if !strings.HasPrefix(token, "secret://") {
+		return token, nil
+	}
+	resolved, err := r.ResolveString(ctx, token)
+	if err != nil {
+		return "", fmt.Errorf("resolve admin.token: %w", err)
+	}
+	if resolved == "" {
+		return "", fmt.Errorf("admin.token: the secret is empty")
+	}
+	return resolved, nil
 }
 
 // buildIdentity assembles the identity.Composite from server + policy
@@ -651,10 +673,11 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 	children := []identity.Identifier{jwtID}
 
 	if scfg.Identity.APIKeyPepper != "" {
-		pepper, err := r.Resolve(ctx, scfg.Identity.APIKeyPepper)
+		pepperText, err := r.ResolveString(ctx, scfg.Identity.APIKeyPepper)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("resolve apiKeyPepper: %w", err)
 		}
+		pepper := []byte(pepperText)
 		bindings, err := buildAPIKeyBindings(ctx, r, snap, log)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("api-key bindings: %w", err)

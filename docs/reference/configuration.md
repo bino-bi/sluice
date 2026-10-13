@@ -29,7 +29,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `mcp.allowAnonymous` | `false` | Accept clients without a credential. |
 | `admin.enabled` | `false` | Start the admin API. |
 | `admin.listen` | `:9091` | Admin API address. |
-| `admin.token` |  | Bearer token, plain text. Empty means no check. |
+| `admin.token` |  | Bearer token, as plain text or a secret reference. Empty means no check. |
 | `admin.tls.certFile` |  | Certificate file. Needs `keyFile`. |
 | `admin.tls.keyFile` |  | Key file. Needs `certFile`. |
 | `admin.tls.clientCA` |  | CA file. Clients must send a certificate. |

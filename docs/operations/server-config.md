@@ -56,13 +56,15 @@ There are no other providers. Sluice refuses a secret file that group or others 
 
 | Where | Keys that take a reference |
 |---|---|
-| Server config | `identity.apiKeyPepper`, `audit.file.genesis`, `audit.s3.credentialsRef`, `approval.webhooks[].headersRef`, `mcp.tokenRef`, `mcp.apiKeyRef` |
+| Server config | `admin.token`, `identity.apiKeyPepper`, `audit.file.genesis`, `audit.s3.credentialsRef`, `approval.webhooks[].headersRef`, `mcp.tokenRef`, `mcp.apiKeyRef` |
 | `SubjectBinding` | `apiKeys[].hashRef`, `hmacSecretRef` |
 | `DataSource` | `credentialsRef`, `headersRef`, `tokenRef` |
 | `RelationshipPolicy` | `backend.tokenRef` |
 | Column mask arguments | `saltRef`, `keyRef`, `seed` |
 
-`admin.token` holds the token itself.
+`admin.token` holds the token itself, or a reference to it. An empty secret stops the start.
+
+Sluice cuts spaces and line ends at the end of a secret of the server config. A secret file can end with a newline.
 
 Sluice reads the secrets of the server config only at start. A [reload](hot-reload.md) reads the secrets of policy objects again. Until then, Sluice caches a mask or data source secret for 10 minutes.
 
@@ -95,7 +97,6 @@ An invalid file ends the command with status 3:
 - A wrong `--config` path is no error. Sluice then uses the defaults.
 - `--strict` checks only policy files for unknown fields.
 - `config validate` does not read secrets. A missing secret of the server config stops `sluice serve`.
-- Sluice keeps a final newline of a [pepper or genesis](../reference/glossary.md) file. Write these files without one.
 - `budget.failClosed` matters only at start. If the budget store does not open, `true` stops Sluice and `false` turns budgets off.
 
 ## See also
