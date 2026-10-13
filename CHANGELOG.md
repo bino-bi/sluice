@@ -28,6 +28,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **The row filter ops `IsNull` and `IsNotNull` produced SQL that DuckDB rejects.** They were written as `col OPERATOR(IS) NULL`, so every query on the table failed with `ERR_INTERNAL`. They now give `col IS NULL` and `col IS NOT NULL`. The OPA row filter form uses the same code.
 - **Audit recorded a failed execution as `ERR_INTERNAL` while the client got another code.** A timeout, a cancel or an unavailable data source during execution was audited as `ERR_INTERNAL`. The audit record now carries the code the client receives.
 - **`EXPLAIN SELECT` did not match action-scoped clauses.** A clause with `actions: [SELECT]` never matched `EXPLAIN`, so the tables of an `EXPLAIN` were not covered by such an allow. `EXPLAIN` over a `SELECT` now counts as `SELECT`; `EXPLAIN` over any other statement is classified as that statement.
 - **Audit recorded a parse error as `ERR_INTERNAL` while the client got the right code.** When a query was allowed by policy but failed to parse, the audit record stored `ERR_INTERNAL` though the client received `ERR_SYNTAX` (or `ERR_UNSUPPORTED_SYNTAX`). The audit record now carries the same code the client receives.

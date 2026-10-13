@@ -33,8 +33,6 @@ var skip = map[string]bool{
 	"AuditSink":                           true, // decoded, never read: sinks come from the server config
 	"object.metadata.namespace":           true, // no reader
 	"Clause.subjects.ipRanges":            true, // never matches: the remote address holds a port
-	"PredOp=IsNull":                       true, // the rewritten SQL fails in DuckDB
-	"PredOp=IsNotNull":                    true, // the rewritten SQL fails in DuckDB
 	"MaskType=custom":                     true, // compile refuses it
 	"MaskType=external":                   true, // compile refuses it
 	"ColumnMaskPolicy.mask.expression":    true, // only read by mask type custom

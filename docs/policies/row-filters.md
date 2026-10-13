@@ -44,7 +44,7 @@ Shared fields: [Policies](index.md). Selectors: [Matching](matching.md). Table n
 
 ### Predicate
 
-A check has a `column`, an `op` and a `value` or `values`. Group checks with `all`, `any` and `not`.
+A check has a `column`, an `op` and a `value` or `values`. `IsNull` and `IsNotNull` take neither. Group checks with `all`, `any` and `not`.
 
 | `op` | Takes | SQL |
 |---|---|---|
@@ -56,6 +56,7 @@ A check has a `column`, an `op` and a `value` or `values`. Group checks with `al
 | `Like`, `NotLike` | `value` | `col ~~ $1`, `col !~~ $1`, as SQL `LIKE` |
 | `StartsWith`, `EndsWith`, `Contains` | `value` | `starts_with(col, $1)` and so on. `%` and `_` are plain text. |
 | `Matches` | `value` | `regexp_matches(col, $1)`. A partial match counts. |
+| `IsNull`, `IsNotNull` | nothing | `col IS NULL`, `col IS NOT NULL` |
 
 ### Template values
 

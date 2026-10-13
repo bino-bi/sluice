@@ -90,7 +90,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `any` | [Predicate](#predicate) list |  | One part must hold. |
 | `not` | [Predicate](#predicate) |  | The part must not hold. |
 | `column` | string |  | Column to test. |
-| `op` | string |  | `Equals`, `NotEquals`, `In`, `NotIn`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `Like`, `NotLike`, `Matches`, `StartsWith`, `EndsWith`, `Contains`. |
+| `op` | string |  | `Equals`, `NotEquals`, `In`, `NotIn`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `Like`, `NotLike`, `IsNull`, `IsNotNull`, `Matches`, `StartsWith`, `EndsWith`, `Contains`. |
 | `value` | any |  | Value to compare with. |
 | `values` | []any |  | For `In`, `NotIn`, `Between`. |
 

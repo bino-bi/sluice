@@ -417,20 +417,11 @@ func (s *state) renderLeaf(p *policy.CompiledPredicate) (*pg.Node, error) {
 }
 
 func (s *state) renderNullCheck(col *pg.Node, op string) *pg.Node {
-	// NULL checks deparse correctly as A_Expr with the op name ("IS" / "IS NOT").
-	// pg_query_go models NULL tests as a BooleanTest or A_Expr; an A_Expr with
-	// a NULL literal on the right side round-trips.
-	name := "IS"
+	kind := pg.NullTestType_IS_NULL
 	if op == "IsNotNull" {
-		name = "IS NOT"
+		kind = pg.NullTestType_IS_NOT_NULL
 	}
-	nullConst := &pg.Node{Node: &pg.Node_AConst{AConst: &pg.A_Const{Isnull: true}}}
-	return &pg.Node{Node: &pg.Node_AExpr{AExpr: &pg.A_Expr{
-		Kind:  pg.A_Expr_Kind_AEXPR_OP,
-		Name:  []*pg.Node{pg.MakeStrNode(name)},
-		Lexpr: col,
-		Rexpr: nullConst,
-	}}}
+	return &pg.Node{Node: &pg.Node_NullTest{NullTest: &pg.NullTest{Arg: col, Nulltesttype: kind}}}
 }
 
 func (s *state) renderValues(vs []policy.ValueSource) ([]*pg.Node, error) {

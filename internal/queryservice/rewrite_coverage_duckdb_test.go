@@ -1949,6 +1949,51 @@ func TestExecute_WritingSelectNotExecuted(t *testing.T) {
 	}
 }
 
+// The null check ops of a row filter run in DuckDB.
+func TestExecute_RowFilterNullChecks(t *testing.T) {
+	const seed = `
+CREATE TABLE tickets (id INTEGER, closed_at VARCHAR, owner VARCHAR);
+INSERT INTO tickets VALUES (1, NULL, 'ann'), (2, '2026-01-01', 'bob'), (3, NULL, NULL);`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-tickets
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["tickets"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: open-with-owner
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["tickets"] }
+  filter:
+    predicate:
+      all:
+        - column: closed_at
+          op: IsNull
+        - column: owner
+          op: IsNotNull
+`
+	svc, _, _ := newSeededHelloSluiceService(t, nil, seed, policies)
+	rows, err := runRows(svc, "SELECT id FROM shop.main.tickets ORDER BY id")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := fmt.Sprint(rows); got != "[[1]]" {
+		t.Fatalf("rows = %s, want [[1]]", got)
+	}
+}
+
 // orders has a row filter and no mask. A post-query mask on a table read
 // only in a subquery must not refuse a star over orders.
 func TestExecute_StarOnFilteredTableWithPostMaskInSubquery(t *testing.T) {
