@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bino-bi/sluice/internal/config"
+	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
 )
@@ -532,6 +533,16 @@ func compileMaskArgs(spec apitypes.MaskSpec) (pkgmask.Args, error) {
 		}
 		if err := provider.ValidateArgs(out); err != nil {
 			return pkgmask.Args{}, fmt.Errorf("mask %q: %w", spec.Type, err)
+		}
+		// The provider only checks that a reference is set. A value that
+		// is no secret reference would fail every query on the table.
+		for name, ref := range map[string]string{"saltRef": src.SaltRef, "keyRef": src.KeyRef} {
+			if ref == "" {
+				continue
+			}
+			if _, err := secrets.Parse(ref); err != nil {
+				return pkgmask.Args{}, fmt.Errorf("mask %q: %s: %w", spec.Type, name, err)
+			}
 		}
 	default:
 		return pkgmask.Args{}, fmt.Errorf("mask type %q: unknown", spec.Type)

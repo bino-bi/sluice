@@ -55,7 +55,7 @@ A mask runs in one of two places. "SQL" means the mask is part of the rewritten 
 
 - `hash`, `fpe`, `jitter` and `fake` give the same output for the same input.
 - `seed` is plain text or a `secret://` reference. See [Server config](../operations/server-config.md) for secrets.
-- Another `type` and most wrong `args` fail `sluice policy validate`. It does not check the form of `saltRef` and `keyRef`, or the type of `value`. Unknown keys in `args` pass.
+- Another `type` and most wrong `args` fail `sluice policy validate`. So does a `saltRef` or `keyRef` that is not a `secret://` reference. It does not check the type of `value`. Unknown keys in `args` pass.
 
 ## More examples
 
@@ -141,7 +141,7 @@ Every masked table also refuses `EXPLAIN` and some DuckDB forms. See [SQL forms 
 | A column changed after the last reload | `ERR_QUERY_FAILED` |
 | A comparison needs the column type from before the mask | `ERR_QUERY_FAILED` |
 | The query reads `rowid` | `ERR_QUERY_FAILED` |
-| A secret is missing, or `saltRef` or `keyRef` is not a `secret://` reference | HTTP 500, `ERR_INTERNAL` |
+| A secret is missing | HTTP 500, `ERR_INTERNAL` |
 | The `fpe` key is not 16, 24 or 32 bytes long | HTTP 500, `ERR_INTERNAL` |
 | `jitter` on a text column, `fpe` on a very short value | HTTP 200 with a cut JSON body |
 
