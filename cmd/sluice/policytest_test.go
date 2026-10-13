@@ -8,11 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bino-bi/sluice/internal/parserbackend"
 )
 
 // A policy that decodes but does not compile is a validation failure:
 // exit status 3, as the help says, not the status 1 of an I/O error.
 func TestPolicyTest_CompileError_ExitCode3(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("policy test needs a real parser backend (-tags=pure_parser)")
+	}
 	dir := t.TempDir()
 	// The mask needs a secret reference in saltRef.
 	const policy = `
