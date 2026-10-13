@@ -196,4 +196,4 @@ This project is developed with the help of AI tools. AI is used to:
 - perform small refactorings, code adjustments and style guide enforcement
 - review the codebase to check that it matches the docs, the threat model, the roadmap and similar documents
 
-This lets the maintainer, a solo developer, focus on the code and the core problem. The maintainer reviews all AI-generated text and examples before they are merged.
+This lets the maintainer, a solo developer, focus on the code and the core problem. The maintainer reviews all AI-generated text, examples and code changes before they are merged.
