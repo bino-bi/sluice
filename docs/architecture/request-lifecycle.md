@@ -132,7 +132,7 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 | | [Form refused on a filtered or masked table](../policies/row-filters.md#sql-forms-refused-on-filtered-or-masked-tables) | `ERR_UNSUPPORTED_SYNTAX`, `ERR_SYNTAX`, `ERR_MASK_UNSUPPORTED_CONTEXT` |
 | | Masked table missing in the schema cache | `ERR_REWRITE_FAILED` |
 | | Schema cannot be loaded | `ERR_DATASOURCE_UNAVAILABLE` |
-| | Template value the subject lacks | `ERR_INTERNAL` |
+| | Template value the subject lacks | `ACL_DENIED` |
 | | Statement too large for the DuckDB parse check | `ERR_PAYLOAD_TOO_LARGE` |
 | Rewrite or execute | Timeout, client gone | `ERR_TIMEOUT`, `ERR_CANCELED` |
 | Execute | DuckDB refuses the statement | `ERR_QUERY_FAILED` |

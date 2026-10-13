@@ -5,6 +5,7 @@ package rewriter
 import (
 	"cmp"
 	"fmt"
+	"reflect"
 	"strings"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -409,11 +410,12 @@ func (s *state) renderLeaf(p *policy.CompiledPredicate) (*pg.Node, error) {
 	case "IsNull", "IsNotNull":
 		return s.renderNullCheck(col, string(p.Op)), nil
 	}
-	values, err := s.renderValues(p.Values)
+	op := string(p.Op)
+	values, err := s.renderValues(p.Values, op == "In" || op == "NotIn")
 	if err != nil {
 		return nil, err
 	}
-	return s.renderBinary(col, string(p.Op), values)
+	return s.renderBinary(col, op, values)
 }
 
 func (s *state) renderNullCheck(col *pg.Node, op string) *pg.Node {
@@ -424,22 +426,50 @@ func (s *state) renderNullCheck(col *pg.Node, op string) *pg.Node {
 	return &pg.Node{Node: &pg.Node_NullTest{NullTest: &pg.NullTest{Arg: col, Nulltesttype: kind}}}
 }
 
-func (s *state) renderValues(vs []policy.ValueSource) ([]*pg.Node, error) {
+// renderValues binds each value as a parameter. A template can give a
+// list, such as {{ subject.groups }}. With list set (In, NotIn) each
+// element becomes one parameter. Any other value that is not a single
+// scalar cannot be compared, and the subject is treated as lacking it.
+func (s *state) renderValues(vs []policy.ValueSource, list bool) ([]*pg.Node, error) {
 	out := make([]*pg.Node, 0, len(vs))
-	for _, v := range vs {
-		if v.Template != nil {
-			val, err := v.Template.Render(s.user, s.facts)
-			if err != nil {
-				return nil, err
-			}
-			s.params = append(s.params, val)
-			out = append(out, paramRef(len(s.params)))
-			continue
-		}
-		s.params = append(s.params, v.Literal)
+	bind := func(val any) {
+		s.params = append(s.params, val)
 		out = append(out, paramRef(len(s.params)))
 	}
+	for _, v := range vs {
+		if v.Template == nil {
+			bind(v.Literal)
+			continue
+		}
+		val, err := v.Template.Render(s.user, s.facts)
+		if err != nil {
+			return nil, err
+		}
+		rv := reflect.ValueOf(val)
+		switch {
+		case !rv.IsValid() || isScalar(rv):
+			bind(val)
+		case rv.Kind() == reflect.Slice && list:
+			for i := 0; i < rv.Len(); i++ {
+				el := reflect.ValueOf(rv.Index(i).Interface())
+				if el.IsValid() && !isScalar(el) {
+					return nil, fmt.Errorf("%w: %s holds a value that is not a scalar", policy.ErrTemplateVarMissing, v.Template.Raw)
+				}
+				bind(rv.Index(i).Interface())
+			}
+		default:
+			return nil, fmt.Errorf("%w: %s is not a single value", policy.ErrTemplateVarMissing, v.Template.Raw)
+		}
+	}
 	return out, nil
+}
+
+func isScalar(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct, reflect.Pointer, reflect.Interface:
+		return false
+	}
+	return true
 }
 
 func (s *state) renderBinary(col *pg.Node, op string, values []*pg.Node) (*pg.Node, error) {
@@ -498,6 +528,13 @@ func opExpr(l *pg.Node, op string, r *pg.Node) *pg.Node {
 }
 
 func inExpr(col *pg.Node, values []*pg.Node, notIn bool) *pg.Node {
+	// A list template can give no value: nothing is IN an empty list, and
+	// everything is NOT IN it.
+	if len(values) == 0 {
+		return &pg.Node{Node: &pg.Node_AConst{AConst: &pg.A_Const{
+			Val: &pg.A_Const_Boolval{Boolval: &pg.Boolean{Boolval: notIn}},
+		}}}
+	}
 	// IN / NOT IN deparses from a List rexpr.
 	listNode := &pg.Node{Node: &pg.Node_List{List: &pg.List{Items: values}}}
 	name := "="

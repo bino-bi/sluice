@@ -762,6 +762,35 @@ func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
 	}
 }
 
+// A row filter that needs a value the subject does not have denies the
+// query. The audit record says deny and holds the reason, the client gets
+// the plain code.
+func TestExecute_MissingTemplateValueIsDeny(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{err: fmt.Errorf("row filter shop.main.orders: %w: claim tenant_id", policy.ErrTemplateVarMissing)},
+		&fakeExecutor{},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	ae := pkgerr.FromError(err)
+	if err == nil || ae.Code != pkgerr.CodeACLDenied {
+		t.Fatalf("err = %v, want ACL_DENIED", err)
+	}
+	if strings.Contains(ae.Message, "tenant_id") {
+		t.Errorf("client message %q names the template value", ae.Message)
+	}
+	recs := a.all()
+	if len(recs) != 1 {
+		t.Fatalf("audit records = %d, want 1", len(recs))
+	}
+	if recs[0].Decision != audit.DecisionDeny || recs[0].ErrorCode != string(pkgerr.CodeACLDenied) || !strings.Contains(recs[0].Message, "tenant_id") {
+		t.Errorf("record = decision %q code %q message %q, want deny, ACL_DENIED and the reason", recs[0].Decision, recs[0].ErrorCode, recs[0].Message)
+	}
+}
+
 // The audit record of a failed execution carries the code the client
 // gets. A statement DuckDB refused is logged with its cause, because the
 // client only gets the code.

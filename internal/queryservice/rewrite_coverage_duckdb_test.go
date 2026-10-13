@@ -1949,6 +1949,80 @@ func TestExecute_WritingSelectNotExecuted(t *testing.T) {
 	}
 }
 
+// {{ subject.groups }} gives a list. In binds one parameter per group, and
+// a subject without the claim of another filter is denied.
+func TestExecute_RowFilterListTemplate(t *testing.T) {
+	const seed = `
+CREATE TABLE leads (id INTEGER, team VARCHAR);
+INSERT INTO leads VALUES (1, 'analytics'), (2, 'sales'), (3, NULL);
+CREATE TABLE regions (id INTEGER, region VARCHAR);
+INSERT INTO regions VALUES (1, 'eu');`
+	const policies = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-leads
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects: { groups: ["analytics"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["leads", "regions"] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: own-teams
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["leads"] }
+  filter:
+    predicate:
+      column: team
+      op: In
+      values: ["{{ subject.groups }}"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: own-region
+  priority: 50
+spec:
+  match:
+    any:
+      - resources: { catalogs: ["shop"], schemas: ["main"], tables: ["regions"] }
+  filter:
+    predicate:
+      column: region
+      op: Equals
+      value: "{{ subject.claims.region }}"
+`
+	svc, ex, a := newSeededHelloSluiceService(t, nil, seed, policies)
+	rows, err := runRows(svc, "SELECT id FROM shop.main.leads ORDER BY id")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := fmt.Sprint(rows); got != "[[1]]" {
+		t.Fatalf("rows = %s, want [[1]]", got)
+	}
+
+	before := ex.calls
+	_, err = runRows(svc, "SELECT id FROM shop.main.regions")
+	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeACLDenied {
+		t.Fatalf("missing claim: err = %v, want ACL_DENIED", err)
+	}
+	if ex.calls != before {
+		t.Error("missing claim: executor was reached")
+	}
+	recs := a.all()
+	if last := recs[len(recs)-1]; last.Decision != audit.DecisionDeny {
+		t.Errorf("missing claim: audit decision = %q, want deny", last.Decision)
+	}
+}
+
 // The null check ops of a row filter run in DuckDB.
 func TestExecute_RowFilterNullChecks(t *testing.T) {
 	const seed = `

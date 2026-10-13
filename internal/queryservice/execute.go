@@ -290,8 +290,14 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			// Never cache error paths. Map first so the audit record
 			// carries the client code.
 			apiErr := toAPIError(reErr, qid)
-			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
+			if stderrors.Is(reErr, policy.ErrTemplateVarMissing) {
+				// A row filter value the subject lacks is a deny, not a
+				// fault. The reason goes to the record, not to the client.
+				rec.Decision = audit.DecisionDeny
+				rec.Message = reErr.Error()
+			}
+			setErrorCode(rec, apiErr)
 			s.emit(ctx, rec, start)
 			releaseSlot()
 			return nil, apiErr

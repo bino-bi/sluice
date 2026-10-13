@@ -67,10 +67,11 @@ A `value` can be a template that Sluice fills for each request.
 | `{{ subject.sub }}` | Subject id |
 | `{{ subject.issuer }}`, `{{ subject.email }}` | Issuer and email. Empty text when not set. |
 | `{{ subject.auth_method }}` | `jwt` or `api_key` |
+| `{{ subject.groups }}` | The groups, as a list. For `In` and `NotIn` only. |
 | `{{ subject.claims.<path> }}`, `{{ subject.jwt.<path> }}` | A claim. Dots reach nested claims. |
 | `{{ subject.<name> }}` | Short form for a claim, for example `{{ subject.tenantId }}` |
 
-A template must be the whole value, or the policy does not load.
+A template must be the whole value, or the policy does not load. In `In` and `NotIn`, a template that gives a list stands for one value per element. This also holds for a claim that is a list. With an empty list, `In` matches no row and `NotIn` matches every row.
 
 ## More examples
 
@@ -155,7 +156,7 @@ A row filter, column mask, limit or sample can change the case of a name. An ali
 
 ## Limits
 
-- A missing template value fails the query with HTTP 500 and `ERR_INTERNAL`.
+- A template value that the subject does not have denies the query with `ACL_DENIED`. So does a list value on an `op` other than `In` and `NotIn`.
 - Sluice does not check the filter column. A table without it fails with `ERR_QUERY_FAILED`.
 - `combine` must be lower case. Any other value acts as `restrictive`.
 - Write table names with three parts. `shop.orders` is rejected with `ACL_REJECTED`.
