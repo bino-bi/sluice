@@ -61,12 +61,15 @@ An expression reads `subject.*`, as in [conditions](conditions.md), and these va
 
 | Value | Type | Notes |
 |---|---|---|
-| `query.has_select_star`, `query.has_where`, `query.has_order_by` | boolean | |
-| `query.has_cte`, `query.is_recursive_cte`, `query.has_union`, `query.has_limit` | boolean | `has_union` is also true for `INTERSECT` and `EXCEPT`. |
-| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and these functions: `count`, `sum`, `avg`, `min`, `max`, `bit_and`, `bit_or`, `bit_xor`, `string_agg`, `array_agg`, `json_agg`, `jsonb_agg`. False for other functions, such as `median(x)`, and inside a call, a cast or `CASE`: `round(avg(x))`, `sum(x)::INT`. Any function with `DISTINCT` counts as an aggregate. |
+| `query.has_select_star` | boolean | The outer query selects `*` or `t.*`. In a `UNION`, any of its SELECTs does. A star in a subquery does not count. |
+| `query.has_where` | boolean | In a `UNION`, every SELECT has a `WHERE`. |
+| `query.has_order_by`, `query.has_limit` | boolean | The `ORDER BY` and `LIMIT` of the whole statement. One in a subquery or in one SELECT of a `UNION` does not count. |
+| `query.has_cte`, `query.is_recursive_cte` | boolean | A `WITH` anywhere in the statement. |
+| `query.has_union` | boolean | Also true for `INTERSECT` and `EXCEPT`. |
+| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and these functions: `count`, `sum`, `avg`, `min`, `max`, `bit_and`, `bit_or`, `bit_xor`, `string_agg`, `array_agg`, `json_agg`, `jsonb_agg`. False for other functions, such as `median(x)`, and inside a call, a cast or `CASE`: `round(avg(x))`, `sum(x)::INT`. Any function with `DISTINCT` counts as an aggregate. In a `UNION`, every SELECT must aggregate. |
 | `query.limit` | int | 0 when the `LIMIT` is not a plain number, such as `500 + 1` or `'500'`. |
-| `query.joins` | int | Counts the `JOIN` keyword. A comma join counts as 0. |
-| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. `where_columns` lists a column that is an operand of an operator, `AND`, `OR`, `NOT` or `IS NULL` of the outer `WHERE`. Operators are comparisons, arithmetic, text joining and `NULLIF`. A column in any other form is missing: a function call, a cast, `CASE`, `IS TRUE`, a value list, a row or a subquery. A bound of `BETWEEN` and a column before `IN (SELECT ...)` are missing too. `group_by_columns` lists only plain column names, not `ROLLUP (x)` or a position such as `1`. |
+| `query.joins` | int | Counts each `JOIN` keyword and each comma between `FROM` items, also in subqueries. |
+| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. `where_columns` lists a column that is an operand of an operator, `AND`, `OR`, `NOT` or `IS NULL` of the outer `WHERE`. Operators are comparisons, arithmetic, text joining and `NULLIF`. A column in any other form is missing: a function call, a cast, `CASE`, `IS TRUE`, a value list, a row or a subquery. A bound of `BETWEEN` and a column before `IN (SELECT ...)` are missing too. `group_by_columns` lists only plain column names, not `ROLLUP (x)` or a position such as `1`. In a `UNION`, both lists hold the columns of all its SELECTs. |
 | `query.catalogs` | list of text | |
 | `query.tables` | list of text | Lower case, `catalog.schema.table`. |
 
@@ -98,7 +101,7 @@ With a limit and a sample, Sluice samples the limited rows.
 ## Limits
 
 - The client error and the audit record name the policy, not the rule.
-- In a `UNION`, the `query.*` values describe only the first SELECT. They do not see a `WITH`, `ORDER BY` or `LIMIT` of the whole statement. They do not see subqueries. Only `query.tables` and `query.catalogs` cover the whole statement.
+- Most `query.*` values do not read subqueries. Only `joins`, `has_cte`, `is_recursive_cte`, `tables` and `catalogs` cover the whole statement.
 - Sluice refuses every statement with a `$n` parameter. See [Request lifecycle](../architecture/request-lifecycle.md).
 - `request.*` values are always empty.
 - A limit or a sample makes Sluice refuse [some SQL forms](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).

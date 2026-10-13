@@ -21,12 +21,12 @@ cases:
       outcome: reject
       rejections: ["query-values/joins", "query-values/customers"]
 
-  - name: a comma join counts as 0
+  - name: a comma join counts as a join
     identity: { subject: pia, groups: [probes] }
     sql: "SELECT o.id FROM shop.main.orders o, shop.main.customers c WHERE c.id = o.customer_id"
     expect:
       outcome: reject
-      rejections: ["query-values/customers"]
+      rejections: ["query-values/joins", "query-values/customers"]
 
   - name: a table without catalog and schema keeps the empty parts
     identity: { subject: pia, groups: [probes] }
@@ -35,23 +35,38 @@ cases:
       outcome: reject
       rejections: ["query-values/bare-orders"]
 
-  - name: in a union the values describe only the first SELECT
+  - name: in a union a star in any SELECT counts, and the ORDER BY and LIMIT after it
     identity: { subject: pia, groups: [probes] }
     sql: "SELECT id FROM shop.main.orders UNION ALL SELECT * FROM shop.main.customers ORDER BY 1 LIMIT 5"
     expect:
       outcome: reject
-      rejections: ["query-values/union", "query-values/customers"]
+      rejections:
+        - query-values/star
+        - query-values/limit
+        - query-values/order-by
+        - query-values/union
+        - query-values/customers
 
-  - name: a WITH before a union is not seen
+  - name: a WITH before a union counts
     identity: { subject: pia, groups: [probes] }
     sql: "WITH t AS (SELECT id FROM shop.main.customers) SELECT id FROM shop.main.orders UNION ALL SELECT id FROM t"
     expect:
       outcome: reject
-      rejections: ["query-values/union", "query-values/customers"]
+      rejections: ["query-values/cte", "query-values/union", "query-values/customers"]
 
-  - name: a subquery is not seen, but its table is listed
+  - name: star, ORDER BY and LIMIT of a subquery do not count, but its table is listed
     identity: { subject: pia, groups: [probes] }
     sql: "SELECT q.id FROM (SELECT * FROM shop.main.customers ORDER BY id LIMIT 5) q"
     expect:
       outcome: reject
       rejections: ["query-values/customers"]
+
+  - name: a join and a WITH in a subquery count
+    identity: { subject: pia, groups: [probes] }
+    sql: >-
+      SELECT q.id FROM (
+      WITH t AS (SELECT id FROM shop.main.orders)
+      SELECT t.id FROM t JOIN shop.main.customers c ON c.id = t.id) q
+    expect:
+      outcome: reject
+      rejections: ["query-values/cte", "query-values/joins", "query-values/customers"]

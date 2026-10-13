@@ -22,11 +22,11 @@ cases:
     expect:
       outcome: allow
 
-  - name: in a union only the first SELECT counts
+  - name: a limit inside one SELECT of a union does not count
     identity: { subject: ines, groups: [interns] }
     sql: "(SELECT id FROM shop.main.orders LIMIT 50) UNION ALL SELECT id FROM shop.main.orders"
     expect:
-      outcome: allow
+      outcome: deny
   # --8<-- [end:limit]
 
   - name: a large limit does not pass the condition
@@ -41,11 +41,11 @@ cases:
     expect:
       outcome: allow
 
-  - name: a limit after a union is not seen
+  - name: a limit after a union counts
     identity: { subject: ines, groups: [interns] }
     sql: "SELECT id FROM shop.main.orders UNION ALL SELECT id FROM shop.main.orders LIMIT 5"
     expect:
-      outcome: deny
+      outcome: allow
 
   # --8<-- [start:error]
   - name: with the claim the condition decides
