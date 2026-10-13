@@ -174,6 +174,8 @@ func wrapRunErr(err error) error {
 		return fmt.Errorf("%w: %w", ErrExecute, err)
 	case rejectsStatement(err):
 		return fmt.Errorf("%w: %w: %w", ErrExecute, ErrRejected, err)
+	case isParserError(err):
+		return fmt.Errorf("%w: %w: %w", ErrExecute, ErrSyntax, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrExecute, err)
 	}
@@ -195,6 +197,11 @@ func rejectsStatement(err error) bool {
 		return true
 	}
 	return false
+}
+
+func isParserError(err error) bool {
+	var de *duckdb.Error
+	return errors.As(err, &de) && de.Type == duckdb.ErrorTypeParser
 }
 
 // sqlRowIterator is the JSON/CSV RowIterator backed by *sql.Rows. Scan

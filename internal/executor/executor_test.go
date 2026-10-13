@@ -176,8 +176,9 @@ SELECT count(*) FROM t
 
 // A statement DuckDB refuses for a name or a value is the statement's
 // fault and carries ErrRejected: one case per DuckDB error type. A file
-// read stopped by the hardening and a parser error do not: upstream they
-// must stay internal errors.
+// read stopped by the hardening does not: upstream it must stay an
+// internal error. A parser error carries ErrSyntax instead: upstream it is
+// the client's fault only for a statement that ran as sent.
 func TestExecutorRejectedStatement(t *testing.T) {
 	e := newExec(t, executor.Config{})
 	for sql, rejected := range map[string]bool{
@@ -204,6 +205,9 @@ func TestExecutorRejectedStatement(t *testing.T) {
 		}
 		if got := errors.Is(err, executor.ErrRejected); got != rejected {
 			t.Errorf("%s: ErrRejected = %v, want %v (%v)", sql, got, rejected, err)
+		}
+		if got, want := errors.Is(err, executor.ErrSyntax), sql == "SELECT 1 +"; got != want {
+			t.Errorf("%s: ErrSyntax = %v, want %v (%v)", sql, got, want, err)
 		}
 	}
 }

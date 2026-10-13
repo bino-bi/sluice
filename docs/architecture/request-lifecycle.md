@@ -136,6 +136,7 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 | | Statement too large for the DuckDB parse check | `ERR_PAYLOAD_TOO_LARGE` |
 | Rewrite or execute | Timeout, client gone | `ERR_TIMEOUT`, `ERR_CANCELED` |
 | Execute | DuckDB refuses the statement | `ERR_QUERY_FAILED` |
+| | DuckDB cannot parse a statement that Sluice did not rewrite | `ERR_SYNTAX` |
 | | Data source not reachable | `ERR_DATASOURCE_UNAVAILABLE` |
 | | Other error | `ERR_INTERNAL` |
 | Post-query masks | Result columns do not match, mask cannot be built | `ERR_MASK_UNSUPPORTED_CONTEXT`, `ERR_INTERNAL` |

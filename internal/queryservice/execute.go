@@ -355,6 +355,12 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if execErr != nil {
 		// Map first so the audit record carries the client code.
 		apiErr := execErrToAPI(execErr, qid)
+		if !rewriteResp.Changed && stderrors.Is(execErr, executor.ErrSyntax) {
+			// The statement ran as the client wrote it: pg_query read it,
+			// DuckDB does not.
+			apiErr = pkgerr.Wrap(pkgerr.CodeSyntax, execErr).WithQueryID(qid).
+				WithMessage("DuckDB cannot parse the statement")
+		}
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)

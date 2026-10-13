@@ -854,6 +854,9 @@ func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
 		{"rejected, long cause", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrRejected, errors.New(cause+strings.Repeat("A", 100000))), pkgerr.CodeQueryFailed, true},
 		{"timeout", context.DeadlineExceeded, pkgerr.CodeTimeout, false},
 		{"other", errors.New("boom"), pkgerr.CodeInternal, false},
+		// The statement ran as the client wrote it, so a parser error of
+		// DuckDB is a syntax error of the client.
+		{"parser, statement as sent", fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrSyntax, errors.New("Parser Error: x")), pkgerr.CodeSyntax, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -886,6 +889,23 @@ func TestExecute_ExecErrorCodesAndLog(t *testing.T) {
 				t.Fatalf("log = %q, want a WARN line with the query_id and the cause", got)
 			}
 		})
+	}
+}
+
+// A parser error of DuckDB on SQL that Sluice rewrote is a fault of the
+// rewrite, not of the client.
+func TestExecute_ParserErrorOnRewrittenSQLStaysInternal(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{result: &rewriter.RewriteResult{SQL: "SELECT 1 +", Changed: true}},
+		&fakeExecutor{err: fmt.Errorf("%w: %w: %w", executor.ErrExecute, executor.ErrSyntax, errors.New("Parser Error: x"))},
+		a,
+	)
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if ae := pkgerr.FromError(err); err == nil || ae.Code != pkgerr.CodeInternal {
+		t.Fatalf("err = %v, want ERR_INTERNAL", err)
 	}
 }
 

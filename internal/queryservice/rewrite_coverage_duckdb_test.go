@@ -2023,6 +2023,27 @@ spec:
 	}
 }
 
+// pg_query reads these statements, DuckDB's parser does not. On a table
+// without filter, mask or limit the text goes to DuckDB as sent, and the
+// client gets ERR_SYNTAX, not ERR_INTERNAL.
+func TestExecute_PlainStatementDuckDBCannotParse(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t, approvalOnAdminUsers)
+	for _, sql := range []string{
+		"SELECT INTERVAL '1 02' DAY TO HOUR FROM shop.main.orders",
+		`SELECT U&'\0041' FROM shop.main.orders`,
+		"SELECT 1 at FROM shop.main.orders",
+		"SELECT id FROM shop.main.orders FOR UPDATE",
+		"SELECT id FROM shop.main.orders WHERE id = 0x1",
+	} {
+		rows, err := runRows(svc, sql)
+		if err == nil {
+			t.Errorf("%s: served %v, want ERR_SYNTAX", sql, rows)
+		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
+			t.Errorf("%s: code = %s (%s), want ERR_SYNTAX", sql, ae.Code, ae.Message)
+		}
+	}
+}
+
 // The null check ops of a row filter run in DuckDB.
 func TestExecute_RowFilterNullChecks(t *testing.T) {
 	const seed = `
