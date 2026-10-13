@@ -148,7 +148,7 @@ func (j *JWTIdentifier) Identify(ctx context.Context, r *http.Request) (*UserCtx
 	if err != nil {
 		return nil, err
 	}
-	uc.RemoteAddr = r.RemoteAddr
+	uc.RemoteAddr = RemoteIP(r)
 	return uc, nil
 }
 

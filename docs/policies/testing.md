@@ -39,6 +39,7 @@ A suite is a YAML file without `apiVersion`. The test runner ignores unknown key
 | `cases[].identity.subject` | Subject id. Without it, the case has no subject. |
 | `cases[].identity.groups`, `.claims` | Groups and claims. Claims can nest. |
 | `cases[].identity.issuer`, `.email` | Issuer and email. |
+| `cases[].request.headers`, `.userAgent`, `.remoteIp` | Headers, user agent and address of the request, for the `request.*` values and for `ipRanges`. |
 | `cases[].sql` | One SQL statement. |
 | `cases[].expect` | The checks. Every field is optional. |
 

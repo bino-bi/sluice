@@ -61,6 +61,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `subjects.jwtClaims[].pattern` | string |  | Regular expression for `Matches`. |
 | `subjects.groups` | []string |  | Group names. One is enough. |
 | `subjects.apiKeys` | []string |  | Subject ids of API key subjects. |
+| `subjects.ipRanges` | []string |  | CIDR ranges. The address of the client must be in one. |
 | `subjects.roles` | []string |  | Values of the `roles` claim. Without the claim, Sluice uses the groups. |
 | `resources` | [ResourceSelector](#resourceselector) |  | Tables to match. |
 

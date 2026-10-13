@@ -5,6 +5,8 @@ package identity
 import (
 	"context"
 	"maps"
+	"net"
+	"net/http"
 	"slices"
 	"time"
 )
@@ -56,9 +58,20 @@ type UserCtx struct {
 	// a new ULID if none is present.
 	RequestID string
 
-	// RemoteAddr is the observed client address at the transport layer.
-	// Populated by middleware; may be empty for non-HTTP transports.
+	// RemoteAddr is the IP address of the client, without a port. The
+	// identifiers fill it with RemoteIP; it is empty for non-HTTP
+	// transports. subjects.ipRanges matches on it.
 	RemoteAddr string
+}
+
+// RemoteIP returns the host of r.RemoteAddr, or the whole value when it is
+// not host:port.
+func RemoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // HasGroup reports whether the user is a member of group. The lookup is

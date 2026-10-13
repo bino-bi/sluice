@@ -56,7 +56,7 @@ What happened: the changed record in line 4 no longer matches its hash.
 |---|---|
 | `timestamp`, `event_type`, `query_id` | Time, event, and the `X-Query-Id` response header |
 | `subject` | `id`, `method` (`api_key` or `jwt`), `issuer`, `email`, `groups`, `remote_ip` |
-| `origin`, `remote_ip` | `rest`, `mcp` or `admin`, and the client address |
+| `origin`, `remote_ip` | `rest`, `mcp` or `admin`, and the IP address of the client |
 | `sql_sample` | The SQL as sent, up to `audit.sqlSampleBytes`. 0 turns it off |
 | `sql_fingerprint`, `rewritten_fingerprint` | Hashes of the sent and the rewritten SQL |
 | `tables`, `catalogs` | What the query reads |

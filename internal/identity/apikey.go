@@ -174,7 +174,7 @@ func (a *APIKeyIdentifier) Identify(_ context.Context, r *http.Request) (*UserCt
 		Claims:     claims,
 		AuthMethod: AuthMethodAPIKey,
 		AuthTime:   a.opts.Clock(),
-		RemoteAddr: r.RemoteAddr,
+		RemoteAddr: RemoteIP(r),
 	}
 	return u, nil
 }

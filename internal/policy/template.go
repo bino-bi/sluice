@@ -5,6 +5,7 @@ package policy
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/identity"
@@ -56,11 +57,38 @@ func CompileTemplate(s string) (*Template, error) {
 }
 
 // RequestFacts carries the per-request attributes addressable from
-// templates and, later, from CEL.
+// templates, CEL and Rego. Header names are in lower case.
 type RequestFacts struct {
 	RemoteIP  net.IP
 	UserAgent string
 	Headers   map[string]string
+}
+
+// credentialHeaders never enter the facts: a policy, a Rego module or the
+// policy cache key must not see a secret of the client.
+var credentialHeaders = map[string]struct{}{
+	"authorization":       {},
+	"proxy-authorization": {},
+	"x-api-key":           {},
+	"x-approval-token":    {},
+	"cookie":              {},
+}
+
+// NewRequestFacts builds the facts of one HTTP request. remoteIP is the
+// address of the client without a port.
+func NewRequestFacts(h http.Header, remoteIP string) *RequestFacts {
+	f := &RequestFacts{
+		RemoteIP:  net.ParseIP(remoteIP),
+		UserAgent: h.Get("User-Agent"),
+		Headers:   make(map[string]string, len(h)),
+	}
+	for name, values := range h {
+		name = strings.ToLower(name)
+		if _, secret := credentialHeaders[name]; !secret {
+			f.Headers[name] = strings.Join(values, ", ")
+		}
+	}
+	return f
 }
 
 // Render resolves the template against user + facts. Recognised roots:
@@ -143,7 +171,7 @@ func renderRequest(facts *RequestFacts, path []string) (any, error) {
 		if len(path) != 2 {
 			return nil, fmt.Errorf("%w: request.headers requires exactly one key", ErrTemplateVarMissing)
 		}
-		v, ok := facts.Headers[path[1]]
+		v, ok := facts.Headers[strings.ToLower(path[1])]
 		if !ok {
 			return nil, fmt.Errorf("%w: request.headers[%q] missing", ErrTemplateVarMissing, path[1])
 		}

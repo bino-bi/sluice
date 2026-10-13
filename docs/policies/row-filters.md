@@ -70,6 +70,8 @@ A `value` can be a template that Sluice fills for each request.
 | `{{ subject.groups }}` | The groups, as a list. For `In` and `NotIn` only. |
 | `{{ subject.claims.<path> }}`, `{{ subject.jwt.<path> }}` | A claim. Dots reach nested claims. |
 | `{{ subject.<name> }}` | Short form for a claim, for example `{{ subject.tenantId }}` |
+| `{{ request.remote_ip }}`, `{{ request.user_agent }}` | IP address and user agent of the client |
+| `{{ request.headers.<name> }}` | A request header, for example `{{ request.headers.x-region }}` |
 
 A template must be the whole value, or the policy does not load. In `In` and `NotIn`, a template that gives a list stands for one value per element. This also holds for a claim that is a list. With an empty list, `In` matches no row and `NotIn` matches every row.
 

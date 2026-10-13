@@ -13,7 +13,9 @@ import (
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
+	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -331,13 +333,14 @@ type ExecuteSQLOutput struct {
 	Truncated bool     `json:"truncated"`
 }
 
-func (s *Server) toolExecuteSQL(ctx context.Context, _ *sdkmcp.CallToolRequest, in ExecuteSQLArgs) (*sdkmcp.CallToolResult, ExecuteSQLOutput, error) {
+func (s *Server) toolExecuteSQL(ctx context.Context, req *sdkmcp.CallToolRequest, in ExecuteSQLArgs) (*sdkmcp.CallToolResult, ExecuteSQLOutput, error) {
 	user, _ := userFrom(ctx)
 	qreq := queryservice.QueryRequest{
 		SQL:     in.SQL,
 		MaxRows: in.RowLimit,
 		Format:  executor.FormatJSON,
 		User:    user,
+		Facts:   requestFacts(req, user),
 		Origin:  queryservice.OriginMCP,
 	}
 	res, err := s.deps.Service.Execute(ctx, qreq)
@@ -541,4 +544,18 @@ func jsonSafe(v any) any {
 		return string(b)
 	}
 	return v
+}
+
+// requestFacts builds the facts of a tool call over HTTP. Stdio has no
+// HTTP request and gives nil. The address comes from the subject: the
+// identifier took it from the same request.
+func requestFacts(req *sdkmcp.CallToolRequest, user *identity.UserCtx) *policy.RequestFacts {
+	if req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return nil
+	}
+	remote := ""
+	if user != nil {
+		remote = user.RemoteAddr
+	}
+	return policy.NewRequestFacts(req.Extra.Header, remote)
 }

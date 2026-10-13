@@ -113,6 +113,9 @@ func TestJWTValidToken(t *testing.T) {
 	if uc.Issuer != "https://issuer.example" {
 		t.Fatalf("issuer = %q", uc.Issuer)
 	}
+	if uc.RemoteAddr != "192.0.2.1" {
+		t.Fatalf("RemoteAddr = %q; want the address without the port", uc.RemoteAddr)
+	}
 	if !uc.HasGroup("admins") {
 		t.Fatalf("groups = %v; want admins present", uc.Groups)
 	}

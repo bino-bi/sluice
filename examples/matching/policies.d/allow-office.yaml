@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Staff may read the door log, but only from the office network.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-office
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["staff"]
+          ipRanges: ["10.20.0.0/16"]
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["door_log"] }

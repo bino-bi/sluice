@@ -3,12 +3,12 @@
 package rest
 
 import (
-	"net"
 	"net/http"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/telemetry"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -46,7 +46,7 @@ func (s *Server) rateLimitMW(next http.Handler) http.Handler {
 			s.denyRateLimited(w, r, "global")
 			return
 		}
-		if s.deps.PerIPLimiter != nil && !s.deps.PerIPLimiter.Allow(remoteIP(r)) {
+		if s.deps.PerIPLimiter != nil && !s.deps.PerIPLimiter.Allow(identity.RemoteIP(r)) {
 			s.denyRateLimited(w, r, "per_ip")
 			return
 		}
@@ -61,14 +61,4 @@ func (s *Server) denyRateLimited(w http.ResponseWriter, r *http.Request, scope s
 		"remote", r.RemoteAddr,
 	)
 	s.writeError(w, r, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("request rate limit exceeded"))
-}
-
-// remoteIP extracts the host from RemoteAddr, falling back to the whole
-// string when it does not parse as host:port.
-func remoteIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

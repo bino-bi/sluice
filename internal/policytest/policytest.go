@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -53,6 +54,9 @@ type Identity struct {
 type Request struct {
 	Headers   map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	UserAgent string            `json:"userAgent,omitempty" yaml:"userAgent,omitempty"`
+	// RemoteIP is the address of the client: request.remote_ip, and what
+	// subjects.ipRanges matches.
+	RemoteIP string `json:"remoteIp,omitempty" yaml:"remoteIp,omitempty"`
 }
 
 // Case is a single scenario.
@@ -254,7 +258,18 @@ func (r *Runner) runCase(ctx context.Context, rw *rewriter.Rewriter, c Case) Cas
 	}
 	var facts *policy.RequestFacts
 	if c.Request != nil {
-		facts = &policy.RequestFacts{Headers: c.Request.Headers, UserAgent: c.Request.UserAgent}
+		// As the server builds them: header names in lower case.
+		h := http.Header{}
+		for name, value := range c.Request.Headers {
+			h.Set(name, value)
+		}
+		if c.Request.UserAgent != "" {
+			h.Set("User-Agent", c.Request.UserAgent)
+		}
+		facts = policy.NewRequestFacts(h, c.Request.RemoteIP)
+		if user != nil {
+			user.RemoteAddr = c.Request.RemoteIP
+		}
 	}
 
 	ast, parseErr := r.parser.Parse(ctx, c.SQL)

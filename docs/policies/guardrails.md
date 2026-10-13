@@ -103,7 +103,6 @@ With a limit and a sample, Sluice samples the limited rows.
 - The client error and the audit record name the policy, not the rule.
 - Most `query.*` values do not read subqueries. Only `joins`, `has_cte`, `is_recursive_cte`, `tables` and `catalogs` cover the whole statement.
 - Sluice refuses every statement with a `$n` parameter. See [Request lifecycle](../architecture/request-lifecycle.md).
-- `request.*` values are always empty.
 - A limit or a sample makes Sluice refuse [some SQL forms](row-filters.md#sql-forms-refused-on-filtered-or-masked-tables).
 
 ## See also

@@ -32,7 +32,6 @@ import (
 var skip = map[string]bool{
 	"AuditSink":                           true, // decoded, never read: sinks come from the server config
 	"object.metadata.namespace":           true, // no reader
-	"Clause.subjects.ipRanges":            true, // never matches: the remote address holds a port
 	"MaskType=custom":                     true, // compile refuses it
 	"MaskType=external":                   true, // compile refuses it
 	"ColumnMaskPolicy.mask.expression":    true, // only read by mask type custom
@@ -96,6 +95,7 @@ var docs = map[string]doc{
 	"Clause.subjects.groups":              {"", "Group names. One is enough."},
 	"Clause.subjects.apiKeys":             {"", "Subject ids of API key subjects."},
 	"Clause.subjects.roles":               {"", "Values of the `roles` claim. Without the claim, Sluice uses the groups."},
+	"Clause.subjects.ipRanges":            {"", "CIDR ranges. The address of the client must be in one."},
 	"Clause.resources":                    {"", "Tables to match."},
 
 	"ResourceSelector.catalogs": {"", "Catalog names. `*` is a wildcard."},

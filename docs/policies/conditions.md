@@ -45,6 +45,8 @@ Sluice checks every expression at load. A value alone, such as `query.has_cte`, 
 | `subject.groups` | list | Groups of the subject. |
 | `subject.claims` | map | Claims of the subject. |
 | `subject.auth_method` | string | `jwt` or `api_key`. |
+| `request.remote_ip`, `request.user_agent` | string | IP address and user agent of the client. Empty over stdio. |
+| `request.headers` | map | Request headers, names in lower case: `request.headers["x-region"]`. Credential headers are left out. |
 | `query.tables` | list | Tables as `catalog.schema.table`, lower case. A missing part stays empty: `..orders`. |
 | `query.catalogs` | list | Catalogs that the query reads. |
 | `query.joins` | int | Count of `JOIN` keywords and of commas between `FROM` items. |

@@ -48,6 +48,7 @@ A guest sends the same query.
 | `action` | Statement kind, for example `SELECT` |
 | `tables[]` | `catalog`, `schema`, `table`, and `key` as `catalog.schema.table` |
 | `shape` | `has_select_star`, `is_aggregate`, `has_cte`, `has_union`, `has_limit`, `limit`, `has_where`, `joins` |
+| `request` | `remote_ip`, `user_agent`, and `headers` with names in lower case |
 
 | Result field | Type | Default | Meaning |
 |---|---|---|---|

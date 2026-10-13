@@ -249,7 +249,7 @@ func predicateHeaderTemplates(p *CompiledPredicate) []string {
 	for _, v := range p.Values {
 		if v.Template != nil && len(v.Template.Path) == 3 &&
 			v.Template.Path[0] == "request" && v.Template.Path[1] == "headers" {
-			out = append(out, v.Template.Path[2])
+			out = append(out, strings.ToLower(v.Template.Path[2]))
 		}
 	}
 	return out

@@ -98,6 +98,7 @@ func identityHash(user *identity.UserCtx, facts *policy.RequestFacts, keyHeaders
 		AuthMethod string            `json:"auth_method"`
 		Groups     []string          `json:"groups"`
 		Claims     map[string]any    `json:"claims"`
+		RemoteAddr string            `json:"remote_addr"`
 		RemoteIP   string            `json:"remote_ip"`
 		UserAgent  string            `json:"user_agent"`
 		Headers    map[string]string `json:"headers"`
@@ -112,6 +113,8 @@ func identityHash(user *identity.UserCtx, facts *policy.RequestFacts, keyHeaders
 		payload.Groups = append([]string(nil), user.Groups...)
 		sort.Strings(payload.Groups)
 		payload.Claims = user.Claims
+		// subjects.ipRanges matches on it.
+		payload.RemoteAddr = user.RemoteAddr
 	}
 	if facts != nil {
 		if facts.RemoteIP != nil {

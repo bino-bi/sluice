@@ -49,6 +49,25 @@ func TestSelector_GroupsAndCatalog(t *testing.T) {
 	}
 }
 
+func TestSelector_IPRanges(t *testing.T) {
+	cs := compileSelectorT(t, apitypes.Selector{Any: []apitypes.Clause{{
+		Subjects: &apitypes.SubjectSelector{IPRanges: []string{"10.0.0.0/8", "2001:db8::/32"}},
+	}}})
+	for addr, want := range map[string]bool{
+		"10.1.2.3":      true,
+		"2001:db8::7":   true,
+		"192.168.1.1":   false,
+		"2001:db9::1":   false,
+		"":              false,
+		"10.1.2.3:4711": false, // the identifiers store the address without the port
+	} {
+		user := &identity.UserCtx{Subject: "u", RemoteAddr: addr}
+		if got := cs.Match(MatchContext{User: user}); got != want {
+			t.Errorf("address %q: match = %v, want %v", addr, got, want)
+		}
+	}
+}
+
 func TestSelector_EmptyDenies(t *testing.T) {
 	// No clauses → match nothing (default deny is enforced by the engine,
 	// not the selector).
