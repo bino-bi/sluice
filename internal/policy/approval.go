@@ -43,7 +43,10 @@ func evaluateApproval(matched []*CompiledPolicy, in Input, dec *Decision) {
 // fire for this request. An empty When triggers on selector match alone.
 // When the AST is unavailable (regex fallback) a policy with a non-empty
 // When is treated as triggered — fail-closed, since we cannot inspect the
-// columns or comparisons.
+// columns or comparisons. For the same reason a column trigger fires when
+// the statement reads columns it does not name, and a predicate trigger
+// fires when its column is used in a condition that cannot be read as a
+// comparison with a value.
 func approvalTriggers(ca *CompiledApproval, in Input) bool {
 	if len(ca.Columns) == 0 && len(ca.Predicates) == 0 {
 		return true
@@ -52,6 +55,9 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 		return true
 	}
 	shape := in.Shape
+	if shape.AccessesAllColumns && len(ca.Columns) > 0 {
+		return true
+	}
 	for _, m := range ca.Columns {
 		for _, col := range shape.AccessedColumns {
 			if matchColumn(m, col) {
@@ -60,6 +66,11 @@ func approvalTriggers(ca *CompiledApproval, in Input) bool {
 		}
 	}
 	for _, tr := range ca.Predicates {
+		for _, col := range shape.UnreadPredicateColumns {
+			if matchColumn(tr.Column, col) {
+				return true
+			}
+		}
 		for _, cmp := range shape.Comparisons {
 			if triggerMatches(tr, cmp) {
 				return true
@@ -86,7 +97,8 @@ func triggerMatches(tr compiledTrigger, cmp parser.Comparison) bool {
 	if !matchColumn(tr.Column, cmp.Column) {
 		return false
 	}
-	if tr.Op != "" && tr.Op != "*" && tr.Op != cmp.Op {
+	// IN compares with each list value, so it also matches "=".
+	if tr.Op != "" && tr.Op != "*" && tr.Op != cmp.Op && (tr.Op != "=" || cmp.Op != "in") {
 		return false
 	}
 	if tr.Value != "" && tr.Value != cmp.Value {

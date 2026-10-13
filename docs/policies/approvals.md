@@ -76,12 +76,21 @@ sequenceDiagram
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `when` | object | | One hit is enough. Without it, the selector alone decides. |
-| `when.columnsAccessed` | list | | Patterns for columns that the query names, as `ssn` or as `p.ssn`. |
-| `when.predicates[]` | list | | A hit is a comparison in `WHERE`, `HAVING` or `JOIN`. |
+| `when.columnsAccessed` | list | | Patterns for columns that the query names, as `ssn` or as `p.ssn`. A query that reads columns without naming them is a hit too. |
+| `when.predicates[]` | list | | A hit is a comparison of the column with a literal. A condition on the column that Sluice cannot read is a hit too. |
 | `predicates[].column` | string | required | Pattern. |
-| `predicates[].op` | string | any | `=`, `!=`, `<`, `<=`, `>`, `>=`, `like`, `ilike`, `in` or `isnull`. `*` also means any. |
+| `predicates[].op` | string | any | `=`, `!=`, `<`, `<=`, `>`, `>=`, `like`, `ilike`, `in` or `isnull`. `*` also means any. `=` also matches a value in an `IN` list. |
 | `predicates[].value` | string | any | The literal as text. |
 | `reason` | string | | Text for `reasons` in the webhook. |
+
+A query that reads columns without naming them hits every `columnsAccessed` entry. These forms do that:
+
+- `*` and `t.*`
+- the table or its alias as a value: `SELECT p FROM people p`
+- a column alias list: `people p(a, b)`
+- `NATURAL JOIN`
+
+Sluice reads a comparison of a column with a literal in `WHERE`, `HAVING`, `JOIN ... ON` or `FILTER`. `AND` and `OR` can join such comparisons. Any other condition on the column hits its `predicates` entry, whatever `op` and `value` say. Examples are a function around the column, `NOT`, `CASE`, `BETWEEN`, a subquery, another column and `USING`.
 
 With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --json` lists the policy under `shadow`.
 
@@ -130,7 +139,7 @@ MCP clients use `check_approval` and `await_approval`. The operator lists pendin
 
 ## Limits
 
-- `columnsAccessed` sees only column names written in the query. `SELECT *` does not trigger it.
+- A predicate with `op` and `value` matches only that operator. `country LIKE 'de'` does not hit `op: "="`. Leave out `op` and `value` to hold every condition on the column.
 - Without `approval.persist`, a restart drops all approvals and grants. A query that waits never survives a restart. Run one instance: instances do not share approvals.
 - A link needs no login, only its token. A wrong id or token gets 404.
 - A `HEAD` request, or a request with the header `Purpose`, `Sec-Purpose` or `X-Moz` set to exactly `prefetch` or `preview`, changes nothing. Any other `GET` of a link decides.

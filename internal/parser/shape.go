@@ -67,6 +67,16 @@ type QueryShape struct {
 	// quals, same deep walk. Used by ApprovalPolicy "field compared to a
 	// value" triggers.
 	Comparisons []Comparison
+	// AccessesAllColumns is set when the statement reads columns it does
+	// not name: a star, a whole-row reference to a FROM item, a column
+	// alias list on a table, or a NATURAL join. A columnsAccessed trigger
+	// then cannot tell which columns are read.
+	AccessesAllColumns bool
+	// UnreadPredicateColumns lists the columns used in a condition that
+	// Comparisons does not describe: inside a function, under NOT or CASE,
+	// compared with another column, in a USING join. A predicate trigger
+	// on such a column cannot tell which value is compared.
+	UnreadPredicateColumns []string
 
 	// Functions lists every function call in the statement, at any depth.
 	// Consumed by CheckFunctions; policy and the rewriter key on table

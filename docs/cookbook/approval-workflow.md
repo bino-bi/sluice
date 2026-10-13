@@ -96,7 +96,7 @@ Alice reads the state of her approval with her own key.
 
 ## Limits
 
-- `columnsAccessed` sees only column names written in the query. `SELECT *` returns `ssn` without approval.
+- `SELECT *` on the table needs approval too. Sluice cannot tell which columns a star reads.
 - The token in the link is the only check. Anyone who has the link can accept.
 
 ## See also

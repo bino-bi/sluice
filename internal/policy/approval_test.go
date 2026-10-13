@@ -78,6 +78,48 @@ func TestApproval_PredicateTrigger(t *testing.T) {
 	}
 }
 
+// A star reads columns the query does not name, so every columnsAccessed
+// trigger fires. A predicate trigger does not.
+func TestApproval_StarFiresColumnTrigger(t *testing.T) {
+	star := parser.QueryShape{AccessesAllColumns: true}
+	cols := &apitypes.ApprovalWhen{ColumnsAccessed: []string{"ssn"}}
+	if dec := evalApproval(t, star, allowAll(0), approvalPolicy("pii", cols)); dec.Approval == nil {
+		t.Error("a star should trigger columnsAccessed")
+	}
+	preds := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "country", Op: "=", Value: "de"}}}
+	if dec := evalApproval(t, star, allowAll(0), approvalPolicy("geo", preds)); dec.Approval != nil {
+		t.Error("a star triggered a predicate trigger")
+	}
+}
+
+// A column in a condition the parser cannot read as (column, op, value)
+// fires the trigger on that column, whatever its op and value.
+func TestApproval_UnreadPredicateFiresTrigger(t *testing.T) {
+	when := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "country", Op: "=", Value: "de"}}}
+	dec := evalApproval(t, parser.QueryShape{UnreadPredicateColumns: []string{"p.country"}}, allowAll(0), approvalPolicy("geo", when))
+	if dec.Approval == nil {
+		t.Error("an unread condition on country should trigger approval")
+	}
+	dec = evalApproval(t, parser.QueryShape{UnreadPredicateColumns: []string{"name"}}, allowAll(0), approvalPolicy("geo", when))
+	if dec.Approval != nil {
+		t.Error("approval triggered by an unread condition on another column")
+	}
+}
+
+// IN compares with each list value, so it matches an "=" trigger.
+func TestApproval_InMatchesEqualsTrigger(t *testing.T) {
+	when := &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "country", Op: "=", Value: "de"}}}
+	in := func(v string) parser.QueryShape {
+		return parser.QueryShape{Comparisons: []parser.Comparison{{Column: "country", Op: "in", Value: v}}}
+	}
+	if dec := evalApproval(t, in("de"), allowAll(0), approvalPolicy("geo", when)); dec.Approval == nil {
+		t.Error("country IN ('de') should trigger approval")
+	}
+	if dec := evalApproval(t, in("fr"), allowAll(0), approvalPolicy("geo", when)); dec.Approval != nil {
+		t.Error("country IN ('fr') triggered approval")
+	}
+}
+
 func TestApproval_AggregatesMultiplePolicies(t *testing.T) {
 	p1 := approvalPolicy("pii", &apitypes.ApprovalWhen{ColumnsAccessed: []string{"ssn"}})
 	p2 := approvalPolicy("geo", &apitypes.ApprovalWhen{Predicates: []apitypes.PredicateTrigger{{Column: "country"}}})

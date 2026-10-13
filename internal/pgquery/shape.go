@@ -20,7 +20,7 @@ func extractShape(raw *pg.RawStmt, tables []parser.TableRef, catalogs []string) 
 	if raw == nil || raw.Stmt == nil {
 		return shape
 	}
-	shape.AccessedColumns, shape.Comparisons = collectAccess(raw)
+	collectAccess(raw, &shape)
 	shape.Functions, shape.UnsupportedFrom, shape.HasParams = collectFunctions(raw)
 	switch v := raw.Stmt.Node.(type) {
 	case *pg.Node_SelectStmt:
@@ -224,8 +224,14 @@ func columnRefName(n *pg.Node) string {
 	if !ok || cr.ColumnRef == nil {
 		return ""
 	}
-	parts := make([]string, 0, len(cr.ColumnRef.Fields))
-	for _, f := range cr.ColumnRef.Fields {
+	return columnRefNameOf(cr.ColumnRef)
+}
+
+// columnRefNameOf joins the name parts of cr. A star is not a part: t.*
+// gives "t".
+func columnRefNameOf(cr *pg.ColumnRef) string {
+	parts := make([]string, 0, len(cr.Fields))
+	for _, f := range cr.Fields {
 		if f == nil {
 			continue
 		}

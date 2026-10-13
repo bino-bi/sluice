@@ -1,9 +1,37 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# columnsAccessed sees only column names written in the query.
+# A query that reads columns without naming them, or hides a filter value, needs approval too.
 cases:
-  - name: SELECT * returns ssn without approval
+  - name: SELECT * needs approval
     identity: { subject: alice, groups: [analysts] }
     sql: "SELECT * FROM shop.main.people"
     expect:
       outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: the whole row through the table alias needs approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT p FROM shop.main.people p"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: IN with the value needs approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name FROM shop.main.people WHERE country IN ('fr', 'de')"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]
+
+  - name: IN without the value runs at once
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name FROM shop.main.people WHERE country IN ('fr', 'us')"
+    expect:
+      outcome: allow
       applied: ["SqlAccessPolicy/allow-analysts"]
+
+  - name: a function around the column hides the value, so it needs approval
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name FROM shop.main.people WHERE lower(country) = 'fr'"
+    expect:
+      outcome: allow
+      applied: ["ApprovalPolicy/approve-pii-reads", "SqlAccessPolicy/allow-analysts"]

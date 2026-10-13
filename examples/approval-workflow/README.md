@@ -25,4 +25,4 @@ The script creates `data/shop.db` from `seed.sql`. It starts `webhook.py` on por
 
 `expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
 
-Limit: the policy only sees column names written in the query. `SELECT *` returns `ssn` without approval.
+`SELECT *` needs approval too: the policy cannot tell which columns a star reads.
