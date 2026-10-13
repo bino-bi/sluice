@@ -6,10 +6,8 @@
 `sluice serve --config <file>` reads the server config, a YAML file.
 
 An environment variable overrides a key: `SLUICE_REST__LISTEN` sets `rest.listen`.
-These keys must also be in the file, or Sluice ignores the variable: `mcp.listen`, `admin.token`, `duckdb.tempDir`, `identity.apiKeyPepper`.
-The same holds for all keys under `rest.tls`, `admin.tls`, `audit.file`, `audit.syslog`, `audit.s3`.
 No variable sets `approval.webhooks`.
-[Server config](../operations/server-config.md) explains this rule and secret references.
+[Server config](../operations/server-config.md) explains secret references.
 
 A key with an empty default is a string. Write a time like its default: `30s`, `5m`.
 

@@ -3,9 +3,8 @@
 
 // gen-config-docs renders docs/reference/configuration.md from
 // internal/config. Keys come from reflection on ServerConfig, defaults
-// from DefaultServerConfig(). The keys that an environment
-// variable cannot set alone are found by calling LoadServer. The meaning
-// of each key is written by hand below: a key without one fails the run.
+// from DefaultServerConfig(). The meaning of each key is written by hand
+// below: a key without one fails the run.
 // Run via `make docs-generate`; `make docs-check` fails when the page
 // differs.
 package main
@@ -17,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -177,7 +175,6 @@ An environment variable overrides a key: ` + "`SLUICE_REST__LISTEN`" + ` sets ` 
 type row struct {
 	key, def string
 	block    string // optional block that holds the key
-	index    []int  // field index path in ServerConfig
 }
 
 func main() {
@@ -187,11 +184,11 @@ func main() {
 
 	defaults := config.DefaultServerConfig()
 	var rows []row
-	walk(reflect.TypeOf(defaults), reflect.ValueOf(defaults), "", "", nil, &rows)
+	walk(reflect.TypeOf(defaults), reflect.ValueOf(defaults), "", "", &rows)
 
 	var buf bytes.Buffer
 	buf.WriteString(header)
-	buf.WriteString(envNote(rows, reflect.ValueOf(defaults)))
+	buf.WriteString(envNote(rows))
 	buf.WriteString("\nA key with an empty default is a string. Write a time like its default: `30s`, `5m`.\n\n")
 	buf.WriteString("| Key | Default | Meaning |\n|---|---|---|\n")
 	seen := map[string]bool{}
@@ -249,7 +246,7 @@ func main() {
 // walk collects one row per leaf key, in declaration order. A struct
 // pointer or a list of structs is an optional block: it is nil by default,
 // so its keys are read from the zero value of the struct.
-func walk(t reflect.Type, v reflect.Value, prefix, block string, index []int, rows *[]row) {
+func walk(t reflect.Type, v reflect.Value, prefix, block string, rows *[]row) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		key := f.Tag.Get("mapstructure")
@@ -257,16 +254,15 @@ func walk(t reflect.Type, v reflect.Value, prefix, block string, index []int, ro
 			key = prefix + "." + key
 		}
 		ft, fv := f.Type, v.Field(i)
-		idx := append(append([]int(nil), index...), i)
 		switch {
 		case ft.Kind() == reflect.Struct:
-			walk(ft, fv, key, block, idx, rows)
+			walk(ft, fv, key, block, rows)
 		case ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct && !fv.IsNil():
-			walk(ft.Elem(), fv.Elem(), key, block, idx, rows)
+			walk(ft.Elem(), fv.Elem(), key, block, rows)
 		case ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct:
-			walk(ft.Elem(), reflect.Zero(ft.Elem()), key, key, idx, rows)
+			walk(ft.Elem(), reflect.Zero(ft.Elem()), key, key, rows)
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
-			walk(ft.Elem(), reflect.Zero(ft.Elem()), key+"[]", key, idx, rows)
+			walk(ft.Elem(), reflect.Zero(ft.Elem()), key+"[]", key, rows)
 		default:
 			if _, ok := skip[key]; ok {
 				skip[key] = false
@@ -276,56 +272,22 @@ func walk(t reflect.Type, v reflect.Value, prefix, block string, index []int, ro
 			if d, ok := blockDefault[key]; ok {
 				def = d
 			}
-			*rows = append(*rows, row{key: key, def: def, block: block, index: idx})
+			*rows = append(*rows, row{key: key, def: def, block: block})
 		}
 	}
 }
 
-// envNote names the keys that a SLUICE_* variable cannot set alone. The
-// loader reads a variable only for a key that has a viper default or is in
-// the file, so each key is tried with LoadServer and no file.
-func envNote(rows []row, defaults reflect.Value) string {
-	var keys, blocks, lists []string
+// envNote names the keys that no SLUICE_* variable sets: a list of blocks
+// has no single value.
+func envNote(rows []row) string {
+	var lists []string
 	for _, r := range rows {
-		switch {
-		case strings.Contains(r.key, "[]"):
+		if strings.Contains(r.key, "[]") {
 			lists = appendNew(lists, "`"+r.block+"`")
-		case r.block != "":
-			blocks = appendNew(blocks, "`"+r.block+"`")
-		case !envSets(r, defaults.FieldByIndex(r.index)):
-			keys = append(keys, "`"+r.key+"`")
 		}
 	}
-	return "These keys must also be in the file, or Sluice ignores the variable: " + strings.Join(keys, ", ") + ".\n" +
-		"The same holds for all keys under " + strings.Join(blocks, ", ") + ".\n" +
-		"No variable sets " + strings.Join(lists, ", ") + ".\n" +
-		"[Server config](../operations/server-config.md) explains this rule and secret references.\n"
-}
-
-// envSets reports whether the variable of r changes the loaded value.
-func envSets(r row, def reflect.Value) bool {
-	var val string
-	switch d := def.Interface().(type) {
-	case bool:
-		val = strconv.FormatBool(!d)
-	case time.Duration:
-		val = (d + time.Second).String()
-	case float64:
-		val = strconv.FormatFloat(d+0.5, 'g', -1, 64)
-	case string, []string:
-		val = "x"
-	default:
-		val = strconv.FormatInt(def.Int()+1, 10)
-	}
-	name := "SLUICE_" + strings.ToUpper(strings.ReplaceAll(r.key, ".", "__"))
-	os.Setenv(name, val)
-	defer os.Unsetenv(name)
-	cfg, err := config.LoadServer("", nil)
-	if err != nil {
-		fatal("load with %s=%s: %v", name, val, err)
-	}
-	got := reflect.ValueOf(*cfg).FieldByIndex(r.index)
-	return !reflect.DeepEqual(got.Interface(), def.Interface())
+	return "No variable sets " + strings.Join(lists, ", ") + ".\n" +
+		"[Server config](../operations/server-config.md) explains secret references.\n"
 }
 
 func appendNew(list []string, s string) []string {

@@ -34,7 +34,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 
 | Setting | Why | Value |
 |---|---|---|
-| `admin.token` | Without it the admin API accepts every request | In the server config file. `SLUICE_ADMIN__TOKEN` alone does not set it |
+| `admin.token` | Without it the admin API accepts every request | Set it in the server config or with `SLUICE_ADMIN__TOKEN` |
 | `admin.listen` | Serves the admin API and `/metrics` | A private address |
 | `rest.tls`, `admin.tls` | REST and admin serve plain HTTP by default | See [Deployment](../operations/deployment.md) |
 | `mcp.listen` | MCP over HTTP: no `tls` setting, no rate limit before login | A TLS proxy in front, or stdio |

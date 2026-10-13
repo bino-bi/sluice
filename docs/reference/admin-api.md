@@ -77,7 +77,7 @@ Every response has an `X-Admin-Request-Id` header.
 
 ## Limits
 
-- Set `admin.token` in the server config. `SLUICE_ADMIN__TOKEN` alone does not set it. See [Server config](../operations/server-config.md).
+- Set `admin.token` in the server config or with `SLUICE_ADMIN__TOKEN`. See [Server config](../operations/server-config.md).
 - With an empty token, every route is open. Sluice logs a warning at start.
 - A wrong token gives 401 `ERR_UNAUTHORIZED` and a `WWW-Authenticate` header.
 - A missing `user` or `table`, or `n` below 1, gives 400 `ERR_SYNTAX`.

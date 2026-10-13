@@ -45,9 +45,6 @@ Later steps win:
 
 A missing or empty policy directory is no error. Sluice starts and refuses every query.
 
-!!! warning "A variable needs its key"
-    Sluice reads a variable only if its key has a default or is in the file. `SLUICE_ADMIN__TOKEN` alone does not set the token: without `token: ""` in the file, the admin API accepts every call. No default: `admin.token`, `mcp.listen`, `identity.apiKeyPepper`, `duckdb.tempDir`, and the keys under `audit.file`, `audit.syslog`, `audit.s3`, `rest.tls`, `admin.tls`.
-
 ## Secret references
 
 | Reference | Sluice reads |
