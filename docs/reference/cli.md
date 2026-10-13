@@ -73,7 +73,7 @@ Validate the server config and the policy directory.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--config` | string |  | path to the server config (optional) |
-| `--strict` | bool |  | reject unknown YAML fields in policies |
+| `--strict` | bool |  | reject unknown fields in policies and unknown keys in the server config |
 
 The policy directory is optional. `sluice serve` runs the same checks at start.
 

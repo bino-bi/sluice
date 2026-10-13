@@ -414,6 +414,26 @@ func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 	return &cfg, nil
 }
 
+// CheckServerKeys reports the keys of the file at path that the server
+// config does not have. LoadServer ignores such a key, so a typo keeps the
+// default without a word. A file that cannot be read is no error here:
+// LoadServer has already reported or accepted that.
+func CheckServerKeys(path string) error {
+	v := viper.New()
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
+		return nil
+	}
+	var cfg ServerConfig
+	if err := v.UnmarshalExact(&cfg); err != nil {
+		// The decoder names the Go type for a key at the top level.
+		msg := strings.TrimPrefix(err.Error(), "decoding failed due to the following error(s):\n\n")
+		msg = strings.ReplaceAll(msg, "'config.ServerConfig'", "the top level")
+		return fmt.Errorf("server config has unknown keys:\n%s", msg)
+	}
+	return nil
+}
+
 // bindEnv makes every scalar key of the config known to viper, so that
 // its SLUICE_* variable is read. A key that viper does not know is not
 // looked up in the environment, also not with AutomaticEnv. Only leaves
