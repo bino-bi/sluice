@@ -61,6 +61,7 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `sql_fingerprint`, `rewritten_fingerprint` | Hashes of the sent and the rewritten SQL |
 | `tables`, `catalogs` | What the query reads |
 | `policies_applied` | The policies behind the decision |
+| `policies_shadow` | Policies that matched in `Audit` or `DryRun` mode. `would: deny` or `would: reject` marks one that would have stopped the query |
 | `decision`, `message` | `allow`, `deny`, `reject` or `error`, with the reason |
 | `error_code` | Not on a policy `deny` or `reject`. A refused write is `error` with `ACL_REJECTED` |
 | `row_count`, `truncated` | Result size, on `query-result` only. Left out when 0 or `false` |

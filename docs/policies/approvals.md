@@ -93,7 +93,7 @@ sequenceDiagram
 
 `predicates` look at the conditions that name the column. Sluice reads a comparison of the column with a literal in `WHERE`, `HAVING`, `JOIN ... ON` or `FILTER`. `AND` and `OR` can join such comparisons. A number also matches in another spelling: `7` hits `7.0`. Any other condition that names the column is a hit, whatever `op` and `value` say. Examples are a function around the column, a cast of the literal, `NOT`, `NOT IN`, `CASE`, `BETWEEN`, a subquery, another column and `USING`.
 
-With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --json` lists the policy under `shadow`.
+With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --json` lists the policy under `shadow`, and the audit record under `policies_shadow`.
 
 ## Server config
 

@@ -40,6 +40,7 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 		}
 		ap := apitypes.AppliedPolicy{Kind: p.Kind, Name: p.Name, Priority: p.Priority}
 		if p.Enforcement == apitypes.EnforcementAudit || p.Enforcement == apitypes.EnforcementDryRun {
+			ap.Would = shadowWould(p, tables, user, action, firedRejects)
 			dec.Shadow = append(dec.Shadow, ap)
 			continue
 		}
@@ -95,6 +96,20 @@ func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity
 	}
 
 	return dec
+}
+
+// shadowWould names what a policy in Audit or DryRun mode would have done
+// to the query in Enforce mode: deny it, or reject it. It is empty for a
+// policy that would allow or only shape the query.
+func shadowWould(p *CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, firedRejects map[*CompiledPolicy][]CompiledRejectRule) string {
+	switch {
+	case p.Kind == apitypes.KindSQLAccessPolicy && p.Access != nil && p.Access.Effect == apitypes.EffectDeny &&
+		p.Match.Match(MatchContext{User: user, Tables: notExcluded(p, tables, user, action), Action: action}):
+		return "deny"
+	case p.Kind == apitypes.KindQueryRejectPolicy && len(firedRejects[p]) > 0:
+		return "reject"
+	}
+	return ""
 }
 
 // denyOrAllow inspects SqlAccessPolicy outcomes. If any matched policy

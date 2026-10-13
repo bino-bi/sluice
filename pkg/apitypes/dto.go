@@ -76,6 +76,10 @@ type AppliedPolicy struct {
 	Kind     Kind   `json:"kind"`
 	Name     string `json:"name"`
 	Priority int32  `json:"priority"`
+	// Would is set on a policy in Audit or DryRun mode that would have
+	// stopped the query: "deny" or "reject". A policy that would only
+	// shape the query (filter, mask, rewrite) leaves it empty.
+	Would string `json:"would,omitempty"`
 }
 
 // RejectedPolicy names a policy whose selector matched and whose decision

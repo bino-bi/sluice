@@ -823,6 +823,29 @@ func TestExecute_RewriteErrorEmitsOnce(t *testing.T) {
 	}
 }
 
+// The audit record of a query lists the policies that matched in Audit or
+// DryRun mode, with what they would have done.
+func TestExecute_AuditsShadowPolicies(t *testing.T) {
+	a := &fakeAudit{}
+	shadow := []pkgapi.AppliedPolicy{{Kind: pkgapi.KindSQLAccessPolicy, Name: "dry-deny", Priority: 100, Would: "deny"}}
+	svc := buildService(t,
+		&fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow, Shadow: shadow}},
+		&fakeRewriter{},
+		&fakeExecutor{},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT 1"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	_ = res.Rows.Close()
+	recs := a.all()
+	if len(recs) == 0 || len(recs[0].PoliciesShadow) != 1 || recs[0].PoliciesShadow[0] != shadow[0] {
+		t.Fatalf("query record = %+v, want policies_shadow with the dry-run deny", recs)
+	}
+}
+
 // A policy engine that cannot decide (a ReBAC or OPA backend is down) is
 // an outage: 503 with its own code, not a deny and not ERR_INTERNAL. The
 // audit record carries the code the client gets, and the cause is logged.

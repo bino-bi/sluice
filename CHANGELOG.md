@@ -42,6 +42,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ### Fixed
 
+- **The audit record lists the policies that matched in `Audit` or `DryRun` mode.** Such a policy showed only in `sluice policy explain` and `GET /admin/subjects/explain`. The audit log said nothing, so a rollout in `DryRun` mode could not be watched. A `query` record now has `policies_shadow`, a list like `policies_applied`. An entry has `would: deny` when a deny policy or a failed ReBAC check would have denied the query, and `would: reject` when a reject rule fired. The explain output has the same `would` field. On a deny by a composite engine, the record lists only the shadow policies of the engine that denied.
 - **A request refused for a full concurrency slot is audited.** When `limits.maxConcurrent` was reached, the request got 429 `ERR_RATE_LIMITED` without an audit record and without a query id. It now leaves a `query` record with `error_code: ERR_RATE_LIMITED` and the message `service saturated`, and the answer carries the query id.
 - **The `query-result` audit record names the subject.** The record that holds the row count had an empty `subject` and no `origin` and `remote_ip`. It now carries those of the `query` record. A search of the audit log for a subject now also finds the `query-result` records.
 - **`sluice policy test` exits with status 3 for a policy that does not compile.** The help text says 3 for a compile failure, the command returned 1, the status of an I/O error. **Behavior change:** a script that tells 1 from 3 now sees 3.

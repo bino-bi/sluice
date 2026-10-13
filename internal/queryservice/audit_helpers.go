@@ -95,6 +95,9 @@ func applyDecisionToAudit(rec *audit.Record, dec *policy.Decision) {
 		return
 	}
 	rec.PoliciesApplied = append([]pkgapi.AppliedPolicy(nil), dec.Applied...)
+	if len(dec.Shadow) > 0 {
+		rec.PoliciesShadow = append([]pkgapi.AppliedPolicy(nil), dec.Shadow...)
+	}
 	switch dec.Outcome {
 	case policy.OutcomeAllow:
 		rec.Decision = audit.DecisionAllow

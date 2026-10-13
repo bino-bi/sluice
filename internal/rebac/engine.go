@@ -156,7 +156,9 @@ func (e *Engine) Evaluate(ctx context.Context, in policy.Input) (*policy.Decisio
 			}
 			if !ok {
 				if shadow {
-					dec.Shadow = append(dec.Shadow, ap)
+					failed := ap
+					failed.Would = "deny"
+					dec.Shadow = append(dec.Shadow, failed)
 					continue
 				}
 				return &policy.Decision{

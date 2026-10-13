@@ -252,3 +252,23 @@ func TestComputeHash_ChainsWithClientMeta(t *testing.T) {
 		t.Fatal("client_meta not included in hash input")
 	}
 }
+
+// policies_shadow is part of the hashed form of a record, and a record
+// without it keeps the form it had before the field existed.
+func TestCanonicalJSON_PoliciesShadow(t *testing.T) {
+	base := &audit.Record{EventType: audit.EventQuery, QueryID: "q1", Decision: audit.DecisionAllow}
+	var plain, withShadow bytes.Buffer
+	if err := audit.CanonicalJSON(&plain, base); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.String(), "policies_shadow") {
+		t.Errorf("a record without shadow policies names the field: %s", plain.String())
+	}
+	base.PoliciesShadow = []apitypes.AppliedPolicy{{Kind: apitypes.KindSQLAccessPolicy, Name: "dry-deny", Would: "deny"}}
+	if err := audit.CanonicalJSON(&withShadow, base); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withShadow.String(), `"policies_shadow":[{"kind":"SqlAccessPolicy","name":"dry-deny","priority":0,"would":"deny"}]`) {
+		t.Errorf("canonical form = %s, want policies_shadow with the entry", withShadow.String())
+	}
+}
