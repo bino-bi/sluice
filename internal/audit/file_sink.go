@@ -259,6 +259,7 @@ func (s *FileSink) rotateIfNeeded(upcoming int64) error {
 	if !dailyCrossed && !sizeExceeded {
 		return nil
 	}
+	start := time.Now()
 	if err := s.closeActive(); err != nil {
 		return err
 	}
@@ -268,7 +269,9 @@ func (s *FileSink) rotateIfNeeded(upcoming int64) error {
 	} else {
 		s.seq++
 	}
-	return s.openForDay(s.day, s.seq)
+	err := s.openForDay(s.day, s.seq)
+	metricsShared().RotateDuration.WithLabelValues(s.Name()).Observe(time.Since(start).Seconds())
+	return err
 }
 
 // openLatest chooses the newest file in the directory (or opens today's

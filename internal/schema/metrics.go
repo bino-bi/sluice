@@ -61,7 +61,7 @@ func initMetrics() {
 		// refresh is registered into DefaultRegisterer separately:
 		prometheus.DefaultRegisterer.MustRegister(globalMetrics.refresh)
 		globalMetrics.stales = telemetry.DefineCounter(
-			"sluice_schema_stale_entries",
+			"sluice_schema_stale_entries_total",
 			"Number of times a cached entry became stale after a refresh failure.",
 			[]string{"catalog"},
 		)

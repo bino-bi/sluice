@@ -31,11 +31,7 @@ type metricDecl struct {
 
 // skip lists metrics that the code defines but a server never exports.
 // An entry that ends with "_" is a prefix.
-var skip = []string{
-	"sluice_policy_",                       // policy.RegisterMetrics has no caller
-	"sluice_schema_",                       // schema.RegisterMetrics has no caller
-	"sluice_audit_rotate_duration_seconds", // registered, never observed
-}
+var skip = []string{}
 
 // skipLabels lists labels that are always empty.
 var skipLabels = map[string][]string{
@@ -62,6 +58,7 @@ const footer = `
 - Sluice also exports the Go runtime metrics (` + "`go_*`" + `) and the process metrics (` + "`process_*`" + `).
 - The ` + "`sluice_approval_*`" + ` metrics exist only when ` + "`approval.publicBaseUrl`" + ` is set.
 - A counter with labels appears after its first event.
+- The ` + "`sluice_policy_*`" + ` metrics count the YAML engine only, also as a member of ` + "`composite`" + `.
 `
 
 func main() {

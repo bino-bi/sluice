@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/bino-bi/sluice/internal/parserbackend"
 )
 
@@ -49,6 +51,22 @@ audit:
 		defer cancel()
 		deps.Close(shutdownCtx)
 	}()
+
+	// The policy and schema metrics are registered with the runtime, so
+	// GET /metrics shows them. Before, nothing registered them.
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	registered := map[string]bool{}
+	for _, f := range families {
+		registered[f.GetName()] = true
+	}
+	for _, name := range []string{"sluice_policy_eval_duration_seconds", "sluice_schema_refresh_duration_seconds"} {
+		if !registered[name] {
+			t.Errorf("metric %s is not registered", name)
+		}
+	}
 
 	if deps.watcher == nil {
 		t.Fatal("watcher must be constructed with policies.reload: false")

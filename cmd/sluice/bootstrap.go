@@ -196,6 +196,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.sourceReg.SetPool(ctx, datasource.NewSQLPool(deps.exec.DB()))
 
 	// 9. Schema cache — wired to the pool via a narrow ConnProvider.
+	schema.RegisterMetrics()
 	deps.schemaCache = schema.New(schema.Options{
 		Loader: schema.NewLoader(deps.sourceReg, deps.exec.DB()),
 		Logger: deps.log,
@@ -204,6 +205,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	// 10. Policy engine(s) + snapshot apply. The YAML engine always exists
 	// (admin snapshot introspection + composite member); the engine passed
 	// to the queryservice may be a composite.
+	policy.RegisterMetrics()
 	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.resolver, deps.log)
 	if err != nil {
 		return nil, fmt.Errorf("policy engine: %w", err)
