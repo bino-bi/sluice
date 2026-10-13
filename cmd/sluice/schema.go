@@ -30,7 +30,6 @@ var kindSchemas = map[apitypes.Kind]reflect.Type{
 	apitypes.KindDataClassification: reflect.TypeFor[apitypes.DataClassification](),
 	apitypes.KindDataSource:         reflect.TypeFor[apitypes.DataSource](),
 	apitypes.KindSubjectBinding:     reflect.TypeFor[apitypes.SubjectBinding](),
-	apitypes.KindAuditSink:          reflect.TypeFor[apitypes.AuditSink](),
 }
 
 func newSchemaCmd() *cobra.Command {

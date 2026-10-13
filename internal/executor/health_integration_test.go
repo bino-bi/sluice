@@ -30,9 +30,8 @@ func TestHealthSweepThroughSQLiteAttach(t *testing.T) {
 		TypeMeta: apitypes.TypeMeta{APIVersion: "sluice.io/v1alpha1", Kind: apitypes.KindDataSource},
 		Metadata: apitypes.ObjectMeta{Name: "fixture"},
 		Spec: apitypes.DataSourceSpec{
-			Type:     apitypes.DSSQLite,
-			Path:     dbPath,
-			Readonly: true,
+			Type: apitypes.DSSQLite,
+			Path: dbPath,
 		},
 	}
 
@@ -85,7 +84,7 @@ func TestProbeFailsForRemovedSQLiteFile(t *testing.T) {
 	ds := &apitypes.DataSource{
 		TypeMeta: apitypes.TypeMeta{APIVersion: "sluice.io/v1alpha1", Kind: apitypes.KindDataSource},
 		Metadata: apitypes.ObjectMeta{Name: "fixture"},
-		Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSQLite, Path: dbPath, Readonly: true},
+		Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSQLite, Path: dbPath},
 	}
 	reg, err := datasource.New(context.Background(), datasource.Options{
 		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{ds}},

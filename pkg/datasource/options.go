@@ -48,11 +48,4 @@ type Spec struct {
 	Type    string
 	Raw     map[string]any
 	Secrets SecretResolver
-	Filters Filters
-}
-
-// Filters are schema/table visibility filters carried on the Spec.
-type Filters struct {
-	Schemas []string
-	Tables  []string
 }

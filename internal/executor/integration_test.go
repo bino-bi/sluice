@@ -31,9 +31,8 @@ func TestGateSelectOneThroughSQLiteAttach(t *testing.T) {
 		TypeMeta: apitypes.TypeMeta{APIVersion: "sluice.io/v1alpha1", Kind: apitypes.KindDataSource},
 		Metadata: apitypes.ObjectMeta{Name: "fixture"},
 		Spec: apitypes.DataSourceSpec{
-			Type:     apitypes.DSSQLite,
-			Path:     dbPath,
-			Readonly: true,
+			Type: apitypes.DSSQLite,
+			Path: dbPath,
 		},
 	}
 

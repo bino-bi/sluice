@@ -56,15 +56,10 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("sqlite: stat %q: %w", path, err)
 	}
-	readonly := true
-	if b, ok := spec.Raw["readonly"].(bool); ok && !b {
-		// v2 behaviour; MVP always enforces read-only.
-		_ = b
-	}
 	return &driver{
 		name:     spec.Name,
 		path:     path,
-		readonly: readonly,
+		readonly: true,
 	}, nil
 }
 

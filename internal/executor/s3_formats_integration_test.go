@@ -91,7 +91,6 @@ func TestS3DriverAllFormatsThroughHardenedExecutor(t *testing.T) {
 				"s3://bucket/export.json",
 				"s3://bucket/plan.xlsx",
 			},
-			Readonly: true,
 		},
 	}
 

@@ -26,7 +26,6 @@ const (
 	KindApprovalPolicy     Kind = "ApprovalPolicy"
 	KindDataSource         Kind = "DataSource"
 	KindSubjectBinding     Kind = "SubjectBinding"
-	KindAuditSink          Kind = "AuditSink"
 	KindDataClassification Kind = "DataClassification"
 	KindRelationshipPolicy Kind = "RelationshipPolicy"
 )

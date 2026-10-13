@@ -84,7 +84,7 @@ func newSeededHelloSluiceService(t *testing.T, cache schema.Cache, extraSeed str
 		Snapshot: &datasource.Snapshot{DataSources: []*pkgapi.DataSource{{
 			TypeMeta: pkgapi.TypeMeta{APIVersion: "sluice.bino.bi/v1alpha1", Kind: pkgapi.KindDataSource},
 			Metadata: pkgapi.ObjectMeta{Name: "shop"},
-			Spec:     pkgapi.DataSourceSpec{Type: pkgapi.DSDuckDBFile, Path: dbPath, Readonly: true},
+			Spec:     pkgapi.DataSourceSpec{Type: pkgapi.DSDuckDBFile, Path: dbPath},
 		}}},
 		HealthInterval: -1,
 		FailFast:       true,

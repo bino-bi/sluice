@@ -30,7 +30,6 @@ import (
 // skip lists what the code declares but does not act on. A key is a
 // kind, a field as in docs, or Type=value for an enum value.
 var skip = map[string]bool{
-	"AuditSink":                           true, // decoded, never read: sinks come from the server config
 	"object.metadata.namespace":           true, // no reader
 	"MaskType=custom":                     true, // compile refuses it
 	"MaskType=external":                   true, // compile refuses it
@@ -38,15 +37,15 @@ var skip = map[string]bool{
 	"ColumnMaskPolicy.mask.args.provider": true, // only read by mask type external
 	"ColumnMaskPolicy.mask.args.keyPath":  true, // only read by mask type external
 	"QueryRewritePolicy.rewrite.hint":     true, // compile refuses it
-	"DataSource.prefix":                   true, // the s3 driver stores it and never uses it
-	"DataSource.schemas":                  true, // no driver reads it
-	"DataSource.tables":                   true, // no driver reads it
-	"DataSource.attachMode":               true, // no driver reads it
-	"DataSource.healthCheck":              true, // no reader
-	"DataSource.readonly":                 true, // no effect: every source is opened read-only
-	"SubjectBinding.groupsSource":         true, // no reader
-	"RelationshipPolicy.backend.type":     true, // no reader
-	"RelationshipPolicy.backend.cacheTtl": true, // no reader: the TTL is policies.rebac.cacheTtl
+	"DataSource.prefix":                   true, // the decoder refuses it
+	"DataSource.schemas":                  true, // the decoder refuses it
+	"DataSource.tables":                   true, // the decoder refuses it
+	"DataSource.attachMode":               true, // the decoder refuses every value but readonly
+	"DataSource.healthCheck":              true, // the decoder refuses it
+	"DataSource.readonly":                 true, // no effect: the decoder refuses false
+	"SubjectBinding.groupsSource":         true, // the decoder refuses it
+	"RelationshipPolicy.backend.type":     true, // only openfga loads
+	"RelationshipPolicy.backend.cacheTtl": true, // the decoder refuses it: the TTL is policies.rebac.cacheTtl
 }
 
 // pages links each kind to the page that explains it.

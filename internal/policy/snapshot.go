@@ -256,8 +256,7 @@ func predicateHeaderTemplates(p *CompiledPredicate) []string {
 }
 
 // compilePolicy dispatches on Kind. Non-policy kinds (DataSource,
-// SubjectBinding, AuditSink) produce (nil, nil) — the caller filters them
-// out.
+// SubjectBinding) produce (nil, nil) — the caller filters them out.
 func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource) (*CompiledPolicy, error) {
 	meta := obj.GetObjectMeta()
 	base := &CompiledPolicy{
@@ -379,7 +378,7 @@ func compilePolicy(obj apitypes.Object, tagIndex map[string][]*compiledResource)
 		return base, nil
 	}
 
-	// DataSource / SubjectBinding / AuditSink: not policies.
+	// DataSource / SubjectBinding: not policies.
 	return nil, nil
 }
 

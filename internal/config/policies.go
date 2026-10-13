@@ -30,7 +30,6 @@ type Snapshot struct {
 	ByKind               map[apitypes.Kind][]apitypes.Object
 	DataSources          []*apitypes.DataSource
 	SubjectBindings      []*apitypes.SubjectBinding
-	AuditSinks           []*apitypes.AuditSink
 	RelationshipPolicies []*apitypes.RelationshipPolicy
 
 	Warnings []ValidationWarning
@@ -127,8 +126,6 @@ func LoadDirectory(_ context.Context, opts LoadOptions) (*Snapshot, error) {
 				snap.DataSources = append(snap.DataSources, x)
 			case *apitypes.SubjectBinding:
 				snap.SubjectBindings = append(snap.SubjectBindings, x)
-			case *apitypes.AuditSink:
-				snap.AuditSinks = append(snap.AuditSinks, x)
 			case *apitypes.RelationshipPolicy:
 				snap.RelationshipPolicies = append(snap.RelationshipPolicies, x)
 			}
