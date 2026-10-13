@@ -88,7 +88,8 @@ type Record struct {
 	// operator-trust-domain data, like sql_sample.
 	ClientMeta map[string]string `json:"client_meta,omitempty"`
 	// PoliciesShadow lists the policies that matched in Audit or DryRun
-	// mode. They did not shape the decision.
+	// mode, and a column mask of a composite member that lost to the mask
+	// of an earlier member. They did not shape the decision.
 	PoliciesShadow []apitypes.AppliedPolicy `json:"policies_shadow,omitempty"`
 
 	PriorHash string `json:"prior_hash"`

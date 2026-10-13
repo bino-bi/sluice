@@ -198,3 +198,60 @@ spec:
 		t.Errorf("YAML engine version = %d, want the published version %d", got, want)
 	}
 }
+
+// The watcher of the runtime also watches policies.opa.moduleDir: a
+// changed Rego module is applied without SIGHUP or POST /admin/reload.
+func TestBuildRuntime_RegoChangeTriggersReload(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	dir := t.TempDir()
+	policyDir := filepath.Join(dir, "policies.d")
+	moduleDir := filepath.Join(dir, "rego")
+	for _, d := range []string{policyDir, moduleDir} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	module := filepath.Join(moduleDir, "main.rego")
+	if err := os.WriteFile(module, []byte("package sluice\nimport rego.v1\nmain := {\"abstain\": true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "sluice.yaml")
+	cfg := `
+policies:
+  engine: opa
+  opa:
+    moduleDir: ` + moduleDir + `
+audit:
+  file:
+    path: ` + filepath.Join(dir, "audit") + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps, err := buildRuntime(ctx, cfgPath, policyDir)
+	if err != nil {
+		t.Fatalf("buildRuntime: %v", err)
+	}
+	defer func() {
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		deps.Close(shutdownCtx)
+	}()
+	deps.watcher.Start(ctx)
+	before := deps.registry.Current().Version
+
+	if err := os.WriteFile(module, []byte("package sluice\nimport rego.v1\nmain := {\"allow\": true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for deps.registry.Current().Version == before {
+		if time.Now().After(deadline) {
+			t.Fatal("no reload after a .rego file changed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

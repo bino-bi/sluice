@@ -248,34 +248,26 @@ func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, 
 	})
 }
 
-// loadCatalogs reads the tables of every attached catalog that the schema
-// cache holds no table of, or only of catalog when that is set. A query
-// loads a schema only for a filtered or masked table, so without this a
-// listing shows nothing after a start or a reload. A data source that is
-// down is left out. So is one that fails to load: Refresh logs it.
+// loadCatalogs makes the schema cache read the tables of every attached
+// catalog, or only of catalog when that is set. A query loads a schema
+// only for a filtered or masked table, so without this a listing shows
+// nothing after a start or a reload. A data source that is down is left
+// out.
 func (s *Service) loadCatalogs(ctx context.Context, catalog string) {
 	if s.opts.Schema == nil || s.opts.Catalogs == nil {
 		return
 	}
-	loaded := map[string]bool{}
-	for _, e := range s.opts.Schema.All() {
-		if e != nil {
-			loaded[e.Key.Catalog] = true
-		}
-	}
-	var missing []string
+	var want []string
 	for _, c := range s.opts.Catalogs() {
 		if catalog != "" && c != catalog {
 			continue
 		}
-		if loaded[c] || (s.opts.SourceDown != nil && s.opts.SourceDown(c)) {
+		if s.opts.SourceDown != nil && s.opts.SourceDown(c) {
 			continue
 		}
-		missing = append(missing, c)
+		want = append(want, c)
 	}
-	if len(missing) > 0 {
-		_ = s.opts.Schema.Refresh(ctx, missing)
-	}
+	s.opts.Schema.Load(ctx, want)
 }
 
 // tableVisible reports whether user may read ref — i.e. the policy engine
@@ -285,7 +277,9 @@ func (s *Service) tableVisible(ctx context.Context, user *identity.UserCtx, ref 
 	if s.opts.Policy == nil {
 		return false
 	}
-	dec, err := s.opts.Policy.Evaluate(ctx, policy.Input{User: user, Tables: []parser.TableRef{ref}})
+	dec, err := s.opts.Policy.Evaluate(ctx, policy.Input{
+		User: user, Tables: []parser.TableRef{ref}, Action: pkgapi.ActionSelect,
+	})
 	if err != nil || dec == nil {
 		return false
 	}

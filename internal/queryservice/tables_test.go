@@ -35,6 +35,7 @@ func (f *fakeSchemaCache) Invalidate(schema.Key)                   {}
 func (f *fakeSchemaCache) InvalidateCatalog(string)                {}
 func (f *fakeSchemaCache) InvalidateAll()                          {}
 func (f *fakeSchemaCache) Refresh(context.Context, []string) error { return nil }
+func (f *fakeSchemaCache) Load(context.Context, []string)          {}
 
 // denyingPolicy denies the tables named in deny, allows everything else.
 type denyingPolicy struct {
@@ -269,5 +270,39 @@ func TestListCatalogs_HidesADeniedCatalogOnAColdCache(t *testing.T) {
 	// shop: every table denied. crm: down, so nothing is known about it.
 	if len(got) != 1 || got[0].Name != "crm" {
 		t.Errorf("catalogs = %v, want only crm", got)
+	}
+}
+
+// actionPolicy allows only a request that names the SELECT action, as an
+// allow with `actions: [SELECT]` does.
+type actionPolicy struct{ denyingPolicy }
+
+func (p *actionPolicy) Evaluate(_ context.Context, in policy.Input) (*policy.Decision, error) {
+	if policy.ActionOf(in) != pkgapi.ActionSelect {
+		return &policy.Decision{Outcome: policy.OutcomeDeny}, nil
+	}
+	return &policy.Decision{Outcome: policy.OutcomeAllow}, nil
+}
+
+// The listing asks whether the subject may read a table, so it must ask
+// as a SELECT. Without an action, a policy with actions never matches.
+func TestListTables_VisibilityIsCheckedAsSelect(t *testing.T) {
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &actionPolicy{},
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    &fakeAudit{},
+		Schema: &fakeSchemaCache{entries: []*schema.Entry{
+			{Key: schema.Key{Catalog: "shop", Schema: "main", Table: "orders"}},
+		}},
+		Clock: func() time.Time { return time.Unix(1713600000, 0) },
+	})
+	got, _, err := svc.ListTables(context.Background(), "shop", "", nil, queryservice.Page{})
+	if err != nil {
+		t.Fatalf("ListTables: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("tables = %v, want shop.main.orders", got)
 	}
 }

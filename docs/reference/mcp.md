@@ -73,7 +73,7 @@ Over HTTP, Sluice keeps no session state. A tool call runs as the subject of its
 --8<-- "examples/mcp-tools/expected/03-list-tables.txt"
 ```
 
-Sluice reads the tables of a data source on the first call, and again after a reload. A data source that is down is left out.
+Sluice reads the tables of a data source on the first call, and again after a reload. A data source that is down is left out. Sluice keeps the columns of at most 10 000 tables. With more tables, the lists are not complete.
 
 `describe_table` answers `ACL_DENIED` for a table that the subject cannot read. For other tables it returns every column, masked ones too. `list_catalogs` hides a catalog when the subject can read none of its tables. A catalog that is empty or down stays visible.
 

@@ -51,7 +51,7 @@ func initMetrics() {
 		)
 		globalMetrics.refresh = prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "sluice_schema_refresh_duration_seconds",
-			Help:    "Duration of Refresh calls.",
+			Help:    "Duration of one read of the tables of a catalog.",
 			Buckets: telemetry.DefaultBuckets(),
 		})
 		// Non-vector histogram registration uses the package's default
@@ -85,7 +85,7 @@ func (m *metrics) miss(catalog string) {
 	m.misses.WithLabelValues(catalog).Inc()
 }
 
-// observeRefresh records a refresh duration in seconds.
+// observeRefresh records the duration of one catalog load in seconds.
 func (m *metrics) observeRefresh(secs float64) {
 	if m == nil || m.refresh == nil {
 		return

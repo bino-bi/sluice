@@ -461,3 +461,96 @@ func TestCacheReloadDropsRemovedTable(t *testing.T) {
 		t.Errorf("All() = %v, want orders only", got)
 	}
 }
+
+// hookLoader runs a hook inside each Load, after it counted the call.
+type hookLoader struct {
+	*fakeLoader
+	hook func()
+}
+
+func (h *hookLoader) Load(ctx context.Context, catalog string) (pkgds.Schema, error) {
+	sch, err := h.fakeLoader.Load(ctx, catalog)
+	if h.hook != nil {
+		h.hook()
+	}
+	return sch, err
+}
+
+// Load is for callers that list tables. It must not read a catalog again
+// that it already read: a listing tool would repeat the read on each call.
+func TestCacheLoad_ReadsEachCatalogOnce(t *testing.T) {
+	loader := newFakeLoader()
+	loader.set("pg", sampleSchema("pg"))
+	loader.set("empty", pkgds.Schema{Catalog: "empty"})
+	c := schema.New(schema.Options{Loader: loader})
+	ctx := context.Background()
+
+	for range 3 {
+		c.Load(ctx, []string{"pg", "empty"})
+	}
+	if got := len(c.All()); got != 2 {
+		t.Fatalf("entries = %d, want the 2 tables of pg", got)
+	}
+	if loader.callCount("pg") != 1 || loader.callCount("empty") != 1 {
+		t.Errorf("loads: pg=%d empty=%d, want 1 each", loader.callCount("pg"), loader.callCount("empty"))
+	}
+
+	// A catalog that Get loaded counts too.
+	loader.set("my", sampleSchema("my"))
+	if _, err := c.Get(ctx, schema.Key{Catalog: "my", Schema: "public", Table: "orders"}); err != nil {
+		t.Fatal(err)
+	}
+	c.Load(ctx, []string{"my"})
+	if loader.callCount("my") != 1 {
+		t.Errorf("loads of my = %d, want 1", loader.callCount("my"))
+	}
+
+	// After the cache was emptied, every catalog is read again.
+	c.InvalidateAll()
+	c.Load(ctx, []string{"pg", "empty"})
+	if loader.callCount("pg") != 2 || loader.callCount("empty") != 2 {
+		t.Errorf("loads after InvalidateAll: pg=%d empty=%d, want 2 each", loader.callCount("pg"), loader.callCount("empty"))
+	}
+}
+
+func TestCacheLoad_FailedCatalogWaitsBeforeRetry(t *testing.T) {
+	loader := newFakeLoader() // knows no catalog: every load fails
+	now := time.Now()
+	c := schema.New(schema.Options{Loader: loader, Clock: func() time.Time { return now }})
+	ctx := context.Background()
+
+	for range 3 {
+		c.Load(ctx, []string{"gone"})
+	}
+	if got := loader.callCount("gone"); got != 1 {
+		t.Fatalf("loads = %d, want 1 before the retry time", got)
+	}
+	now = now.Add(schema.LoadRetry)
+	c.Load(ctx, []string{"gone"})
+	if got := loader.callCount("gone"); got != 2 {
+		t.Errorf("loads = %d, want 2 after the retry time", got)
+	}
+	// A reload asks for a fresh read at once.
+	c.InvalidateAll()
+	c.Load(ctx, []string{"gone"})
+	if got := loader.callCount("gone"); got != 3 {
+		t.Errorf("loads = %d, want 3 after InvalidateAll", got)
+	}
+}
+
+// A reload empties the cache. A load that was running then leaves only a
+// part of the catalog behind, so the catalog must not count as read.
+func TestCacheLoad_InvalidatedDuringLoadReadsAgain(t *testing.T) {
+	loader := &hookLoader{fakeLoader: newFakeLoader()}
+	loader.set("pg", sampleSchema("pg"))
+	c := schema.New(schema.Options{Loader: loader})
+	ctx := context.Background()
+
+	loader.hook = c.InvalidateAll
+	c.Load(ctx, []string{"pg"})
+	loader.hook = nil
+	c.Load(ctx, []string{"pg"})
+	if got := loader.callCount("pg"); got != 2 {
+		t.Errorf("loads = %d, want a second read after the cache was emptied during the first", got)
+	}
+}

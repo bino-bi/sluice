@@ -119,7 +119,7 @@ After a file change, the log shows the cause. So does `sluice policy validate`:
 
 - Sluice watches the policy directory for `.yaml` and `.yml` files, and `policies.opa.moduleDir` for `.rego` files. Hidden files do not count.
 - It misses directories created after the start.
-- A duplicate JWT issuer does not stop the reload. Sluice warns and keeps the old JWT bindings.
+- A duplicate JWT issuer, or a secret of a `SubjectBinding` that cannot be resolved, does not stop the reload. Sluice warns and keeps the old bindings of that kind.
 - An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`.
 
 ## See also

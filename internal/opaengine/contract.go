@@ -34,7 +34,7 @@ func buildInput(in policy.Input) map[string]any {
 			"key": tableKey(t),
 		})
 	}
-	action := ""
+	action := string(in.Action)
 	if in.AST != nil {
 		action = string(in.AST.Statement())
 	}

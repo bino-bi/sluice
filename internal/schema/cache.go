@@ -74,6 +74,12 @@ type Cache interface {
 	// list of known catalogs. Errors are aggregated; callers log them but
 	// always see the most recent good data.
 	Refresh(ctx context.Context, catalogs []string) error
+
+	// Load reads each catalog in catalogs that was not read since the
+	// cache was last emptied. Get loads a catalog only on a miss, so a
+	// caller that lists tables calls Load first. A failed load is logged
+	// and tried again after LoadRetry at the earliest.
+	Load(ctx context.Context, catalogs []string)
 }
 
 // Options configures a Cache. Nil-valued functions fall back to
@@ -83,9 +89,8 @@ type Options struct {
 	Loader Loader
 
 	// TTL is the age at which Refresh loads a catalog again. Get does not
-	// check it, and the query service calls Refresh only for a catalog
-	// without entries, so an entry stays until it is invalidated. Zero
-	// means DefaultTTL.
+	// check it, and nothing calls Refresh today, so an entry stays until
+	// it is invalidated. Zero means DefaultTTL.
 	TTL time.Duration
 
 	// Capacity is the maximum number of entries retained in the LRU.
@@ -107,6 +112,10 @@ const (
 	// DefaultCapacity matches the performance budget in
 	// concept §4.12: 10 000 tables per instance.
 	DefaultCapacity = 10_000
+
+	// LoadRetry is the time Load waits before it reads a catalog again
+	// whose load failed.
+	LoadRetry = 30 * time.Second
 )
 
 // lruCache is the only Cache implementation in MVP.
@@ -114,13 +123,15 @@ type lruCache struct {
 	opts    Options
 	entries *lru.Cache[Key, *Entry]
 
-	// catalogSet is the set of catalogs the cache has ever loaded. Used
-	// by Refresh when callers don't pass an explicit list. Protected by
-	// mu.
+	// catalogSet is the set of catalogs loaded since the cache was last
+	// emptied. Used by Load, and by Refresh when callers don't pass an
+	// explicit list. Protected by mu.
 	mu           sync.Mutex
 	catalogSet   map[string]struct{}
 	catalogLocks map[string]*sync.Mutex // per-catalog load dedup
 	loads        map[string]uint64      // completed loads per catalog
+	failed       map[string]time.Time   // last failed Load per catalog
+	gen          uint64                 // counts InvalidateCatalog and InvalidateAll
 
 	metrics *metrics
 }
@@ -155,6 +166,7 @@ func New(opts Options) Cache {
 		catalogSet:   make(map[string]struct{}),
 		catalogLocks: make(map[string]*sync.Mutex),
 		loads:        make(map[string]uint64),
+		failed:       make(map[string]time.Time),
 		metrics:      globalMetrics,
 	}
 }
@@ -165,7 +177,6 @@ func (c *lruCache) Get(ctx context.Context, key Key) (*Entry, error) {
 		c.metrics.hit(key.Catalog)
 		return e, nil
 	}
-	c.metrics.miss(key.Catalog)
 
 	// Miss: load the catalog. The per-catalog lock plus an under-lock
 	// re-check make concurrent misses a true singleflight: the first
@@ -174,6 +185,9 @@ func (c *lruCache) Get(ctx context.Context, key Key) (*Entry, error) {
 	if err := c.loadCatalogForKey(ctx, key, c.loadCount(key.Catalog)); err != nil {
 		return nil, err
 	}
+	// Counted only for a catalog that loads. The name comes from the
+	// caller, and a label per made-up name would grow without bound.
+	c.metrics.miss(key.Catalog)
 	if e, ok := c.entries.Get(key); ok {
 		return e, nil
 	}
@@ -209,6 +223,8 @@ func (c *lruCache) InvalidateCatalog(catalog string) {
 	}
 	c.mu.Lock()
 	delete(c.catalogSet, catalog)
+	delete(c.failed, catalog)
+	c.gen++
 	c.mu.Unlock()
 }
 
@@ -217,7 +233,49 @@ func (c *lruCache) InvalidateAll() {
 	c.entries.Purge()
 	c.mu.Lock()
 	c.catalogSet = make(map[string]struct{})
+	c.failed = make(map[string]time.Time)
+	c.gen++
 	c.mu.Unlock()
+}
+
+// Load implements Cache.
+func (c *lruCache) Load(ctx context.Context, catalogs []string) {
+	for _, cat := range catalogs {
+		if ctx.Err() != nil {
+			return
+		}
+		if !c.needsLoad(cat) {
+			continue
+		}
+		lock := c.lockForCatalog(cat)
+		lock.Lock()
+		// Another caller may have read the catalog while this one waited.
+		if c.needsLoad(cat) {
+			if err := c.reloadCatalogLocked(ctx, cat); err != nil {
+				c.mu.Lock()
+				c.failed[cat] = c.opts.Clock()
+				c.mu.Unlock()
+				c.opts.Logger.WarnContext(ctx, "schema: load failed",
+					slog.String("catalog", cat),
+					slog.String("error", err.Error()),
+				)
+			}
+		}
+		lock.Unlock()
+	}
+}
+
+// needsLoad reports whether Load has to read catalog: it was not read
+// since the cache was last emptied, and no load of it failed within
+// LoadRetry.
+func (c *lruCache) needsLoad(catalog string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.catalogSet[catalog]; ok {
+		return false
+	}
+	at, ok := c.failed[catalog]
+	return !ok || c.opts.Clock().Sub(at) >= LoadRetry
 }
 
 // Refresh loads every catalog in catalogs (or every known catalog when
@@ -234,7 +292,6 @@ func (c *lruCache) Refresh(ctx context.Context, catalogs []string) error {
 		c.mu.Unlock()
 	}
 
-	start := c.opts.Clock()
 	var firstErr error
 	for _, cat := range catalogs {
 		if err := ctx.Err(); err != nil {
@@ -253,7 +310,6 @@ func (c *lruCache) Refresh(ctx context.Context, catalogs []string) error {
 			)
 		}
 	}
-	c.metrics.observeRefresh(c.opts.Clock().Sub(start).Seconds())
 	return firstErr
 }
 
@@ -303,7 +359,12 @@ func (c *lruCache) loadCatalogIfStale(ctx context.Context, catalog string) error
 // cache for catalog. The caller must hold the per-catalog lock so a single
 // Load is in flight per catalog.
 func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) error {
+	c.mu.Lock()
+	gen := c.gen
+	c.mu.Unlock()
+	start := c.opts.Clock()
 	sch, err := c.opts.Loader.Load(ctx, catalog)
+	c.metrics.observeRefresh(c.opts.Clock().Sub(start).Seconds())
 	if err != nil {
 		c.markCatalogStale(catalog)
 		return fmt.Errorf("%w: %w", ErrLoadFailed, err)
@@ -341,7 +402,12 @@ func (c *lruCache) reloadCatalogLocked(ctx context.Context, catalog string) erro
 	}
 
 	c.mu.Lock()
-	c.catalogSet[catalog] = struct{}{}
+	// An invalidation during the load may have removed a part of what
+	// was added. Then the catalog does not count as read.
+	if c.gen == gen {
+		c.catalogSet[catalog] = struct{}{}
+		delete(c.failed, catalog)
+	}
 	c.loads[catalog]++
 	c.mu.Unlock()
 	return nil

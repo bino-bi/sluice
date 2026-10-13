@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -151,8 +152,9 @@ audit:
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	err := cmd.ExecuteContext(context.Background())
-	if err == nil {
-		t.Fatal("sluice mcp started with an ApprovalPolicy loaded")
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("err = %v, want exit status 1 with an ApprovalPolicy loaded", err)
 	}
 	for _, want := range []string{"ApprovalPolicy", "sluice serve", "mcp.enabled"} {
 		if !strings.Contains(err.Error(), want) {

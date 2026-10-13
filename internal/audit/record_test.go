@@ -256,13 +256,19 @@ func TestComputeHash_ChainsWithClientMeta(t *testing.T) {
 // policies_shadow is part of the hashed form of a record, and a record
 // without it keeps the form it had before the field existed.
 func TestCanonicalJSON_PoliciesShadow(t *testing.T) {
-	base := &audit.Record{EventType: audit.EventQuery, QueryID: "q1", Decision: audit.DecisionAllow}
+	// An applied policy has no `would`. With the key in the hashed form,
+	// no chain written before the field existed would verify.
+	base := &audit.Record{
+		EventType: audit.EventQuery, QueryID: "q1", Decision: audit.DecisionAllow,
+		PoliciesApplied: []apitypes.AppliedPolicy{{Kind: apitypes.KindSQLAccessPolicy, Name: "allow", Priority: 10}},
+	}
 	var plain, withShadow bytes.Buffer
 	if err := audit.CanonicalJSON(&plain, base); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(plain.String(), "policies_shadow") {
-		t.Errorf("a record without shadow policies names the field: %s", plain.String())
+	const want = `{"decision":"allow","event_type":"query","policies_applied":[{"kind":"SqlAccessPolicy","name":"allow","priority":10}],"prior_hash":"","query_id":"q1","subject":{},"timestamp":"0001-01-01T00:00:00Z"}`
+	if plain.String() != want {
+		t.Errorf("canonical form of a record without shadow policies\n got: %s\nwant: %s", plain.String(), want)
 	}
 	base.PoliciesShadow = []apitypes.AppliedPolicy{{Kind: apitypes.KindSQLAccessPolicy, Name: "dry-deny", Would: "deny"}}
 	if err := audit.CanonicalJSON(&withShadow, base); err != nil {
