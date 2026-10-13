@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: reject-union
+  priority: 100
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["invoices"]
+  reject:
+    rules:
+      - name: no-union
+        expression: "query.has_union == true"
+        message: "UNION is not allowed on invoices"

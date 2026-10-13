@@ -1,0 +1,5 @@
+{
+  "code": "ERR_UNSUPPORTED_SYNTAX",
+  "message": "the statement would change meaning when rewritten for row filters, masks or limits; see docs/policies/row-filters.md",
+  "query_id": "<query-id>"
+}

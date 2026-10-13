@@ -1,0 +1,5 @@
+{
+  "code": "ERR_BUDGET_EXCEEDED",
+  "message": "daily row budget exhausted",
+  "query_id": "<query-id>"
+}

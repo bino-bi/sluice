@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Reference data in S3. The compose stack runs MinIO with the bucket
+# `ref-data`, which holds `countries.parquet`. The format comes from the
+# file extension. The driver reads only the objects in `allowedPaths`.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ref
+spec:
+  type: s3
+  bucket: "ref-data"
+  region: "us-east-1"
+  endpoint: "http://minio:9000"
+  allowedPaths:
+    - "s3://ref-data/countries.parquet"
+  credentialsRef: "secret://env/SLUICE_S3_CREDS"

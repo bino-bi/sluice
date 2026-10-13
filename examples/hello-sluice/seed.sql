@@ -1,6 +1,4 @@
 -- SPDX-License-Identifier: CC-BY-4.0
--- Seed data for the hello-sluice example.
--- Run: sqlite3 data/shop.db < seed.sql
 
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS orders;
@@ -22,8 +20,7 @@ CREATE TABLE orders (
     placed_at  TEXT    NOT NULL
 );
 
--- admin_users is intentionally excluded from the allow policy; queries
--- against it should be rejected with ERR_ACL_DENIED.
+-- No policy allows admin_users. Queries on it are denied.
 CREATE TABLE admin_users (
     id       INTEGER PRIMARY KEY,
     username TEXT    NOT NULL,

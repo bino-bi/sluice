@@ -1,0 +1,6 @@
+{
+  "code": "ACL_DENIED",
+  "message": "relationship check failed on shop.main.orders",
+  "query_id": "<query-id>",
+  "policy": "shop-table-viewers"
+}

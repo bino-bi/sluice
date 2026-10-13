@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "tenant_id", "email"],
+  "rows": [
+    [3, "beta", "b1@beta.example"],
+    [4, "beta", "b2@beta.example"]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

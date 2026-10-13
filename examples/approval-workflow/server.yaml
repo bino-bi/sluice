@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+policies:
+  directory: "./policies.d"
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"
+
+# --8<-- [start:approval]
+approval:
+  # The accept and reject links in the webhook start with this URL.
+  publicBaseUrl: "http://localhost:8080"
+  # A held query waits this long for a decision. Then it answers ERR_APPROVAL_PENDING.
+  syncWait: 1s
+  # An approval without a decision expires after this time.
+  requestTtl: 15m
+  # After the accept, the query must run within this time.
+  grantTtl: 5m
+  webhooks:
+    - url: "http://localhost:8090/"
+# --8<-- [end:approval]

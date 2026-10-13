@@ -1,0 +1,5 @@
+{
+  "code": "ERR_SYNTAX",
+  "message": "DuckDB cannot parse the statement",
+  "query_id": "<query-id>"
+}

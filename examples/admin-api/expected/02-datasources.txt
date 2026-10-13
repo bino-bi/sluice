@@ -1,0 +1,11 @@
+{
+  "datasources": [
+    {
+      "name": "shop",
+      "type": "sqlite",
+      "healthy": true,
+      "last_check": "<time>",
+      "schema_pulled_at": "<time>"
+    }
+  ]
+}

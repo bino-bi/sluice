@@ -1,0 +1,7 @@
+{
+  "version": "<version>",
+  "commit": "<commit>",
+  "build_time": "<time>",
+  "go": "<go-version>",
+  "parser_version": "pg_query_go/v6 proto=170007"
+}

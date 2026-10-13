@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: reject-select-star
+  priority: 100
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+  reject:
+    rules:
+      - name: no-select-star
+        expression: "query.has_select_star == true"
+        message: "name the columns you need"

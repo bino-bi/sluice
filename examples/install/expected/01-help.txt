@@ -1,0 +1,23 @@
+SQL access-policy gateway
+
+Usage:
+  sluice [command]
+
+Available Commands:
+  apikey      Manage API-key hashes
+  audit       Inspect sluice audit logs
+  budget      Inspect per-subject query budgets
+  completion  Generate the autocompletion script for the specified shell
+  config      Inspect and validate sluice configuration
+  datasource  Inspect configured data sources
+  help        Help about any command
+  mcp         Run the MCP server for AI agents (stdio by default)
+  policy      Inspect, validate, and explain policies
+  schema      Inspect the policy DSL schema
+  serve       Start the sluice server
+  version     Print sluice build identity
+
+Flags:
+  -h, --help   help for sluice
+
+Use "sluice [command] --help" for more information about a command.

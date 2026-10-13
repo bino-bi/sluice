@@ -1,0 +1,7 @@
+{
+  "tuple_key": {
+    "user": "user:bob",
+    "relation": "viewer",
+    "object": "table:shop.main.orders"
+  }
+}

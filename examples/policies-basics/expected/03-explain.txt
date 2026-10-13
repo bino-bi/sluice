@@ -1,0 +1,22 @@
+{
+  "subject": "alice",
+  "resource": "shop.main.customers",
+  "matched": [
+    {
+      "kind": "SqlAccessPolicy",
+      "name": "allow-analysts",
+      "priority": 100
+    }
+  ],
+  "rejected": null,
+  "effective": {
+    "decision": "allow"
+  },
+  "shadow": [
+    {
+      "kind": "SqlAccessPolicy",
+      "name": "deny-customers",
+      "priority": 500
+    }
+  ]
+}

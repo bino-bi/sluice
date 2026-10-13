@@ -1,0 +1,21 @@
+event: message
+data: {
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "ACL_DENIED: no SqlAccessPolicy matched (default-deny) (query_id=<id>)"
+      }
+    ],
+    "structuredContent": {
+      "columns": null,
+      "query_id": "",
+      "row_count": 0,
+      "rows": null,
+      "truncated": false
+    },
+    "isError": true
+  }
+}

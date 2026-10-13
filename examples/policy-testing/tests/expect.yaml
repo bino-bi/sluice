@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: CC-BY-4.0
+schema:
+  shop.main.customers: [id, name, email]
+  shop.main.suppliers: [id, phone_home, phone_work]
+
+cases:
+  # --8<-- [start:allow]
+  - name: a row filter and the rewritten SQL
+    identity: { subject: alice, groups: [analysts], claims: { tenantId: acme } }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      filters: ["shop.main.orders"]
+      applied: ["SqlAccessPolicy/allow-analysts", "RowFilterPolicy/filter-tenant"]
+      rewrittenSql: >-
+        SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
+        WHERE sluice_src.tenant_id = $1) orders
+  # --8<-- [end:allow]
+
+  # --8<-- [start:masks]
+  - name: a SQL mask and a post-query mask
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id, name, email FROM shop.main.customers"
+    expect:
+      outcome: allow
+      masks: ["shop.main.customers.email=null", "shop.main.customers.name=fake"]
+      postMasks: ["shop.main.customers.name=fake"]
+      rewrittenSqlContains: ["NULL AS email"]
+  # --8<-- [end:masks]
+
+  # --8<-- [start:deny]
+  - name: a deny policy
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT employee FROM shop.main.salaries"
+    expect:
+      outcome: deny
+      denyPolicy: deny-salaries
+      errorCode: ACL_DENIED
+
+  - name: a reject rule
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM shop.main.invoices UNION SELECT id FROM shop.main.orders"
+    expect:
+      outcome: reject
+      rejections: ["reject-union/no-union"]
+      errorCode: ACL_REJECTED
+
+  - name: a statement that the rewrite refuses
+    identity: { subject: alice, groups: [analysts] }
+    sql: "EXPLAIN SELECT email FROM shop.main.customers"
+    expect:
+      outcome: allow
+      errorCode: ERR_UNSUPPORTED_SYNTAX
+  # --8<-- [end:deny]
+
+  - name: a mask is listed with the column pattern of its policy
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id, phone_home FROM shop.main.suppliers"
+    expect:
+      outcome: allow
+      masks: ["shop.main.suppliers.phone_*=null"]
+
+  - name: SQL that does not parse counts as a deny
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELEC id FROM shop.main.orders"
+    expect:
+      outcome: deny

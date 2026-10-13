@@ -1,0 +1,11 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["name", "ssn"],
+  "rows": [
+    ["Anna", "111-22-3333"],
+    ["Bernd", "222-33-4444"],
+    ["Chloe", "333-44-5555"]
+  ],
+  "row_count": 3,
+  "truncated": false
+}

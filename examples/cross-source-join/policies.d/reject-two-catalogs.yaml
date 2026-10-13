@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Contractors may read one catalog per query.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: one-catalog
+  priority: 200
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["contractors"]
+  reject:
+    rules:
+      - name: no-second-catalog
+        expression: "size(query.catalogs) > 1"
+        message: "read one data source per query"

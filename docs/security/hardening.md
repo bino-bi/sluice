@@ -1,151 +1,57 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Hardening checklist
+# Hardening
 
-Walk this list before serving production data. Most items map directly to a
-config field in [`sluice.yaml`](../reference/configuration.md) or a policy in
-your `policies.d/`.
+Check these settings before production use.
 
-## Process
+## Example
 
-- [ ] Run as a non-root user. The repository's `Dockerfile` builds a
-      distroless image pinned to `nonroot:nonroot` (uid 65532); replicate
-      that in your own builds.
-- [ ] Mount the policy and datasource directories read-only (`:ro` in
-      Docker, `readOnly: true` in Kubernetes).
-- [ ] Keep secret files strict: Sluice **refuses** to read a `secret://file`
-      target that is group- or world-writable and warns when it is
-      world-readable. `chmod 0600` is the safe default.
-- [ ] Give the audit directory its own persistent volume (created `0750`,
-      files `0640`).
-
-## Network
-
-- [ ] Enable TLS on the REST listener (`rest.tls.certFile` /
-      `rest.tls.keyFile`) or terminate TLS at a proxy in front of it. Sluice
-      logs a warning when serving plain HTTP.
-- [ ] Bind the admin listener (`admin.listen`, default `:9091`) to a private
-      interface. It carries `/admin/*` and `/metrics` — never expose it to
-      the internet.
-- [ ] Set a strong admin token. An empty token boots in dev mode with only a
-      logged warning between you and an open admin plane.
-
-### Mutual TLS
-
-Setting `rest.tls.clientCA` to a CA bundle (PEM) requires every client to
-present a certificate signed by that CA — the handshake fails otherwise
-(`RequireAndVerifyClientCert`, TLS 1.2 floor). The admin listener takes
-the same block under `admin.tls` (server cert/key, optional `clientCA`)
-on top of its bearer token.
+Goal: a daily budget for one API key.
 
 ```yaml
-rest:
-  tls:
-    certFile: /etc/sluice/tls/server.pem
-    keyFile: /etc/sluice/tls/server-key.pem
-    clientCA: /etc/sluice/tls/clients-ca.pem
-admin:
-  tls:
-    certFile: /etc/sluice/tls/admin.pem
-    keyFile: /etc/sluice/tls/admin-key.pem
+--8<-- "examples/hardening/policies.d/binding-report-bot.yaml:2"
 ```
 
-A `tls` block must carry both `certFile` and `keyFile`, and unreadable
-files abort startup before the listener binds. mTLS here is
-**transport-level gating only**: the client certificate is not mapped to
-a subject — requests still authenticate via JWT or API key
-(certificate-derived identity is on the roadmap).
-
-## Credentials
-
-- [ ] Set `identity.apiKeyPepper` to a `secret://` reference. Without it,
-      API-key authentication is disabled entirely.
-- [ ] Pass the admin token via the environment
-      (`SLUICE_ADMIN__TOKEN=...`) rather than writing it into `sluice.yaml`.
-- [ ] For JWT bindings, pin `issuer`, `audience`, **and** `jwksUrl` in each
-      `SubjectBinding` — never trust `iss` alone.
-- [ ] Use read-only database credentials for every `DataSource`
-      (`credentialsRef` via `secret://`). Sluice attaches sources
-      `READ_ONLY`, but a least-privilege upstream grant is defense in depth.
-- [ ] For `s3`, pin `allowedPaths` to the minimum set of globs; for
-      `http`, list only the exact URLs you need. Both lists double as the
-      DuckDB external-access carve-out (`allowed_directories` /
-      `allowed_paths`): everything outside them — other URLs, the local
-      filesystem — stays unreadable even at query time.
-- [ ] For `http` sources with `headersRef`, keep one datasource per
-      credential: the headers are scoped per URL origin, but every origin
-      in one manifest receives the same header set.
-- [ ] Plan rotation up front — see [Key rotation](key-rotation.md).
-
-## Audit
-
-- [ ] Keep `audit.failClosed: true` (the default). Queries that cannot be
-      audited return `ERR_AUDIT_UNAVAILABLE` instead of leaking unrecorded.
-- [ ] Pin `audit.file.genesis` to a stable secret so the hash chain stays
-      verifiable across redeploys.
-- [ ] Run `sluice audit verify --anchor ...` on a schedule and alert on
-      `sluice_audit_dropped_total` and `sluice_audit_write_errors_total`.
-      Details in [Audit trail](audit.md).
-
-## Policies
-
-- [ ] Put a rate limit **and** a budget on every agent-facing
-      `SubjectBinding`:
+In the server config:
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SubjectBinding
-metadata:
-  name: report-bot
-spec:
-  apiKeys:
-    - id: report-bot
-      hashRef: secret://env/REPORT_BOT_KEY_HASH
-      groups: ["agents"]
-  rateLimit:
-    rps: 5
-    burst: 10
-  budget:
-    cpuSecondsPerDay: 600
-    rowsPerDay: 1000000
+--8<-- "examples/hardening/server.yaml:budget"
 ```
 
-- [ ] Add a global `QueryRewritePolicy` backstop so no statement runs
-      unbounded, even where nothing more specific matches:
+The client sends this query twice. The second answer:
 
-```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRewritePolicy
-metadata:
-  name: global-backstop
-  priority: 10
-spec:
-  match:
-    any:
-      - resources:
-          tables: ["**"]
-  rewrite:
-    limit:
-      max: 10000
-    timeout: 15s
+```bash
+--8<-- "examples/hardening/steps/02-over-budget.sh"
 ```
 
-- [ ] Verify default-deny in CI with a [policy test](../policies/testing.md)
-      that asserts an unmatched subject is denied:
-
-```yaml
-# policies.d/tests/default-deny.yaml
-cases:
-  - name: unknown subject is denied
-    identity:
-      subject: nobody
-    sql: SELECT id FROM shop.main.customers
-    expect:
-      outcome: deny
-      errorCode: ACL_DENIED
+```json
+--8<-- "examples/hardening/expected/02-over-budget.txt"
 ```
 
-- [ ] Roll new enforcement policies out with `enforcementMode: DryRun`
-      first, watch the audit log for would-be denials, then promote to
-      `Enforce`. See [Configuration reload](../operations/hot-reload.md) for
-      the zero-downtime path.
+What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice refused the second query.
+
+## Checklist
+
+| Setting | Why | Value |
+|---|---|---|
+| `admin.token` | Without it the admin API accepts every request | In the server config file. `SLUICE_ADMIN__TOKEN` alone does not set it |
+| `admin.listen` | Serves the admin API and `/metrics` | A private address |
+| `rest.tls`, `admin.tls` | REST and admin serve plain HTTP by default | See [Deployment](../operations/deployment.md) |
+| `mcp.listen` | MCP over HTTP: no `tls` setting, no rate limit before login | A TLS proxy in front, or stdio |
+| `rest.tls.clientCA` | Adds a client certificate check. Login stays required | Your CA bundle |
+| `identity.apiKeyPepper` | API keys do not work without the [pepper](../reference/glossary.md) | A `secret://` reference |
+| Secret files | Sluice refuses files that group or others can write | `chmod 0600` |
+| `audit.file.path`, `audit.file.genesis` | Defaults: a temp directory, a [genesis](../reference/glossary.md) built from host name and build commit | A fixed directory, a `secret://` reference |
+| JWT subject binding: `issuer`, `audience`, `jwksUrl` | The audience is checked only when set | Set all three |
+| Subject binding: `rateLimit`, `budget` | Both need `claims.subjectId` or `issuer`. Budgets also need `budget.enabled: true` | See the example |
+| `resources` in every allow policy | Without `resources`, an allow policy covers every table and allows `SET`. After one `SET`, a table name without catalog gets around policies that name a catalog or schema without a wildcard, for every subject | List catalog, schema and table, the catalog without a wildcard |
+| `QueryRewritePolicy` on `tables: ["**"]` | Caps result rows and run time of every query. One aggregate row can hold a whole table | See [Rejects and rewrites](../policies/guardrails.md) |
+| `credentialsRef` of a data source | Sluice only reads | A read-only database user |
+| `s3` `bucket`, `http` `urls` | DuckDB can read the whole bucket and every listed URL | Only what clients need |
+| `headersRef` | Every URL of the data source gets the same headers | One data source per credential |
+| Default deny | A policy change must not open a table | A [policy test](../policies/testing.md) that expects `deny` |
+
+## See also
+
+- [Threat model](threat-model.md)
+- [Key rotation](key-rotation.md)

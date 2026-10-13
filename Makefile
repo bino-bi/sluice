@@ -5,6 +5,8 @@
 
 GO           ?= go
 GOLANGCI     ?= golangci-lint
+PYTHON       ?= python3
+MKDOCS       ?= mkdocs
 BIN_DIR      ?= ./bin
 BIN          ?= $(BIN_DIR)/sluice
 
@@ -43,7 +45,7 @@ LDFLAGS := \
 
 .PHONY: all build build-static libduckdb duckdb-extensions test test-integration test-static \
         test-fuzz bench coverage lint fmt vet tidy clean clean-libduckdb spdx \
-        docs-generate docs-check docs-serve release-snapshot help
+        docs-generate docs-check docs-update docs-serve release-snapshot help
 
 all: fmt vet lint test build
 
@@ -122,24 +124,37 @@ spdx:
 
 # Regenerate auto-built reference pages under docs/reference/ from the
 # Go source of truth. Each scripts/gen-*-docs.go is a //go:build ignore
-# program run with `go run`. cli.md stays hand-maintained until the
-# cobra construction is extracted from cmd/sluice (package main blocks
-# reflection-based discovery from a script).
-docs-generate:
+# program run with `go run`. cli.md comes from the help text of the
+# built binary (package main blocks reflection-based discovery from a
+# script).
+docs-generate: build
 	$(GO) run scripts/gen-errorcodes-docs.go -out docs/reference/error-codes.md
 	$(GO) run scripts/gen-policy-docs.go -out docs/reference/policy-schema.md
 	$(GO) run scripts/gen-metrics-docs.go -out docs/reference/metrics.md
 	$(GO) run scripts/gen-config-docs.go -out docs/reference/configuration.md
+	$(GO) run scripts/gen-cli-docs.go -sluice $(BIN) -out docs/reference/cli.md
 
-# CI-side drift gate: re-runs every generator with -check and fails when
-# the committed file differs from the generator's current output. Wired
-# into docs-deploy.yaml so PRs that touch pkg/errors / apitypes / metric
-# definitions / ServerConfig must regenerate.
-docs-check:
+# Docs gate, run by .github/workflows/docs-check.yaml. Fails when
+#   - a generated reference page differs from its generator's output,
+#   - an example under examples/ fails or prints something else than its
+#     golden files in examples/<name>/expected/ (see examples/README.md),
+#   - a page breaks a rule of docs-style.md, or
+#   - the site does not build with --strict (broken link, missing snippet).
+# Needs python3 with docs/requirements.txt installed.
+docs-check: build
 	$(GO) run scripts/gen-errorcodes-docs.go -check -out docs/reference/error-codes.md
 	$(GO) run scripts/gen-policy-docs.go -check -out docs/reference/policy-schema.md
 	$(GO) run scripts/gen-metrics-docs.go -check -out docs/reference/metrics.md
 	$(GO) run scripts/gen-config-docs.go -check -out docs/reference/configuration.md
+	$(GO) run scripts/gen-cli-docs.go -check -sluice $(BIN) -out docs/reference/cli.md
+	$(PYTHON) scripts/docs-examples.py --sluice $(BIN)
+	$(PYTHON) scripts/docs-style-check.py
+	$(MKDOCS) build --strict
+
+# Run the examples and rewrite their golden files from the real output.
+# EXAMPLE=<name> limits the run to one example.
+docs-update: build
+	$(PYTHON) scripts/docs-examples.py --sluice $(BIN) --update $(EXAMPLE)
 
 # Serve the mkdocs site locally at http://127.0.0.1:8000 for writers.
 # Requires `pip install mkdocs-material` — see docs-deploy.yaml for the
@@ -193,6 +208,8 @@ help:
 	@echo "  tidy              go mod tidy"
 	@echo "  spdx              scripts/check-spdx.sh"
 	@echo "  docs-generate     regenerate auto-built docs/reference pages"
+	@echo "  docs-check        generated pages, examples vs golden output, style, strict build"
+	@echo "  docs-update       rewrite example golden output (EXAMPLE=<name> for one)"
 	@echo "  docs-serve        serve the mkdocs site locally at :8000"
 	@echo "  release-snapshot  goreleaser snapshot build (no publish)"
 	@echo "  clean             remove build artefacts (keeps third_party/libduckdb)"

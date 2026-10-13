@@ -144,7 +144,7 @@ Or run the containerized example — the compose file pulls the published image 
 
 ```bash
 cd examples/hello-sluice
-sqlite3 data/shop.db < seed.sql
+python3 ../seed.py seed.sql data/shop.db
 docker compose up
 ```
 
@@ -185,3 +185,15 @@ Every source file carries an SPDX header; see [NOTICE](NOTICE) for attribution.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions are accepted under the DCO (`git commit -s`); run `make all` (fmt → vet → lint → test → build) before opening a PR.
+
+## AI usage disclaimer
+
+This project is developed with the help of AI tools. AI is used to:
+
+- help write the documentation and large parts of the code comments
+- help write release notes and changelog entries
+- generate the examples under `examples/`
+- perform small refactorings, code adjustments and style guide enforcement
+- review the codebase to check that it matches the docs, the threat model, the roadmap and similar documents
+
+This lets the maintainer, a solo developer, focus on the code and the core problem. The maintainer reviews all AI-generated text, examples and code changes before they are merged.

@@ -1,0 +1,33 @@
+{
+  "subject": "alice",
+  "resource": "shop.main.customers",
+  "matched": [
+    {
+      "kind": "SqlAccessPolicy",
+      "name": "allow-analysts",
+      "priority": 100
+    },
+    {
+      "kind": "RowFilterPolicy",
+      "name": "filter-tenant",
+      "priority": 80
+    },
+    {
+      "kind": "ColumnMaskPolicy",
+      "name": "mask-email",
+      "priority": 50
+    }
+  ],
+  "rejected": null,
+  "effective": {
+    "decision": "allow",
+    "row_filters": ["shop.main.customers"],
+    "column_masks": [
+      {
+        "column": "shop.main.customers.email",
+        "mask_type": "null",
+        "policy": "mask-email"
+      }
+    ]
+  }
+}

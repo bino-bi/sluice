@@ -1,0 +1,3 @@
+policy: snapshot invalid: QueryRewritePolicy/limit-rows: spec.rewrite.limit.max: must be in [1, 2147483647], got 0
+1 policy compile error(s)
+[exit status 3]

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: CC-BY-4.0
 apiVersion: sluice.bino.bi/v1alpha1
 kind: SqlAccessPolicy
 metadata: { name: allow-analysts, priority: 0 }
@@ -8,6 +9,7 @@ spec:
       - subjects: { groups: [analysts] }
         resources: { tables: ["*"] }
 ---
+# --8<-- [start:approval]
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ApprovalPolicy
 metadata: { name: approve-pii-reads, priority: 100 }
@@ -19,4 +21,5 @@ spec:
     columnsAccessed: ["ssn", "salary*"]
     predicates:
       - { column: "country", op: "=", value: "de" }
-  reason: "PII columns on people require a data-steward sign-off"
+  reason: "PII columns on people need the approval of a data steward"
+# --8<-- [end:approval]

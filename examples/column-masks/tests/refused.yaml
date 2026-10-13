@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# What Sluice refuses on a table with a post-query mask.
+schema:
+  hr.main.employees: [id, name, phone, birth_date, address, ssn, card, salary, notes, email]
+
+cases:
+  - name: the column in WHERE
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id FROM hr.main.employees WHERE card LIKE '4111%'"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the column in GROUP BY
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT salary, count(*) AS n FROM hr.main.employees GROUP BY salary"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the column in ORDER BY
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id, name FROM hr.main.employees ORDER BY name"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the column inside an expression
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id, upper(name) AS n FROM hr.main.employees"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the column in a join condition
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT a.id FROM hr.main.employees a JOIN hr.main.employees b ON a.card = b.card"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the column in a subquery
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id FROM (SELECT id, card FROM hr.main.employees) t"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a star in a subquery
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id FROM (SELECT * FROM hr.main.employees) t"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a star over a subquery
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT * FROM (SELECT id FROM hr.main.employees) t"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a star over a CTE
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "WITH t AS (SELECT id FROM hr.main.employees) SELECT * FROM t"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: named columns over a subquery
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT t.id FROM (SELECT id FROM hr.main.employees) t"
+    expect: { outcome: allow, postMasks: [] }
+
+  - name: the column in a CTE
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "WITH t AS (SELECT id, card FROM hr.main.employees) SELECT id FROM t"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: SELECT DISTINCT with the column
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT DISTINCT name FROM hr.main.employees"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the alias of the column in another clause
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT name AS n, id FROM hr.main.employees WHERE n = 'x'"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the position of the column in ORDER BY
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id, name FROM hr.main.employees ORDER BY 2"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a USING join
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT a.id FROM hr.main.employees a JOIN hr.main.employees b USING (id)"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a NATURAL join
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT a.id FROM hr.main.employees a NATURAL JOIN hr.main.employees b"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: the table alias as a value
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT e FROM hr.main.employees e"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a column alias list on the table
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT x.a FROM hr.main.employees AS x(a, b)"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a column by position
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT #3 FROM hr.main.employees"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: a column with its schema
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT main.employees.id FROM hr.main.employees"
+    expect: { errorCode: ERR_MASK_UNSUPPORTED_CONTEXT }
+
+  - name: EXPLAIN on a masked table
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "EXPLAIN SELECT id FROM hr.main.employees"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }

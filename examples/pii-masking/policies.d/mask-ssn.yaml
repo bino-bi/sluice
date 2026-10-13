@@ -1,8 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# ssn → constant "REDACTED". This is the strongest mask short of `null`:
-# the value is an opaque placeholder that cannot be reversed even with
-# access to the corpus. For production workloads prefer the `hash`
-# provider (v0.2) which preserves joinability without leaking plaintext.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata:
@@ -16,7 +12,9 @@ spec:
           schemas: ["main"]
           tables: ["customers"]
           columns: ["ssn"]
+  # --8<-- [start:mask]
   mask:
     type: "constant"
     args:
       value: "REDACTED"
+  # --8<-- [end:mask]

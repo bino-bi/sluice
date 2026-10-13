@@ -1,0 +1,14 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "name", "price_cents"],
+  "rows": [
+    [1, "Ceramic Mug", 1299],
+    [2, "A5 Notebook", 799]
+  ],
+  "row_count": 2,
+  "truncated": true,
+  "warning": {
+    "code": "ERR_RESULT_TRUNCATED",
+    "message": "result truncated"
+  }
+}

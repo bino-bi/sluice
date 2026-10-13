@@ -1,145 +1,107 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# CEL conditions
+# Conditions
 
-Sluice embeds [CEL](https://cel.dev) in three places, each with a different contract:
+`spec.conditions` holds [CEL](../reference/glossary.md) expressions. A policy applies only when its [selector](matching.md) matches and every condition is true.
 
-1. **`spec.conditions`** — available on every enforcement kind. Each named expression must
-   type-check as `bool` at load time. At evaluation time, *all* conditions must be true for the
-   policy to apply; if any expression errors at runtime, the **whole request is denied** — an
-   erroring condition is never treated as merely false.
-2. **`QueryRejectPolicy` rule expressions** — `spec.reject.rules[].expression`. A rule with an
-   empty expression always fires; otherwise the rule fires when the expression is true. An
-   evaluation error denies the request.
-3. **`RowFilterPolicy` `spec.filter.expression`** — a restricted subset that is *lowered to SQL*
-   at compile time, never evaluated in-process (see below).
+## Example
 
-## Variables
-
-Conditions and reject rules see three variables:
-
-| `subject.` | `request.` | `query.` |
-| ---------- | ---------- | -------- |
-| `id` | `remote_ip` | `has_select_star`, `is_aggregate` |
-| `issuer` | `user_agent` | `has_cte`, `is_recursive_cte`, `has_union` |
-| `email` | `headers` (map) | `has_limit`, `limit`, `has_order_by` |
-| `groups` (list) | | `has_where`, `where_columns`, `group_by_columns` |
-| `auth_method` | | `joins` (count), `catalogs`, `tables` |
-| `claims` (map) | | |
-
-`query.tables` lists the referenced tables as `catalog.schema.table` keys; `subject.auth_method`
-is one of `jwt`, `api_key`, `admin_token`, `none`.
-
-!!! note "There is no `now` variable"
-    Policy decisions may be served from the rewrite cache, which is keyed on the policy snapshot,
-    the SQL, and the identity. A time-dependent expression would make cached decisions wrong, so
-    wall-clock time is deliberately not exposed.
-
-!!! tip "Guard claim lookups"
-    Accessing a missing map key is a CEL runtime error, and a runtime error denies the request.
-    That is fail-closed but rarely what you want to express — write
-    `'tier' in subject.claims && subject.claims.tier == 'gold'` to make the absent-claim case an
-    ordinary `false`.
-
-## The row-filter subset
-
-`filter.expression` compiles into the same parameterised predicate tree as `filter.predicate` —
-CEL never renders SQL text, and values bind as `$N` parameters. It sees `subject`, `request`, and
-`row` (whose field selections become column references). Only these forms are accepted:
-
-| Allowed | Example |
-| ------- | ------- |
-| `row.<col>` compared with `== != < <= > >=` to a literal or a `subject.*`/`request.*` reference | `row.tenant_id == subject.claims.tenant_id` |
-| `&&`, `\|\|`, `!` | `row.region == 'eu' && !(row.tier == 'internal')` |
-| `row.<col> in [literals]` | `row.status in ['open', 'pending']` |
-| `row.<col>.startsWith/endsWith/contains("literal")` | `row.sku.startsWith('EU-')` |
-
-Rejected at load time: arithmetic, function calls, macros (`has`, `exists`, …), any `query.*`
-reference, and dynamic arguments to the string matchers. `sluice policy validate` catches all of
-these before the policy can go live.
-
-## Copy-paste conditions
+Only subjects with the claim `tier: gold` read `reports`.
 
 ```yaml
-# fragment — conditions blocks to attach to any policy spec
-conditions:
-  # Only apply this policy to members of a group.
-  - name: analysts-only
-    expression: "'analysts' in subject.groups"
-
-  # Claim-tier gate, safe against a missing claim.
-  - name: gold-tier
-    expression: "'tier' in subject.claims && subject.claims.tier == 'gold'"
-
-  # Only apply to requests from JWT-authenticated subjects.
-  - name: jwt-only
-    expression: "subject.auth_method == 'jwt'"
-
-  # Region gate driven by a claim list, guarded the same way.
-  - name: eu-region
-    expression: "'allowed_regions' in subject.claims && 'eu' in subject.claims.allowed_regions"
+--8<-- "examples/conditions/policies.d/allow-reports-gold.yaml:2"
 ```
 
-A complete `QueryRejectPolicy` using shape and request facts:
+The [suite](testing.md):
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRejectPolicy
-metadata:
-  name: query-guardrails
-  priority: 100
-spec:
-  match:
-    any:
-      - resources: { tables: ["*"] }
-  reject:
-    rules:
-      - name: no-select-star-with-joins
-        expression: "query.has_select_star && query.joins > 0"
-        message: "SELECT * is not allowed in joins; name the columns you need"
-        code: ACL_REJECTED
-      - name: internal-network-only
-        expression: "!request.remote_ip.startsWith('10.')"
-        message: "queries must come from the internal network"
+--8<-- "examples/conditions/tests/claim.yaml:2"
 ```
 
-!!! tip "Prefer `ipRanges` for network checks"
-    The `internal-network-only` rule above is only a string-prefix check. For real CIDR matching,
-    use the [`subjects.ipRanges` selector field](matching.md#subject-fields) instead and keep CEL
-    for what selectors cannot express.
+```bash
+--8<-- "examples/conditions/steps/01-test-claim.sh"
+```
 
-## The same tenant filter, twice
+```text
+--8<-- "examples/conditions/expected/01-test-claim.txt"
+```
 
-Both forms compile to the identical parameterised SQL predicate
-(`... WHERE tenant_id = $1`) — pick whichever reads better to your team:
+**What happened:** only the first subject passes the condition. No policy allows the other two subjects, so Sluice denies them.
+
+## Fields
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `conditions[].name` | string | none | Shown in error messages. |
+| `conditions[].expression` | string | required | CEL expression that returns a boolean. |
+
+Sluice checks every expression at load. A value alone, such as `query.has_cte`, is a load error. Write `query.has_cte == true`.
+
+### Variables
+
+| Variable | Type | Value |
+|---|---|---|
+| `subject.id`, `subject.email`, `subject.issuer` | string | Id, email and issuer of the subject. |
+| `subject.groups` | list | Groups of the subject. |
+| `subject.claims` | map | Claims of the subject. |
+| `subject.auth_method` | string | `jwt` or `api_key`. |
+| `query.tables` | list | Tables as `catalog.schema.table`, lower case. A missing part stays empty: `..orders`. |
+| `query.catalogs` | list | Catalogs that the query reads. |
+| `query.joins` | int | Count of `JOIN` keywords, not of comma joins. |
+| `query.has_limit`, `query.limit` | boolean, int | The query has a `LIMIT`, and its value, or 0 when that is not a plain number, such as `500 + 1` or `'500'`. |
+| `query.has_where`, `query.where_columns` | boolean, list | The query has a `WHERE`, and its columns. |
+| `query.is_aggregate`, `query.group_by_columns` | boolean, list | The query aggregates, and its `GROUP BY` columns. |
+| `query.has_select_star`, `query.has_order_by`, `query.has_union` | boolean | The query has `*`, `ORDER BY`, or a `UNION`, `INTERSECT` or `EXCEPT`. |
+| `query.has_cte`, `query.is_recursive_cte` | boolean | The query has `WITH` or `WITH RECURSIVE`. |
+
+The rules of a [`QueryRejectPolicy`](guardrails.md) use the same variables. That page says more about the `query` values.
+
+## More examples
+
+### Check the query
+
+This allow needs a `LIMIT` and a `query.limit` of at most 100.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: RowFilterPolicy
-metadata: { name: tenant-isolation-predicate, priority: 80 }
-spec:
-  match:
-    any:
-      - resources: { tables: ["orders"] }
-  combine: restrictive
-  filter:
-    predicate:
-      column: tenant_id
-      op: Equals
-      value: "{{ subject.claims.tenant_id }}"
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: RowFilterPolicy
-metadata: { name: tenant-isolation-cel, priority: 80 }
-spec:
-  match:
-    any:
-      - resources: { tables: ["invoices"] }
-  combine: restrictive
-  filter:
-    expression: "row.tenant_id == subject.claims.tenant_id"
+--8<-- "examples/conditions/policies.d/allow-orders-small.yaml:2"
 ```
 
-A `filter` must set exactly one of `predicate` or `expression`. If the subject has no
-`tenant_id` claim, the template cannot render and the request is denied — missing identity never
-degrades into an unfiltered query.
+```yaml
+--8<-- "examples/conditions/tests/conditions.yaml:limit"
+```
+
+A `LIMIT` that is not a plain number and a `UNION` still pass, so this is not a row limit. For that, use a [`QueryRewritePolicy`](guardrails.md).
+
+### A condition that fails
+
+A lookup of a missing claim is an error, not `false`. Sluice then denies the whole query with `ACL_DENIED`, also when another policy allows the table.
+
+```yaml
+--8<-- "examples/conditions/policies.d/mask-card-number.yaml:2"
+```
+
+```yaml
+--8<-- "examples/conditions/tests/conditions.yaml:error"
+```
+
+`sluice policy explain` shows the reason:
+
+```bash
+--8<-- "examples/conditions/steps/02-explain-error.sh"
+```
+
+```text
+--8<-- "examples/conditions/expected/02-explain-error.txt"
+```
+
+## Limits
+
+- No variable holds the current time.
+- In a `UNION`, the `query.*` values describe only the first SELECT. They do not see a `WITH`, `ORDER BY` or `LIMIT` of the whole statement. They do not see subqueries. Only `query.tables` and `query.catalogs` cover the whole statement.
+- A row filter has its own CEL form. See [Row filters](row-filters.md).
+
+## See also
+
+- [Matching](matching.md)
+- [Rejects and rewrites](guardrails.md)
+- [Testing policies](testing.md)

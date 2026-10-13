@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Invalid on purpose: the effect must be "allow" or "deny".
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: broken
+spec:
+  effect: permit
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]

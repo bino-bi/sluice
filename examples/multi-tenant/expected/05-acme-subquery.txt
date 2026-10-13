@@ -1,0 +1,9 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["orders_visible"],
+  "rows": [
+    [2]
+  ],
+  "row_count": 1,
+  "truncated": false
+}

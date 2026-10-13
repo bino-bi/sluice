@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A masked table needs its column list. The test runner has no database.
+schema:
+  shop.main.customers: [id, tenant_id, email, phone, ssn, birth_date, created_at]
+
+cases:
+  - name: email, phone and ssn are masked
+    identity: { subject: pii-analyst, groups: [analytics] }
+    sql: "SELECT id, email, phone, ssn FROM shop.main.customers"
+    expect:
+      outcome: allow
+      masks:
+        - "shop.main.customers.email=null"
+        - "shop.main.customers.phone=constant"
+        - "shop.main.customers.ssn=constant"
+      rewrittenSql: >-
+        SELECT id, email, phone, ssn
+        FROM (SELECT sluice_src.id, sluice_src.tenant_id, NULL AS email, '+1-555-REDACTED' AS phone,
+        'REDACTED' AS ssn, sluice_src.birth_date, sluice_src.created_at
+        FROM shop.main.customers sluice_src) customers

@@ -1,0 +1,2 @@
+server config OK: server.yaml
+policies OK: policies.d (3 objects, digest <digest>)

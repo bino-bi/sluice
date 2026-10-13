@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-reports-gold
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["reports"]
+  conditions:
+    # The "in" test guards the lookup: a missing claim gives false, not an error.
+    - name: gold-tier
+      expression: "'tier' in subject.claims && subject.claims.tier == 'gold'"

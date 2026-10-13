@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# --8<-- [start:all]
+# A masked table needs its column list. The test runner has no database.
+schema:
+  hr.main.employees: [id, name, phone, birth_date, address, ssn, card, salary, notes, email]
+
+cases:
+  - name: every column gets its mask
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT * FROM hr.main.employees"
+    expect:
+      outcome: allow
+      rewrittenSqlContains:
+        - "NULL AS ssn"
+        - "'REDACTED' AS address"
+        - "regexp_replace(sluice_src.birth_date::varchar, $4, $5, 'g') AS birth_date"
+      # Post-query masks. The SQL reads the real value.
+      postMasks:
+        - "hr.main.employees.card=fpe"
+        - "hr.main.employees.email=hash"
+        - "hr.main.employees.name=fake"
+        - "hr.main.employees.salary=jitter"
+  # --8<-- [end:all]
+
+  # --8<-- [start:one-mask]
+  - name: each column has one mask
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id FROM hr.main.employees"
+    expect:
+      outcome: allow
+      masks:
+        - "hr.main.employees.address=constant"
+        - "hr.main.employees.birth_date=regex"
+        - "hr.main.employees.card=fpe"
+        - "hr.main.employees.email=hash"
+        - "hr.main.employees.name=fake"
+        - "hr.main.employees.notes=truncate"
+        # mask-phone and hide-phone match. mask-phone has the higher priority.
+        - "hr.main.employees.phone=partial"
+        - "hr.main.employees.salary=jitter"
+        - "hr.main.employees.ssn=null"
+  # --8<-- [end:one-mask]
+
+  - name: a SQL mask works in WHERE and ORDER BY
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id, phone FROM hr.main.employees WHERE phone LIKE '%0101' ORDER BY phone"
+    expect:
+      outcome: allow
+      postMasks: []
+
+  - name: a post-query mask works with an alias
+    identity: { subject: hr-analyst, groups: [analysts] }
+    sql: "SELECT id, salary AS pay FROM hr.main.employees"
+    expect:
+      outcome: allow
+      postMasks: ["hr.main.employees.salary=jitter"]

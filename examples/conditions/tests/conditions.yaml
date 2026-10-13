@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: CC-BY-4.0
+schema:
+  shop.main.payments: [id, card_number, amount_cents]
+
+cases:
+  # --8<-- [start:limit]
+  - name: a query with a small limit is allowed
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 50"
+    expect:
+      outcome: allow
+
+  - name: without a limit the policy does not apply
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: deny
+
+  - name: a limit that is not a constant counts as 0
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 500 + 1"
+    expect:
+      outcome: allow
+
+  - name: in a union only the first SELECT counts
+    identity: { subject: ines, groups: [interns] }
+    sql: "(SELECT id FROM shop.main.orders LIMIT 50) UNION ALL SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+  # --8<-- [end:limit]
+
+  - name: a large limit does not pass the condition
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 500"
+    expect:
+      outcome: deny
+
+  - name: LIMIT ALL counts as 0
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders LIMIT ALL"
+    expect:
+      outcome: allow
+
+  - name: a limit after a union is not seen
+    identity: { subject: ines, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders UNION ALL SELECT id FROM shop.main.orders LIMIT 5"
+    expect:
+      outcome: deny
+
+  # --8<-- [start:error]
+  - name: with the claim the condition decides
+    identity: { subject: carl, groups: [analysts], claims: { clearance: low } }
+    sql: "SELECT id, card_number FROM shop.main.payments"
+    expect:
+      outcome: allow
+      masks: ["shop.main.payments.card_number=null"]
+
+  - name: without the claim the condition fails and the query is denied
+    identity: { subject: bob, groups: [analysts] }
+    sql: "SELECT id, card_number FROM shop.main.payments"
+    expect:
+      outcome: deny
+      errorCode: ACL_DENIED
+  # --8<-- [end:error]
+
+  - name: high clearance reads the column unmasked
+    identity: { subject: hugo, groups: [analysts], claims: { clearance: high } }
+    sql: "SELECT id, card_number FROM shop.main.payments"
+    expect:
+      outcome: allow
+      rewrittenSql: "SELECT id, card_number FROM shop.main.payments"

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: CC-BY-4.0
+schema:
+  shop.crm.leads: [id, email]
+
+cases:
+  # --8<-- [start:group]
+  - name: an analyst reads hashed email addresses
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT email FROM shop.crm.leads"
+    expect:
+      outcome: allow
+      masks: ["shop.crm.leads.email=hash"]
+
+  - name: the sre group is excluded from the mask
+    identity: { subject: sara, groups: [sre] }
+    sql: "SELECT email FROM shop.crm.leads"
+    expect:
+      outcome: allow
+      rewrittenSql: "SELECT email FROM shop.crm.leads"
+  # --8<-- [end:group]
+
+  - name: hr reads a table that is not excluded
+    identity: { subject: hank, groups: [hr] }
+    sql: "SELECT id FROM shop.hr.employees"
+    expect:
+      outcome: allow
+
+  - name: the excluded table is not allowed
+    identity: { subject: hank, groups: [hr] }
+    sql: "SELECT id FROM shop.hr.salaries"
+    expect:
+      outcome: deny
+
+  - name: a join with the excluded table is denied
+    identity: { subject: hank, groups: [hr] }
+    sql: "SELECT e.id FROM shop.hr.employees e JOIN shop.hr.salaries s ON s.employee_id = e.id"
+    expect:
+      outcome: deny
+
+  - name: the reject policy applies to orders
+    identity: { subject: alice, groups: [analysts, support] }
+    sql: "SELECT * FROM shop.main.orders"
+    expect:
+      outcome: reject
+      rejections: ["reject-select-star/no-select-star"]
+
+  - name: one excluded table drops the reject policy for the whole query
+    identity: { subject: alice, groups: [analysts, support] }
+    sql: "SELECT * FROM shop.main.orders o JOIN shop.main.tickets t ON t.order_id = o.id"
+    expect:
+      outcome: allow

@@ -1,0 +1,33 @@
+{
+  "catalogs": ["shop"],
+  "client_meta": {
+    "ticket": "T-1"
+  },
+  "decision": "allow",
+  "event_type": "query",
+  "origin": "rest",
+  "policies_applied": [
+    {
+      "kind": "SqlAccessPolicy",
+      "name": "allow-customers",
+      "priority": 100
+    }
+  ],
+  "prior_hash": "<hash>",
+  "query_id": "<query-id>",
+  "remote_ip": "<remote-ip>",
+  "rewritten_fingerprint": "73cde9d6fe78f6b1",
+  "sluice_version": "<version>",
+  "sql_fingerprint": "73cde9d6fe78f6b1",
+  "sql_sample": "SELECT id, name FROM shop.main.customers ORDER BY id",
+  "subject": {
+    "groups": ["analytics"],
+    "id": "analyst",
+    "issuer": "analyst",
+    "method": "api_key",
+    "remote_ip": "<remote-ip>"
+  },
+  "tables": ["shop.main.customers"],
+  "timestamp": "<time>",
+  "hash": "<hash>"
+}

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  - name: a deny in Audit mode does not deny
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT id FROM shop.main.customers"
+    expect:
+      outcome: allow
+      applied: ["SqlAccessPolicy/allow-analysts"]

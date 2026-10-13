@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+rest:
+  listen: ":8080"
+
+# --8<-- [start:mcp]
+mcp:
+  enabled: true
+  transport: "streamable_http"
+  listen: ":8081"
+# --8<-- [end:mcp]
+
+policies:
+  directory: "./policies.d"
+
+audit:
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

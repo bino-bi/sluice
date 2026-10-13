@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: pg
+spec:
+  type: postgres
+  # The URL holds the user and the database. The password comes from credentialsRef.
+  connection: "postgres://sluice@db.internal:5432/orders?sslmode=require"
+  credentialsRef: "secret://env/SLUICE_PG_PASSWORD"

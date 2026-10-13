@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The orders table has only a row filter, so it has no entry here.
+schema:
+  shop.main.customers: [id, name, email]
+
+cases:
+  - name: a table with only a row filter needs no entry
+    identity: { subject: alice, groups: [analysts], claims: { tenantId: acme } }
+    sql: "SELECT c.name, o.id FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id"
+    expect:
+      outcome: allow
+      filters: ["shop.main.orders"]
+      postMasks: ["shop.main.customers.name=fake"]
+
+  - name: a star with a post-query mask needs an entry for every table
+    identity: { subject: alice, groups: [analysts], claims: { tenantId: acme } }
+    sql: "SELECT * FROM shop.main.customers c JOIN shop.main.orders o ON o.customer_id = c.id"
+    expect:
+      outcome: allow
+      errorCode: ERR_MASK_UNSUPPORTED_CONTEXT

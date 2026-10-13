@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Invalid on purpose: no DataClassification defines the tag "secret".
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-secret
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          tags: ["secret"]

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: agent-shapes
+  priority: 200
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["agents"]
+  reject:
+    rules:
+      - name: no-select-star
+        expression: "query.has_select_star == true"
+        message: "list the columns you need"
+      - name: no-big-joins
+        expression: "query.joins > 2"
+        message: "use at most two JOINs"
+        code: "TOO_MANY_JOINS"

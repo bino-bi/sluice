@@ -1,0 +1,3 @@
+sluice_audit_enqueued_total{event_type="query"} 2
+sluice_audit_enqueued_total{event_type="query-result"} 1
+sluice_audit_queue_depth{sink="file"} 0

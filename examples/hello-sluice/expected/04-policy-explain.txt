@@ -1,0 +1,10 @@
+subject : hello
+resource: shop.main.customers
+decision: allow
+Kind              Name             Priority  Effect
+----              ----             --------  ------
+SqlAccessPolicy   allow-analytics  100       applied
+RowFilterPolicy   filter-tenant    80        applied
+ColumnMaskPolicy  mask-email       50        applied
+row filters:      shop.main.customers
+column mask:      shop.main.customers.email  -  null (via mask-email)

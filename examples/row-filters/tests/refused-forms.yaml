@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Each refused form, then the form to write instead.
+cases:
+  - name: EXPLAIN on a filtered table
+    identity: { subject: ana, groups: [sales] }
+    sql: "EXPLAIN SELECT id FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+
+  - name: the reserved name sluice_src
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id AS sluice_src FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+
+  - name: a column with its schema
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT main.orders.id FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a column with its table name
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT orders.id FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["orders.id"] }
+
+  - name: a table without alias whose name is a DuckDB keyword
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.show"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: the same table with an alias
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.show s"
+    expect: { outcome: allow, rewrittenSqlContains: ["FROM shop.main.show sluice_src"] }
+
+  - name: power next to another operator
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 2 * 3 ** 2 AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: integer division next to another operator
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, amount_cents // 100 + 1 AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: pow and divide
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 2 * pow(3, 2) AS x, divide(amount_cents, 100) + 1 AS y FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["pow(3, 2)", "divide(amount_cents, 100)"] }
+
+  - name: a condition in parentheses before IS NULL
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu' OR status = 'open') IS NULL"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a comparison in parentheses before IN
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu') IN (false)"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a comparison in parentheses before BETWEEN
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu') BETWEEN false AND true"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a comparison in parentheses before = ANY
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE (region = 'eu') = ANY (ARRAY[true])"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: coalesce around the condition
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE coalesce(region = 'eu' OR status = 'open') IS NULL"
+    expect: { outcome: allow, rewrittenSqlContains: ["COALESCE("] }
+
+  - name: a lambda with a comparison
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT list_filter(list_value(1, 2, 3), x -> x > 1) AS l FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: the lambda body in parentheses
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT list_filter(list_value(1, 2, 3), x -> (x > 1)) AS l FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["list_filter("] }
+
+  - name: a JSON text operator next to AND
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE status = 'open' AND '{\"a\":1}'::json ->> 'a' = '1'"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: the JSON text operator in parentheses
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id FROM shop.main.orders WHERE status = 'open' AND ('{\"a\":1}'::json ->> 'a') = '1'"
+    expect: { outcome: allow, rewrittenSqlContains: ["->>"] }
+
+  - name: EXTRACT with a plural unit
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, EXTRACT(days FROM DATE '2026-01-01') AS d FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: EXTRACT with a singular unit
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, EXTRACT(day FROM DATE '2026-01-01') AS d FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["FROM"] }
+
+  - name: a nested ARRAY without the inner keyword
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, ARRAY[[1, 2], [3, 4]] AS a FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: a nested ARRAY with the inner keyword
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, ARRAY[ARRAY[1, 2], ARRAY[3, 4]] AS a FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["ARRAY["] }
+
+  - name: a quoted DuckDB keyword as a CTE name
+    identity: { subject: ana, groups: [sales] }
+    sql: "WITH \"at\" AS (SELECT id FROM shop.main.orders) SELECT id FROM \"at\""
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+
+  - name: a PostgreSQL keyword as a named argument
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, struct_pack(\"default\" := id) AS s FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: another name for the argument
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, struct_pack(fallback := id) AS s FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["fallback := id"] }
+
+  - name: a hex number
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 0x1f AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+  - name: a hex number at the end of a select item
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 0x1f FROM shop.main.orders"
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
+  - name: an octal number
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 0o17 AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+  - name: a binary number
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, 0b11 AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+
+  - name: an interval range
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, INTERVAL '1 02' DAY TO HOUR AS i FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+  - name: the interval units inside the string
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, INTERVAL '1 day 2 hours' AS i FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["1 day 2 hours"] }
+
+  - name: a unicode escape
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, E'\\u0041' AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+  - name: a unicode string
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT id, U&'\\0041' AS x FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+
+  - name: a bare alias that DuckDB reads as a keyword
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT 1 at FROM shop.main.orders"
+    expect: { errorCode: ERR_SYNTAX }
+  - name: the alias with AS and quotes
+    identity: { subject: ana, groups: [sales] }
+    sql: "SELECT 1 AS \"at\" FROM shop.main.orders"
+    expect: { outcome: allow, rewrittenSqlContains: ["AS at"] }
+
+  - name: EXPLAIN works without a filter or mask
+    identity: { subject: guest, groups: [guests] }
+    sql: "EXPLAIN SELECT id FROM shop.main.orders"
+    expect: { outcome: allow, filters: [] }
+
+  - name: a form on a query without a filter is not checked
+    identity: { subject: guest, groups: [guests] }
+    sql: "SELECT id, 2 * 3 ** 2 AS x FROM shop.main.orders"
+    expect: { outcome: allow, filters: [] }

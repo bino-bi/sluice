@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A mask on one table also applies when the table is part of a join.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-customer-id
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+          columns: ["customer_id"]
+  mask:
+    type: "null"

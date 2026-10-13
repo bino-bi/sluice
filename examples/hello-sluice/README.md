@@ -1,153 +1,33 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # hello-sluice
 
-The shortest end-to-end demonstration of Sluice: a SQLite catalog, one allow policy, one row filter, one column mask, an API-key identity binding, and a `curl` round-trip through `POST /v1/query`.
+The smallest complete setup: a SQLite database, an allow policy, a row filter and a column mask.
 
-By the end of this example you will have:
-
-- A Sluice server running on `:8080` against a seeded SQLite database.
-- A caller identified by an API key tied to a specific tenant.
-- A query that is rewritten on the wire to (a) filter to the caller's tenant and (b) null out the `email` column.
-- An audit entry on disk, verifiable with `sluice audit verify`.
-
-## What's in this directory
-
-```
-hello-sluice/
-├── README.md                    — this file
-├── docker-compose.yaml          — one-service stack: Sluice + bind mounts
-├── server.yaml                  — ServerConfig
-├── seed.sql                     — schema + sample rows for the SQLite catalog
-├── policies.d/                  — all policy objects live in one directory
-│   ├── datasource-shop.yaml     — DataSource pointing at /data/shop.db
-│   ├── binding-apikey.yaml      — SubjectBinding with one API key
-│   ├── allow-analytics.yaml     — SqlAccessPolicy
-│   ├── filter-tenant.yaml       — RowFilterPolicy (tenant_id = {{ subject.tenantId }})
-│   └── mask-email.yaml          — ColumnMaskPolicy (null)
-└── data/                        — populated at first run with shop.db
-```
-
-> Sluice loads every `apitypes.Object` kind — `DataSource`, `SubjectBinding`,
-> and every policy kind — from the single `policies.directory`
-> configured in `server.yaml`. A separate `datasources.directory` exists
-> too; this example keeps everything in one place.
-
-## 1. Seed the SQLite database
-
-From this directory:
+## Run
 
 ```bash
-sqlite3 data/shop.db < seed.sql
+examples/hello-sluice/serve.sh
 ```
 
-This creates two tables under the `main` schema — `customers` and `orders` — with three tenants worth of sample rows.
+The script creates `data/shop.db` from `seed.sql` and starts Sluice on `http://localhost:8080`. Then run the steps from this folder, for example `bash steps/01-query.sh`.
 
-## 2. Start Sluice
+| Step | Shows |
+|---|---|
+| `steps/01-query.sh` | A query returns only the rows of the caller's tenant, with `email` masked. |
+| `steps/02-denied.sh` | A table that no policy allows is denied. |
+| `steps/03-audit-verify.sh` | The audit log chain is intact. |
+| `steps/04-policy-explain.sh` | `sluice policy explain` lists the policies that apply to the demo subject. |
+| `steps/05-tenant-rows.sh` | A query without the masked column shows the row filter alone. |
 
-### With Docker
+`expected/` holds the real output of each step. See [the examples guide](../README.md) for the layout.
+
+## Docker
 
 ```bash
+python3 ../seed.py seed.sql data/shop.db
+# The container runs as another user and writes the audit log to data/.
+chmod -R a+rwX data
 docker compose up
 ```
 
-This pulls the published image `ghcr.io/bino-bi/sluice:0.1.0-rc.2` from GitHub Container Registry — no build step, no Go toolchain needed. The service listens on `:8080` (REST) and `:9091` (admin, optional).
-
-To run your own build instead (e.g. when working on Sluice itself):
-
-```bash
-docker build -t sluice:dev ../..
-SLUICE_IMAGE=sluice:dev docker compose up
-```
-
-### Without Docker
-
-```bash
-# From the repository root:
-make build
-./bin/sluice serve \
-  --config examples/hello-sluice/server.yaml \
-  --policies-dir examples/hello-sluice/policies.d
-```
-
-You should see a log line containing `"msg":"sluice: starting"` with `"rest":":8080"`.
-
-## 3. Issue a query
-
-The example API key is `sl_demo_hello.world` — key id `sl_demo_hello`, material `world`. The identifier splits on the last `.` and treats everything to the left as the id. Its HMAC is pre-computed with pepper `hello-sluice-demo-pepper` and stored in the `SLUICE_APIKEY_HELLO_HASH` env var referenced by `policies.d/binding-apikey.yaml`.
-
-```bash
-curl -s \
-  -H "X-Api-Key: sl_demo_hello.world" \
-  -H "Content-Type: application/json" \
-  -d '{"sql":"SELECT id, email, tenant_id FROM shop.main.customers ORDER BY id"}' \
-  http://localhost:8080/v1/query | jq .
-```
-
-Expected response (trimmed):
-
-```json
-{
-  "query_id": "01HQ...",
-  "columns": ["id", "email", "tenant_id"],
-  "rows": [
-    [1, null, "acme"],
-    [2, null, "acme"]
-  ],
-  "row_count": 2,
-  "truncated": false
-}
-```
-
-Three things to notice:
-
-1. **Row filter applied.** Although `customers` has rows for three tenants, only the two rows with `tenant_id = 'acme'` are returned — the row-filter policy rewrote the statement to `WHERE tenant_id = $1` and bound `$1 = 'acme'`.
-2. **Column mask applied.** The `email` column is `null`. Sluice reads `customers` through a subquery that lists its columns with `NULL AS email`, so the rest of the query only sees the masked value.
-3. **query_id in the response.** This is the ULID of the audit record for this request.
-
-## 4. Verify the audit trail
-
-```bash
-ls data/audit/
-# audit-2026-04-20.jsonl
-
-./bin/sluice audit verify data/audit
-# chain OK (1 file(s), 3 record(s), last_hash=...)
-```
-
-The `3 records` count is the genesis record (written on startup), the access record for the query, and the `query-result` completion record written when the result stream closed.
-
-## 5. Try a denied query
-
-```bash
-curl -s \
-  -H "X-Api-Key: sl_demo_hello.world" \
-  -H "Content-Type: application/json" \
-  -d '{"sql":"SELECT * FROM shop.main.admin_users"}' \
-  http://localhost:8080/v1/query | jq .
-```
-
-The `allow-analytics` policy only grants access to `shop.main.customers` and `shop.main.orders`. Anything else falls through to the default-deny and returns:
-
-```json
-{
-  "code": "ACL_DENIED",
-  "message": "no SqlAccessPolicy matched (default-deny)",
-  "query_id": "01HQ..."
-}
-```
-
-The `query_id` in the error response appears in the audit log as a `deny` record — same hash-chain, same verifiability.
-
-## 6. Tear down
-
-```bash
-docker compose down -v
-# or just ^C if you ran `sluice serve` directly
-```
-
-## Where to go from here
-
-- `examples/multi-tenant/` — one row filter isolating multiple tenants' API keys.
-- `examples/pii-masking/` — column-mask providers in action.
-- `examples/cross-source-join/` — Postgres + S3 Parquet in a single query.
-- `docs/reference/policy-schema.md` — the full policy DSL.
+The compose file pulls the released image. `make docs-check` does not run it.

@@ -1,85 +1,33 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # multi-tenant
 
-A single Sluice deployment, one shared catalog (`customers` + `orders`),
-three tenants' worth of data in the underlying table — and two API keys
-that each see only their tenant's slice. The separation is enforced by
-one `RowFilterPolicy`, not by separate databases.
+Two tenants share one database. One `RowFilterPolicy` limits each API key to the rows of its tenant.
 
-## What this demonstrates
-
-- **Template-driven row filters.** `{{ subject.tenantId }}` binds to a
-  positional parameter at rewrite time, so the *same* policy rewrites
-  every caller's query against their own tenant value.
-- **Default-deny still applies.** A third tenant (`gamma`) has rows in
-  the table but no API key in `policies.d/` — no caller can reach that
-  data.
-- **Audit carries the subject.** Each record names the caller — subject
-  id, groups, issuer — and lists the applied `RowFilterPolicy` in
-  `policies_applied`, so "who read what, under which filter" is a
-  single `jq` away. The rendered tenant value itself is not recorded;
-  the scoping is visible through the applied policy and the
-  rewritten-query fingerprint.
-
-## Layout
-
-```
-multi-tenant/
-├── README.md                — this file
-├── docker-compose.yaml      — single-service Sluice stack
-├── server.yaml              — ServerConfig
-├── seed.sql                 — 5 customers + 5 orders spread over 3 tenants
-├── policies.d/
-│   ├── datasource-shop.yaml  — sqlite @ /data/shop.db
-│   ├── bindings-tenants.yaml — API keys `sl_demo_acme` and `sl_demo_beta`
-│   ├── allow-analytics.yaml  — SqlAccessPolicy (customers + orders)
-│   └── filter-tenant.yaml    — RowFilterPolicy ({{ subject.tenantId }})
-└── data/                    — shop.db + audit log (populated at runtime)
-```
-
-## Run it
+## Run
 
 ```bash
-sqlite3 data/shop.db < seed.sql
+examples/multi-tenant/serve.sh
+```
+
+The script creates `data/shop.db` from `seed.sql` and starts Sluice on `http://localhost:8080`. Then run the steps from this folder, for example `bash steps/01-acme.sh`.
+
+| Step | Shows |
+|---|---|
+| `steps/01-acme.sh` | The acme key reads only acme customers. |
+| `steps/02-beta.sh` | The beta key runs the same SQL and reads only beta customers. |
+| `steps/03-acme-asks-for-beta.sh` | Asking for another tenant's rows returns no rows. |
+| `steps/04-acme-join.sh` | A join filters both tables. |
+| `steps/05-acme-subquery.sh` | A subquery is filtered too. |
+
+`expected/` holds the real output of each step. `tests/` holds a suite for `sluice policy test policies.d --tests tests`. See [the examples guide](../README.md) for the layout.
+
+## Docker
+
+```bash
+python3 ../seed.py seed.sql data/shop.db
+# The container runs as another user and writes the audit log to data/.
+chmod -R a+rwX data
 docker compose up
 ```
 
-This pulls `ghcr.io/bino-bi/sluice:0.1.0-rc.2`. To run your own build instead: `docker build -t sluice:dev ../.. && SLUICE_IMAGE=sluice:dev docker compose up`.
-
-## Query as each tenant
-
-```bash
-# acme → sees only rows 1,2 (customers) and 10,11 (orders)
-curl -s -H "X-Api-Key: sl_demo_acme.supersecret" \
-     -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT id, tenant_id, email FROM shop.main.customers ORDER BY id"}' \
-     http://localhost:8080/v1/query | jq '.rows'
-
-# beta → sees only rows 3,4 (customers) and 12,13 (orders)
-curl -s -H "X-Api-Key: sl_demo_beta.supersecret" \
-     -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT id, tenant_id, email FROM shop.main.customers ORDER BY id"}' \
-     http://localhost:8080/v1/query | jq '.rows'
-```
-
-Neither key can reach gamma's rows: no SubjectBinding exists, so the
-gamma tenant has no way to authenticate in the first place.
-
-## Why it's safe
-
-The rewriter wraps every FROM-reference to the matched tables in a
-subquery with `WHERE tenant_id = $1` and binds `$1` to the rendered
-template value. The underlying SQL engine never sees a literal tenant
-string — parameter binding is handled by DuckDB, so injection via the
-tenantId claim is impossible. The rewritten SQL of a served query is not
-logged (the log line of a failed query can hold a piece of it); to
-inspect it, write a policy test with a `rewrittenSqlContains`
-expectation and run `./bin/sluice policy test policies.d`, or use
-`./bin/sluice policy explain`.
-
-## Not for production
-
-The API-key hashes in `docker-compose.yaml` are example literals. For a
-real deployment, use `./bin/sluice apikey hash --pepper $(vault read
--field=pepper secret/sluice) --id <key-id> --material <key-material>`
-and store the results in a secret manager.
+The compose file pulls the released image. `make docs-check` does not run it.

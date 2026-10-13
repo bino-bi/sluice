@@ -2,149 +2,88 @@
 
 # Cross-source joins
 
-**Goal:** join transactional rows in Postgres against reference data in S3
-Parquet in a single `SELECT`, with both catalogs governed by the same policy
-set. Runnable version: `examples/cross-source-join/`.
+One `SELECT` joins a table in a SQLite file with a table in a DuckDB file. Sluice checks access for each table.
 
-## The data sources
+## Example
 
-Both catalogs are DuckDB attachments; the policy engine treats them
-identically. Note the `allowedPaths` allow-list on the S3 side — the driver
-refuses any object outside it, independently of what policy allows:
+Start the server with `examples/cross-source-join/serve.sh`. The script needs Go to write the DuckDB file.
+
+Each data source is one catalog. Its name is the first part of `catalog.schema.table`.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: pg
-spec:
-  type: postgres
-  connection: "postgres://sluice@postgres:5432/orders?sslmode=disable"
-  credentialsRef: "secret://env/SLUICE_PG_PASSWORD"
-  readonly: true
-  schemas: ["public"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: DataSource
-metadata:
-  name: ref
-spec:
-  type: s3
-  bucket: "ref-data"
-  region: "us-east-1"
-  endpoint: "http://minio:9000"
-  allowedPaths:
-    - "s3://ref-data/countries.parquet"   # allow-list: only this object is readable
-  credentialsRef: "secret://env/SLUICE_S3_CREDS"
-  readonly: true
-  schemas: ["main"]
+--8<-- "examples/cross-source-join/policies.d/datasource-shop.yaml:2"
 ```
-
-## The access policy
-
-The allow policy names the tables on **both** catalogs — one clause per
-catalog, since `catalogs`/`schemas`/`tables` constrain each other within a
-clause:
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: allow-analytics
-  priority: 100
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects:
-          groups: ["analytics"]
-        resources:
-          catalogs: ["pg"]
-          schemas: ["public"]
-          tables: ["orders"]
-      - subjects:
-          groups: ["analytics"]
-        resources:
-          catalogs: ["ref"]
-          schemas: ["main"]
-          tables: ["countries"]
+--8<-- "examples/cross-source-join/policies.d/datasource-ref.yaml:2"
 ```
 
-!!! note "Every joined table needs an allow"
-    An allow admits only the tables it names, so a join must have every table
-    covered by some allow — that is why the policy above lists the tables on
-    both catalogs. A join that pulls in a table no allow names is denied with
-    `no SqlAccessPolicy allows <table>`. To stop cross-catalog joins between
-    otherwise-allowed tables, add the reject policy below or set
-    `limits.disableCrossCatalog: true`.
+The allow covers one table in each catalog.
 
-## Run and verify
+```yaml
+--8<-- "examples/cross-source-join/policies.d/allow-analytics.yaml:2"
+```
 
-The compose stack runs Postgres (seeded `orders`), MinIO (a one-shot job
-writes `countries.parquet` into the `ref-data` bucket), and Sluice:
+The analyst key joins both tables.
 
 ```bash
-docker compose up
-# wait for "seeded ref-data/countries.parquet" and the server start
-
-curl -s -H "X-Api-Key: analyst.supersecret" -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT o.id, o.amount_cents, c.name AS country, c.region FROM pg.public.orders o JOIN ref.main.countries c ON c.code = o.country_code ORDER BY o.id"}' \
-     http://localhost:8080/v1/query | jq -c '.rows'
-# [[1,1999,"United States","Americas"],[2,4599,"Germany","EMEA"], ...]
+--8<-- "examples/cross-source-join/steps/01-join.sh"
 ```
 
-A table outside the policy is denied as usual:
+```json
+--8<-- "examples/cross-source-join/expected/01-join.txt"
+```
+
+**What happened:** Sluice attached both files and ran one query over them. The allow covers both tables, so the join passes.
+
+## More examples
+
+The intern key may read `ref.main.countries` only. The same join is denied.
 
 ```bash
-curl -s -H "X-Api-Key: analyst.supersecret" -H "Content-Type: application/json" \
-     -d '{"sql":"SELECT usename FROM pg.public.pg_stat_activity"}' \
-     http://localhost:8080/v1/query | jq '.code'
-# "ACL_DENIED"
+--8<-- "examples/cross-source-join/steps/02-join-denied.sh"
 ```
 
-## Opting out of cross-catalog joins
+```json
+--8<-- "examples/cross-source-join/expected/02-join-denied.txt"
+```
 
-Two mechanisms, from coarse to fine. Globally, in `server.yaml`:
-`limits.disableCrossCatalog: true` (default `false`) rejects any query whose
-table set spans more than one catalog with `ACL_REJECTED`, before policy
-evaluation and before the rewrite cache. Like the policy rule below, it sees
-a catalog only in three-part (`catalog.schema.table`) names. Per subject or
-resource, as a policy:
+A mask on `orders.customer_id` also applies inside the join.
+
+```bash
+--8<-- "examples/cross-source-join/steps/04-join-masked.sh"
+```
+
+```json
+--8<-- "examples/cross-source-join/expected/04-join-masked.txt"
+```
+
+This suite case shows the rewritten SQL. The mask stays on the `orders` side.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRejectPolicy
-metadata:
-  name: no-cross-catalog
-  priority: 200
-spec:
-  match:
-    any:
-      - subjects:
-          groups: ["analytics"]
-  reject:
-    rules:
-      - name: single-catalog-only
-        expression: "size(query.catalogs) > 1"
-        message: "queries may not span more than one catalog"
-        code: ACL_REJECTED
+--8<-- "examples/cross-source-join/tests/join.yaml:masked-join"
 ```
 
-Verified as a policy test: the join above then expects `outcome: reject` with
-`rejections: ["no-cross-catalog/single-catalog-only"]`, while single-catalog
-queries still pass.
+A `QueryRejectPolicy` rejects a query on more than one catalog for selected subjects.
 
-## Pitfall: wildcards across catalogs
+```yaml
+--8<-- "examples/cross-source-join/policies.d/reject-two-catalogs.yaml:2"
+```
 
-`tables: ["*"]` in a clause without `catalogs`/`schemas` constraints matches a
-table of that name in *every* attached catalog — including catalogs you attach
-next quarter. When more than one DataSource is loaded, always pin `catalogs:`
-(and usually `schemas:`) in each clause, and keep S3 `allowedPaths` narrow: a
-`**` glob over a bucket prefix is convenient for partitioned layouts but makes
-every future object under that prefix readable.
+This suite case proves it.
+
+```yaml
+--8<-- "examples/cross-source-join/tests/join.yaml:one-catalog"
+```
+
+The same join on Postgres and S3 is in `examples/cross-source-join/manual/postgres-s3/`. `make docs-check` only validates its policies.
+
+## Limits
+
+- `limits.disableCrossCatalog: true` in the server config rejects every query that names more than one catalog: `ACL_REJECTED`.
 
 ## See also
 
-- [Data sources](../operations/data-sources.md) — all six drivers and their options.
-- [Guardrails](../policies/guardrails.md) — QueryRejectPolicy and the CEL query variables.
-- [Server configuration](../operations/server-config.md) — the `limits` block.
+- [Data sources](../operations/data-sources.md)
+- [Access control](../policies/access-control.md)
+- [Rejects and rewrites](../policies/guardrails.md)

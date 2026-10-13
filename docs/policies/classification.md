@@ -1,121 +1,80 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Data classification
+# Classification tags
 
-`DataClassification` (apiVersion `sluice.bino.bi/v1beta1`) assigns tags to resources so
-enforcement policies can match on *what data is* instead of *what it is called*. Declare once
-that certain columns are `pii`; every mask, filter, deny, or approval that selects
-`resources: { tags: ["pii"] }` follows the classification automatically — including tables added
-to it later.
+A `DataClassification` puts tags on tables and columns. Other policies then match on a tag instead of on names.
 
-## The kind
+## Example
 
-```yaml
-apiVersion: sluice.bino.bi/v1beta1
-kind: DataClassification
-metadata: { name: pii-catalog }
-spec:
-  rules:
-    - resources:
-        tables: ["customers"]
-        columns: ["email", "phone"]
-      tags: ["pii"]
-```
+Goal: mask every column that has the tag `pii`.
 
-- `spec.rules[]` each pair a resource selector with one or more tags. At least one tag is
-  required per rule.
-- Tag syntax is strict: lowercase letters and digits at the start and end, with dots,
-  underscores, and hyphens allowed inside (`pii.contact`, `finance-restricted`).
-- A rule's `resources` block uses the ordinary fields `catalogs`, `schemas`, `tables`,
-  `columns` with the usual [wildcards](matching.md) — but it may **not** contain `tags` (no
-  recursion) or `actions`. Either is a validation error.
-
-## How tags resolve
-
-Classifications are consumed at **policy compile time**, not per query. On every load or reload,
-all rules are folded into a tag → resource index; each selector that references
-`resources.tags` is then expanded against that index. Consequences:
-
-- Within one `tags` list, tags are OR'd: the clause matches a table when *any* referenced
-  classification rule matches it. Name constraints in the same clause (`catalogs`, `tables`, …)
-  still apply on top (AND).
-- Referencing a tag that no `DataClassification` defines is a **compile error**
-  (`resource.tags: unknown tag …`) — the whole snapshot is rejected and, on hot reload, the
-  previous one stays active. A typo'd tag can never silently protect nothing.
-- A rule that names only `columns` (no `catalogs`, `schemas` or `tables`) matches every table.
-  That is what a mask by its tag wants (mask the column wherever it occurs), but an `effect: allow`
-  by such a tag would cover every table, so it is a **compile error**. Name the tables in the rule
-  to grant access by tag. A mask by such a tag makes every table a query reads a masked table, so
-  each one needs a schema cache entry (see [Column masks](column-masks.md)).
-- File order does not matter; the index is built before any policy compiles.
-
-For [column masks](column-masks.md) the classification also supplies the columns: a
-`ColumnMaskPolicy` matching by tag masks exactly the columns listed in the matching
-classification rules — no separate `resources.columns` needed on the mask itself.
-
-## Governance pattern
-
-Because classification and enforcement are separate objects, they can have separate owners in
-the same `policies.d/` tree: the data-governance team maintains `classifications/*.yaml`
-(what is `pii`, what is `finance-restricted`), while the platform team maintains the enforcement
-policies that reference those tags. CI runs `sluice policy validate --strict` on the merged
-directory, so an enforcement policy referencing a tag that governance removed fails the build
-instead of the runtime.
-
-## Recipes
-
-**The worked pair** — governance tags contact columns on every `customers` table; one mask
-enforces it everywhere:
+The classification tags two columns of `customers`. This kind needs `apiVersion: sluice.bino.bi/v1beta1`.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1beta1
-kind: DataClassification
-metadata: { name: pii-catalog }
-spec:
-  rules:
-    - resources:
-        tables: ["customers"]
-        columns: ["email", "phone"]
-      tags: ["pii"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: ColumnMaskPolicy
-metadata: { name: mask-pii, priority: 50 }
-spec:
-  match:
-    any:
-      - resources: { tags: ["pii"] }
-  mask:
-    type: partial
-    args: { showFirst: 1, showLast: 0 }
+--8<-- "examples/classification/policies.d/classification.yaml:2"
 ```
 
-A query touching `shop.main.customers` gets `email` and `phone` masked; a table outside the
-classification is untouched even though the mask policy names no tables.
-
-**Hard-deny restricted data for everyone except auditors:**
+The mask policy names no table and no column. It matches the tag.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1beta1
-kind: DataClassification
-metadata: { name: finance-catalog }
-spec:
-  rules:
-    - resources:
-        schemas: ["finance"]
-        tables: ["ledger", "payroll"]
-      tags: ["finance-restricted"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata: { name: deny-finance-restricted, priority: 900 }
-spec:
-  effect: deny
-  match:
-    any:
-      - resources: { tags: ["finance-restricted"] }
-  exclude:
-    any:
-      - subjects: { groups: ["auditors"] }
-  message: "finance-restricted data requires auditor group membership"
+--8<-- "examples/classification/policies.d/mask-pii.yaml:2"
 ```
+
+```bash
+--8<-- "examples/classification/steps/01-customers.sh"
+```
+
+```json
+--8<-- "examples/classification/expected/01-customers.txt"
+```
+
+The table `suppliers` also has an `email` column, but no tag.
+
+```bash
+--8<-- "examples/classification/steps/02-suppliers.sh"
+```
+
+```json
+--8<-- "examples/classification/expected/02-suppliers.txt"
+```
+
+**What happened:** A tag does nothing by itself. When Sluice loads the policies, each tag in a selector becomes the tables of its rules. The mask also took its columns from the `pii` rule.
+
+## Fields
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `rules[].resources` | object | | `catalogs`, `schemas`, `tables` and `columns`, with wildcards. No `tags`, no `actions`. Without it, the rule tags every table. |
+| `rules[].tags` | list | required | Allowed: lower-case letters, digits, `.`, `_`, `-`. First and last character: letter or digit. |
+
+You can use `resources.tags` in access, row filter, mask, reject, rewrite and approval policies. One tag of the list must match. Name fields in the same clause must match too. The order of the files does not matter.
+
+## More examples
+
+Goal: only the group `auditors` reads tables with the tag `restricted`.
+
+```yaml
+--8<-- "examples/classification/policies.d/deny-restricted.yaml:2"
+```
+
+```bash
+--8<-- "examples/classification/steps/03-payroll.sh"
+```
+
+```json
+--8<-- "examples/classification/expected/03-payroll.txt"
+```
+
+**What happened:** `payroll` has the tag, and Alice is not in `auditors`.
+
+## Limits
+
+- A tag that no `DataClassification` defines stops the load with `unknown tag`. On a reload, the old policies stay active. `sluice policy validate` reports it.
+- A rule with only `columns` matches every table. An `effect: allow` by such a tag does not load.
+- A `RelationshipPolicy` with tags stops the server start.
+
+## See also
+
+- [Matching](matching.md)
+- [Column masks](column-masks.md)
+- [Access control](access-control.md)

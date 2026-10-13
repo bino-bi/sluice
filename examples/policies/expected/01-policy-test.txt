@@ -1,0 +1,6 @@
+PASS  analyst reads orders with tenant filter
+PASS  non-analyst is denied by default
+PASS  email is partially masked
+PASS  star reads email masked via schema fixture
+
+4 passed, 0 failed, 4 total

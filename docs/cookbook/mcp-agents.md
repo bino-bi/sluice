@@ -2,143 +2,96 @@
 
 # MCP agents
 
-**Goal:** give Claude (or any MCP client) governed SQL access. The agent gets
-a narrow, rate-limited, budgeted, always-audited window onto your data — the
-same parse → policy → rewrite → audit pipeline as every other caller. Runnable
-version: `examples/mcp-agent/`.
+An AI agent queries Sluice over [MCP](../reference/glossary.md). Policies apply to MCP calls as they do to REST calls.
 
-## Claude Desktop configuration
+## Example
 
-Claude Desktop spawns Sluice as a child process and speaks MCP over stdio. The
-stdio transport authenticates **once at startup** from a static credential and
-pins that identity onto every tool call:
-
-```json
-{
-  "mcpServers": {
-    "sluice": {
-      "command": "/ABSOLUTE/PATH/TO/sluice/bin/sluice",
-      "args": [
-        "mcp",
-        "--config=/ABSOLUTE/PATH/TO/sluice/examples/mcp-agent/server.yaml",
-        "--policies-dir=/ABSOLUTE/PATH/TO/sluice/examples/mcp-agent/policies.d",
-        "--api-key=mcp.supersecret"
-      ],
-      "env": {
-        "SLUICE_APIKEY_PEPPER": "mcp-agent-demo-pepper",
-        "SLUICE_AUDIT_GENESIS": "mcp-agent-demo-genesis",
-        "SLUICE_APIKEY_MCP_HASH": "<output of: sluice apikey hash --pepper mcp-agent-demo-pepper --id mcp --material supersecret>"
-      }
-    }
-  }
-}
-```
-
-Paths must be absolute — Claude Desktop does not resolve relative paths. A JWT
-works too (`--jwt` or `SLUICE_MCP_TOKEN`); `--allow-anonymous` runs without a
-credential, in which case default-deny blocks every query unless a policy
-grants the anonymous subject.
-
-## The agent-safety bundle
-
-Three layers, all hot-reloadable — narrow access, bounded result sizes, and
-per-day spend caps:
+Start the server with `examples/mcp-agent/serve.sh`. MCP listens on port 8081.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: allow-agents
-  priority: 100
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects:
-          groups: ["agents"]
-        resources:
-          catalogs: ["shop"]
-          schemas: ["main"]
-          tables: ["products"]
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: QueryRewritePolicy
-metadata:
-  name: agent-guardrails
-  priority: 100
-spec:
-  match:
-    any:
-      - subjects:
-          groups: ["agents"]
-  rewrite:
-    limit:
-      max: 500        # inject LIMIT 500, clamp anything larger
-    timeout: 10s
----
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SubjectBinding
-metadata:
-  name: mcp-local
-spec:
-  claims:
-    subjectId: "mcp-agent"
-  rateLimit:
-    rps: 2
-    burst: 5
-  budget:
-    rowsPerDay: 100000
-    cpuSecondsPerDay: 600
-  apiKeys:
-    - id: "mcp"
-      hashRef: "secret://env/SLUICE_APIKEY_MCP_HASH"
-      groups: ["agents"]
+--8<-- "examples/mcp-agent/server.yaml:mcp"
 ```
 
-If the agent's tables contain PII, layer the same `ColumnMaskPolicy` objects
-as in the [PII-masking recipe](pii-masking.md) — masks apply to MCP callers
-exactly as to REST callers.
+The agent's API key maps to the group `agents`. The group may read `products`, and every query gets a row limit.
 
-## An agent session
+```yaml
+--8<-- "examples/mcp-agent/policies.d/allow-agents.yaml:2"
+```
 
-The agent sees **nine tools**: `execute_sql`, `list_catalogs`, `list_tables`,
-`describe_table`, `whoami`, `explain_access`, `list_accessible_tables`,
-`check_approval`, `await_approval`. A well-behaved session starts with
-discovery instead of trial-and-error SQL:
+```yaml
+--8<-- "examples/mcp-agent/policies.d/limit-agents.yaml:2"
+```
 
-1. `whoami {}` — who am I? Subject `mcp-agent`, groups `["agents"]`.
-2. `list_accessible_tables {}` — which tables can this identity actually
-   reach? Here: `shop.main.products`, nothing else.
-3. `explain_access { table: "shop.main.products" }` — which policies apply and
-   what will happen to a query (filters, masks, and the matched policies)
-   before running it.
-4. `execute_sql { sql: "SELECT name, price_cents FROM shop.main.products ORDER BY price_cents DESC", row_limit: 100 }`
-   — rows come back with `LIMIT` injected per the rewrite policy.
+Open a session. The step stores the session id in `data/mcp-session`. It needs curl 7.84 or later.
 
-Verify the guardrail: ask the agent for something outside the policy. The
-`execute_sql` call returns an `ACL_DENIED` error *as tool output*, so the
-model reads it, can call `explain_access` with the failing SQL to see why, and
-self-corrects without a protocol crash. Every call — allowed or denied — lands
-in the audit log under the pinned subject.
+```bash
+--8<-- "examples/mcp-agent/steps/01-initialize.sh"
+```
 
-!!! warning "Not yet implemented"
-    Prompt-side niceties like schema descriptions from your own metadata store
-    are not part of the tool surface; `describe_table` returns column names,
-    types, and nullability only. The audit log is the source of truth for
-    agent activity; OTel spans (when `tracing` is enabled) add latency
-    context on top.
+Read the columns of `products`. The table list is empty until `describe_table` has read the catalog.
 
-## Pitfall: an empty table list is a policy gap, not a bug
+```bash
+--8<-- "examples/mcp-agent/steps/03-describe-table.sh"
+```
 
-Default-deny means `list_accessible_tables` returns exactly what your allow
-policies grant. If it comes back empty, the agent has no access — Sluice is
-working as designed and the fix is a `SqlAccessPolicy`, not a server setting.
-The inverse holds too: every table in that list is one prompt injection away
-from being queried, so treat the allow-list as the agent's blast radius and
-start narrow.
+List the tables that the agent may read.
+
+```bash
+--8<-- "examples/mcp-agent/steps/04-list-tables.sh"
+```
+
+```json
+--8<-- "examples/mcp-agent/expected/04-list-tables.txt"
+```
+
+Run a query.
+
+```bash
+--8<-- "examples/mcp-agent/steps/05-query.sh"
+```
+
+```json
+--8<-- "examples/mcp-agent/expected/05-query.txt"
+```
+
+**What happened:** Sluice checked the key on each request and applied the policies of the group. The query keeps its `LIMIT 2` because it is below the limit.
+
+## More examples
+
+A query without `LIMIT` returns three of the five rows, and `truncated` is `true`.
+
+```bash
+--8<-- "examples/mcp-agent/steps/06-query-limit.sh"
+```
+
+```json
+--8<-- "examples/mcp-agent/expected/06-query-limit.txt"
+```
+
+A query on `customers` is denied. The agent gets `ACL_DENIED` as a tool error.
+
+```bash
+--8<-- "examples/mcp-agent/steps/07-query-denied.sh"
+```
+
+```json
+--8<-- "examples/mcp-agent/expected/07-query-denied.txt"
+```
+
+### Claude Desktop
+
+Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` checks the key once at start. Replace the path. Run `serve.sh` once to create the data, then stop it. `make docs-check` does not run this file.
+
+```json
+--8<-- "examples/mcp-agent/manual/claude-desktop.json"
+```
+
+## Limits
+
+- Sluice writes an audit record for `execute_sql` and `explain_access`, not for the other tools.
 
 ## See also
 
-- [MCP reference](../reference/mcp.md) — all nine tools with argument schemas.
-- [Approval workflow](approval-workflow.md) — `check_approval` / `await_approval` in action.
-- [Subjects, keys & budgets](../policies/subjects.md) — rate limits and daily budgets.
+- [MCP tools](../reference/mcp.md)
+- [Rejects and rewrites](../policies/guardrails.md)
+- [Subjects](../policies/subjects.md)

@@ -1,0 +1,3 @@
+rest.tls: certFile and keyFile are both required when a tls block is set
+identity.apiKeyPepper: secrets: scheme "" is not "secret"
+[exit status 3]

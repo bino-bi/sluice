@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  # --8<-- [start:reject]
+  - name: SELECT * from an agent is rejected
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT * FROM shop.main.orders"
+    expect:
+      outcome: reject
+      errorCode: ACL_REJECTED
+      rejections: ["agent-shapes/no-select-star"]
+  # --8<-- [end:reject]
+
+  - name: a rule can set its own error code
+    identity: { subject: report-agent, groups: [agents] }
+    sql: >-
+      SELECT a.id FROM shop.main.orders a
+      JOIN shop.main.orders b ON b.id = a.id
+      JOIN shop.main.orders c ON c.id = a.id
+      JOIN shop.main.orders d ON d.id = a.id
+    expect:
+      outcome: reject
+      errorCode: TOO_MANY_JOINS
+      rejections: ["agent-shapes/no-big-joins"]
+
+  - name: query.joins does not count a comma join
+    identity: { subject: report-agent, groups: [agents] }
+    sql: >-
+      SELECT a.id
+      FROM shop.main.orders a, shop.main.orders b, shop.main.orders c, shop.main.orders d
+      WHERE b.id = a.id AND c.id = a.id AND d.id = a.id
+    expect:
+      outcome: allow
+
+  - name: a rule without an expression fires for every matched query
+    identity: { subject: ivy, groups: [interns] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: reject
+      rejections: ["interns-no-orders/orders-closed"]
+
+  # --8<-- [start:limit]
+  - name: a query without LIMIT gets the limit
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id, status FROM shop.main.orders ORDER BY id"
+    expect:
+      outcome: allow
+      rewrittenSql: "SELECT id, status FROM shop.main.orders ORDER BY id LIMIT 3"
+  # --8<-- [end:limit]
+
+  - name: a larger LIMIT is lowered
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 100"
+    expect:
+      rewrittenSql: "SELECT id FROM shop.main.orders LIMIT 3"
+
+  - name: a smaller LIMIT stays
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 2"
+    expect:
+      rewrittenSql: "SELECT id FROM shop.main.orders LIMIT 2"
+
+  - name: a LIMIT expression is replaced
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id FROM shop.main.orders LIMIT 1 + 1"
+    expect:
+      rewrittenSql: "SELECT id FROM shop.main.orders LIMIT 3"
+
+  - name: a LIMIT parameter is refused
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id FROM shop.main.orders LIMIT $1"
+    expect:
+      errorCode: ERR_UNSUPPORTED_SYNTAX
+
+  - name: a parameter is refused in every clause, also without a rewrite policy
+    identity: { subject: guest, groups: [guests] }
+    sql: "SELECT id FROM shop.main.orders WHERE id = $1"
+    expect:
+      errorCode: ERR_UNSUPPORTED_SYNTAX
+
+  # --8<-- [start:sample]
+  - name: the query is wrapped in a sample
+    identity: { subject: eve, groups: [explorers] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT * FROM (SELECT id FROM shop.main.orders) AS sluice_sample
+        USING SAMPLE 10% (bernoulli)
+  # --8<-- [end:sample]
+
+  - name: with a limit and a sample, the sample reads the limited rows
+    identity: { subject: eve, groups: [explorers, agents] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      rewrittenSql: >-
+        SELECT * FROM (SELECT id FROM shop.main.orders LIMIT 3) AS sluice_sample
+        USING SAMPLE 10% (bernoulli)
+
+  - name: a limit makes Sluice refuse some DuckDB forms
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id, 2 * 3 ** 2 AS x FROM shop.main.orders"
+    expect:
+      errorCode: ERR_UNSUPPORTED_SYNTAX
+
+  - name: a sample makes Sluice refuse some DuckDB forms
+    identity: { subject: eve, groups: [explorers] }
+    sql: "SELECT id, 0x1f AS x FROM shop.main.orders"
+    expect:
+      errorCode: ERR_SYNTAX
+
+  - name: query.has_select_star does not see a subquery
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id FROM (SELECT * FROM shop.main.orders) o"
+    expect:
+      outcome: allow
+
+  - name: query.has_select_star does not see the second part of a UNION
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT id, status, amount_cents FROM shop.main.orders UNION ALL SELECT * FROM shop.main.orders"
+    expect:
+      outcome: allow
+
+  - name: a recursive CTE is rejected
+    identity: { subject: report-agent, groups: [agents] }
+    sql: >-
+      WITH RECURSIVE n(id) AS (
+      SELECT id FROM shop.main.orders UNION ALL SELECT id + 1 FROM n WHERE id < 9)
+      SELECT id FROM n
+    expect:
+      outcome: reject
+      rejections: ["agent-recursion/no-recursive-cte"]
+
+  - name: query.is_recursive_cte does not see the WITH of a UNION
+    identity: { subject: report-agent, groups: [agents] }
+    sql: >-
+      WITH RECURSIVE n(id) AS (
+      SELECT id FROM shop.main.orders UNION ALL SELECT id + 1 FROM n WHERE id < 9)
+      SELECT id FROM n UNION ALL SELECT id FROM shop.main.orders
+    expect:
+      outcome: allow
+
+  - name: with only a limit, an alias spelled two ways comes back in lower case
+    identity: { subject: report-agent, groups: [agents] }
+    sql: "SELECT EXTRACT(MONTH FROM DATE '2026-03-01') AS Month, id FROM shop.main.orders"
+    expect:
+      outcome: allow
+      rewrittenSql: >-
+        SELECT extract ('month' FROM '2026-03-01'::date) AS month, id
+        FROM shop.main.orders LIMIT 3

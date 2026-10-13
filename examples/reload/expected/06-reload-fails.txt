@@ -1,0 +1,4 @@
+{
+  "code": "ERR_CONFIG_INVALID",
+  "message": "server configuration invalid"
+}

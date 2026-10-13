@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: corp-idp
+spec:
+  issuer: "https://idp.example.com"
+  audience: "sluice"
+  hmacSecretRef: "secret://env/SLUICE_JWT_SECRET"
+  claims:
+    groups: "$.realm.roles"

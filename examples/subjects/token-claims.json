@@ -1,0 +1,7 @@
+{
+  "iss": "https://idp.example.com",
+  "aud": "sluice",
+  "sub": "alice",
+  "email": "alice@example.com",
+  "realm": {"roles": ["analysts"]}
+}

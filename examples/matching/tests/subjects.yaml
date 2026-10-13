@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  # --8<-- [start:auditors]
+  - name: role and claim both match
+    identity:
+      subject: anna
+      claims: { roles: [auditor], org: { country: DE } }
+    sql: "SELECT id FROM shop.main.audit_notes"
+    expect:
+      outcome: allow
+
+  - name: without a roles claim the groups count as roles
+    identity:
+      subject: ben
+      groups: [auditor]
+      claims: { org: { country: AT } }
+    sql: "SELECT id FROM shop.main.audit_notes"
+    expect:
+      outcome: allow
+
+  - name: the claim check fails for another country
+    identity:
+      subject: carl
+      claims: { roles: [auditor], org: { country: US } }
+    sql: "SELECT id FROM shop.main.audit_notes"
+    expect:
+      outcome: deny
+  # --8<-- [end:auditors]
+
+  - name: a roles claim without the role wins over the groups
+    identity:
+      subject: dora
+      groups: [auditor]
+      claims: { roles: [viewer], org: { country: DE } }
+    sql: "SELECT id FROM shop.main.audit_notes"
+    expect:
+      outcome: deny
+
+  - name: Equals compares numbers
+    identity: { subject: u, claims: { level: 3 } }
+    sql: "SELECT 1 FROM ops.main.equals"
+    expect: { outcome: allow }
+
+  - name: Equals does not compare a text with a number
+    identity: { subject: u, claims: { level: "3" } }
+    sql: "SELECT 1 FROM ops.main.equals"
+    expect: { outcome: deny }
+
+  - name: Equals needs the claim
+    identity: { subject: u }
+    sql: "SELECT 1 FROM ops.main.equals"
+    expect: { outcome: deny }
+
+  - name: NotEquals matches another value
+    identity: { subject: u, claims: { level: 4 } }
+    sql: "SELECT 1 FROM ops.main.not_equals"
+    expect: { outcome: allow }
+
+  - name: NotEquals matches a missing claim
+    identity: { subject: u }
+    sql: "SELECT 1 FROM ops.main.not_equals"
+    expect: { outcome: allow }
+
+  - name: NotEquals fails on the same value
+    identity: { subject: u, claims: { level: 3 } }
+    sql: "SELECT 1 FROM ops.main.not_equals"
+    expect: { outcome: deny }
+
+  - name: In matches a listed value
+    identity: { subject: u, claims: { team: blue } }
+    sql: "SELECT 1 FROM ops.main.in"
+    expect: { outcome: allow }
+
+  - name: In fails on a missing claim
+    identity: { subject: u }
+    sql: "SELECT 1 FROM ops.main.in"
+    expect: { outcome: deny }
+
+  - name: NotIn matches a value that is not listed
+    identity: { subject: u, claims: { team: green } }
+    sql: "SELECT 1 FROM ops.main.not_in"
+    expect: { outcome: allow }
+
+  - name: NotIn matches a missing claim
+    identity: { subject: u }
+    sql: "SELECT 1 FROM ops.main.not_in"
+    expect: { outcome: allow }
+
+  - name: NotIn fails on a listed value
+    identity: { subject: u, claims: { team: red } }
+    sql: "SELECT 1 FROM ops.main.not_in"
+    expect: { outcome: deny }
+
+  - name: Exists matches any value
+    identity: { subject: u, claims: { team: "" } }
+    sql: "SELECT 1 FROM ops.main.exists"
+    expect: { outcome: allow }
+
+  - name: Exists fails on a missing claim
+    identity: { subject: u, claims: { level: 3 } }
+    sql: "SELECT 1 FROM ops.main.exists"
+    expect: { outcome: deny }
+
+  - name: Matches tests a regular expression
+    identity: { subject: u, claims: { email: u@example.com } }
+    sql: "SELECT 1 FROM ops.main.matches"
+    expect: { outcome: allow }
+
+  - name: Matches fails on another text
+    identity: { subject: u, claims: { email: u@example.org } }
+    sql: "SELECT 1 FROM ops.main.matches"
+    expect: { outcome: deny }

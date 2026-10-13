@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# One clause per catalog. A join needs an allow for every table it reads.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-analytics
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          catalogs: ["pg"]
+          schemas: ["public"]
+          tables: ["orders"]
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          catalogs: ["ref"]
+          schemas: ["main"]
+          tables: ["countries"]

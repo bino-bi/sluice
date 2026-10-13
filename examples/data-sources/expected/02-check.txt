@@ -1,0 +1,9 @@
+NAME       TYPE        FACTORY  SCHEMAS  TABLES  ERROR
+----       ----        -------  -------  ------  -----
+web        http        yes      0        0
+warehouse  motherduck  yes      0        0
+crm        mysql       yes      0        0
+pg         postgres    yes      0        0
+lake       s3          yes      0        0
+
+5 checked, 0 failed

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Invalid on purpose: a postgres source needs spec.connection.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: pg
+spec:
+  type: postgres
+  credentialsRef: "secret://env/SLUICE_PG_PASSWORD"

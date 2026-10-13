@@ -1,0 +1,5 @@
+{
+  "code": "ACL_REJECTED",
+  "message": "table name \"shop.orders\" is ambiguous, write catalog.schema.table",
+  "query_id": "<query-id>"
+}

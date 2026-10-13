@@ -1,0 +1,5 @@
+{
+  "code": "ACL_DENIED",
+  "message": "no SqlAccessPolicy allows shop.main.customers",
+  "query_id": "<query-id>"
+}

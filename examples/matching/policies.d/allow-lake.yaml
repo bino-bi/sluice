@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-lake
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analysts"]
+        resources:
+          catalogs: ["lake"]
+          schemas: ["*"]
+          tables: ["events_*", "export**", 'sales\.2024']

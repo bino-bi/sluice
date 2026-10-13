@@ -1,0 +1,5 @@
+{
+  "code": "ERR_MULTIPLE_STATEMENTS",
+  "message": "only a single statement is allowed per request",
+  "query_id": "<query-id>"
+}

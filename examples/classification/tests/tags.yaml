@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A masked table needs its column list. The test runner has no database.
+schema:
+  shop.main.customers: [id, name, email, phone]
+
+cases:
+  - name: the pii tag masks email and phone on customers
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name, email, phone FROM shop.main.customers"
+    expect:
+      outcome: allow
+      masks:
+        - "shop.main.customers.email=partial"
+        - "shop.main.customers.phone=partial"
+
+  - name: suppliers has an email column but no tag
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name, email FROM shop.main.suppliers"
+    expect:
+      outcome: allow
+      masks: []
+
+  - name: the restricted tag denies payroll
+    identity: { subject: alice, groups: [analysts] }
+    sql: "SELECT name, salary_eur FROM shop.main.payroll"
+    expect:
+      outcome: deny
+      denyPolicy: deny-restricted
+
+  - name: auditors read payroll
+    identity: { subject: carol, groups: [auditors] }
+    sql: "SELECT name, salary_eur FROM shop.main.payroll"
+    expect:
+      outcome: allow

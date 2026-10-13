@@ -1,0 +1,5 @@
+{
+  "code": "ERR_QUERY_FAILED",
+  "message": "the database rejected the query",
+  "query_id": "<query-id>"
+}

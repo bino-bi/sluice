@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: interns-no-orders
+  priority: 200
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["interns"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  reject:
+    rules:
+      # No expression: the rule fires for every query the selector matches.
+      - name: orders-closed
+        message: "ask your team lead for order data"

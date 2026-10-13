@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ColumnMaskPolicy
+metadata:
+  name: mask-email
+  priority: 50
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+          schemas: ["crm"]
+          columns: ["email"]
+  exclude:
+    any:
+      - subjects:
+          groups: ["sre"]
+  mask:
+    type: hash

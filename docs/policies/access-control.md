@@ -2,123 +2,116 @@
 
 # Access control
 
-`SqlAccessPolicy` is the gate every query passes first. Its `spec.effect` is either `allow` or
-`deny` (lowercase), and two rules govern the outcome:
+A `SqlAccessPolicy` allows or denies access to tables. Sluice denies a query unless an allow covers every table that it reads.
 
-1. **Default-deny.** If no `SqlAccessPolicy` with `effect: allow` matches the request, it is
-   denied — even with an empty policy directory, even if no explicit deny matched. There is no
-   way to configure this away.
-2. **Deny-override.** If any matching policy has `effect: deny`, the request is denied regardless
-   of allows. The highest-priority deny supplies the client-visible `message` and `errorCode`
-   (defaults: `access denied` / `ACL_DENIED`).
+## Example
+
+Analysts may read `orders`.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: deny-salaries
-  priority: 900
-spec:
-  effect: deny
-  match:
-    any:
-      - resources: { tables: ["salaries"] }   # no subjects block = everyone
-  message: "salaries is off limits through the gateway"
-  errorCode: ACL_DENIED
+--8<-- "examples/access-control/policies.d/allow-analysts.yaml:2"
 ```
 
-An explicit deny short-circuits: row filters, masks, rewrites, and approvals are not evaluated
-for a denied request.
+A query on the allowed table:
 
-!!! warning "An allow admits only the tables it names"
-    Every referenced table must be covered by some `effect: allow` policy. An allow on `orders`
-    admits a query over `orders`, but a query that *joins* `orders` with a table no allow names is
-    denied with `no SqlAccessPolicy allows <table>` — the unnamed table is not admitted just because
-    it shares a statement with an allowed one. Different tables may be covered by different allow
-    policies. A deny still overrides: a deny matching any referenced table blocks the whole query.
+```bash
+--8<-- "examples/access-control/steps/01-allowed-table.sh"
+```
 
-## Scoping by action
+```json
+--8<-- "examples/access-control/expected/01-allowed-table.txt"
+```
 
-`resources.actions` restricts a clause to specific statement verbs: `SELECT`, `INSERT`,
-`UPDATE`, `DELETE` (always uppercase). A clause that constrains actions never matches a statement
-whose verb could not be determined — fail-closed.
+A query on another table:
 
-!!! warning "The executor is read-only regardless"
-    Action scoping is policy-level bookkeeping on top of a hard floor: the execution layer only
-    accepts `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and `PRAGMA`. `INSERT`/`UPDATE`/`DELETE` are
-    rejected with `ACL_REJECTED` ("write operations are not permitted") even if a policy would
-    allow them, and DDL/`COPY`/`ATTACH` fail with `ERR_UNSUPPORTED_SYNTAX`. Listing write actions
-    in an allow today changes nothing at runtime.
+```bash
+--8<-- "examples/access-control/steps/02-other-table.sh"
+```
 
-## Conditions and enforcement mode
+```json
+--8<-- "examples/access-control/expected/02-other-table.txt"
+```
 
-Like every enforcement kind, `SqlAccessPolicy` supports [`conditions`](conditions.md) (all must be
-true for the policy to apply; a runtime error denies the request) and
-[`enforcementMode`](index.md#shared-spec-fields) (`Audit`/`DryRun` record a shadow match without
-affecting the decision — useful to stage a new deny and watch who *would* be blocked).
+**What happened:** the allow names only `orders`. No policy allows `customers`, so Sluice denies the second query.
 
-## Where access control sits
+## Fields
 
-The precedence across kinds is structural, not configurable:
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `effect` | string | required | `allow` or `deny`, in lower case. |
+| `match` | object | required | Subjects and tables. See [Matching](matching.md). |
+| `message` | string | `access denied` | For a deny: the error message. |
+| `errorCode` | string | `ACL_DENIED` | For a deny: the error code. |
 
-**deny > reject > approval.** A deny (explicit or default) ends evaluation. Otherwise, fired
-[reject rules](guardrails.md) flip an allow to a rejection. Only a clean allow can be parked for
-[human approval](approvals.md). Row filters, masks, and rewrites then shape the allowed query.
+`exclude`, `conditions` and `enforcementMode` work as on [every policy](index.md).
 
-## Recipes
+`resources.actions` limits a clause to statement types: `SELECT`, `INSERT`, `UPDATE` or `DELETE`, in upper case. `EXPLAIN SELECT` counts as `SELECT`. `SHOW` has no action: a clause with `actions` never matches it.
 
-**Allow analysts on one schema:**
+## More examples
+
+### Every table needs an allow
+
+An analyst joins `orders` with `customers`.
+
+```bash
+--8<-- "examples/access-control/steps/03-join.sh"
+```
+
+```json
+--8<-- "examples/access-control/expected/03-join.txt"
+```
+
+### A deny wins over an allow
+
+Admins may read every table, but nobody reads `salaries`.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: allow-analysts-reporting
-  priority: 100
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects: { groups: ["analysts"] }
-        resources:
-          catalogs: ["shop"]
-          schemas: ["reporting"]
+--8<-- "examples/access-control/policies.d/allow-admins.yaml:2"
 ```
-
-**Hard-deny a table for everyone** — a clause with only a `resources` block matches every
-subject; the high priority makes this deny supply the error message even if other denies overlap:
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: deny-raw-events
-  priority: 1000
-spec:
-  effect: deny
-  match:
-    any:
-      - resources:
-          catalogs: ["lake"]
-          tables: ["raw_events"]
-  message: "query the curated events view instead"
+--8<-- "examples/access-control/policies.d/deny-salaries.yaml:2"
 ```
 
-**Allow only SELECT for one API key** — the key id comes from the
-[SubjectBinding](subjects.md) `apiKeys[].id`:
+```bash
+--8<-- "examples/access-control/steps/04-admin-salaries.sh"
+```
+
+```json
+--8<-- "examples/access-control/expected/04-admin-salaries.txt"
+```
+
+A deny on one table denies the whole query. If several denies match, the one with the highest priority gives the message.
 
 ```yaml
-apiVersion: sluice.bino.bi/v1alpha1
-kind: SqlAccessPolicy
-metadata:
-  name: allow-export-bot-select
-  priority: 100
-spec:
-  effect: allow
-  match:
-    any:
-      - subjects: { apiKeys: ["export-bot"] }
-        resources:
-          catalogs: ["shop"]
-          actions: ["SELECT"]
+--8<-- "examples/access-control/tests/access.yaml:deny"
 ```
+
+### Actions
+
+The admin allow lists `SELECT`, the analyst allow no action.
+
+```yaml
+--8<-- "examples/access-control/tests/access.yaml:actions"
+```
+
+### Deny, then reject, then approval
+
+Sluice checks denies first. A denied query gets no reject rule, row filter, column mask or approval. Reject rules come next. An approval can hold only an allowed query.
+
+```yaml
+--8<-- "examples/access-control/tests/access.yaml:order"
+```
+
+## Limits
+
+- Sluice runs only read statements. A write gets `ACL_REJECTED`, also when an allow lists its action. See [Request lifecycle](../architecture/request-lifecycle.md).
+- A statement without a table, such as `SELECT 1`, needs an allow clause without `catalogs`, `schemas`, `tables` and `tags`.
+- With another [engine](../architecture/policy-engines.md), a query without a matching allow can still run.
+
+## See also
+
+- [Matching](matching.md)
+- [Rejects and rewrites](guardrails.md)
+- [Approvals](approvals.md)
+- [Error codes](../reference/error-codes.md)

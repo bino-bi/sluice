@@ -1,0 +1,6 @@
+subject : bob
+resource: shop.main.payments
+decision: deny
+Kind             Name  Priority  Effect
+----             ----  --------  ------
+SqlAccessPolicy        -         rejected: policy condition evaluation failed: condition "no-high-clearance": no such key: clearance

@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'examples/**'
       - 'mkdocs.yml'
       - '.github/workflows/docs-deploy.yaml'
   release:

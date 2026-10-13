@@ -1,0 +1,5 @@
+{
+  "code": "ERR_UNSUPPORTED_SYNTAX",
+  "message": "EXPLAIN is not supported on a table with a row filter or column mask",
+  "query_id": "<query-id>"
+}

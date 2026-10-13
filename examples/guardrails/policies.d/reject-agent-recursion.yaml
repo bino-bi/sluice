@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: agent-recursion
+  priority: 200
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["agents"]
+  reject:
+    rules:
+      - name: no-recursive-cte
+        expression: "query.is_recursive_cte == true"
+        message: "do not use WITH RECURSIVE"

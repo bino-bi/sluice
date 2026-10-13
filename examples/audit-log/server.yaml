@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+rest:
+  listen: ":8080"
+
+policies:
+  directory: "./policies.d"
+
+# --8<-- [start:audit]
+audit:
+  failClosed: true
+  file:
+    path: "./data/audit"
+    genesis: "secret://env/SLUICE_AUDIT_GENESIS"
+# --8<-- [end:audit]
+
+identity:
+  apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"

@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "country", "amount"],
+  "rows": [
+    [1, "de", 120],
+    [2, "fr", 80]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

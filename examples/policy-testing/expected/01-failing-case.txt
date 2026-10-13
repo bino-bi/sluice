@@ -1,0 +1,6 @@
+PASS  an analyst reads orders
+FAIL  a guest reads orders
+        outcome: want "allow" got "deny"
+
+1 passed, 1 failed, 2 total
+[exit status 3]

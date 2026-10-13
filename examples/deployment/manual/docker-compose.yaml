@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Runs the released image with the files of this example.
+services:
+  sluice:
+    image: ${SLUICE_IMAGE:-ghcr.io/bino-bi/sluice:0.1.0-rc.2}
+    ports:
+      - "8080:8080"
+      # Only this host can reach the admin API.
+      - "127.0.0.1:9091:9091"
+    environment:
+      SLUICE_ADMIN__TOKEN: "${SLUICE_ADMIN_TOKEN:?set SLUICE_ADMIN_TOKEN}"
+      SLUICE_AUDIT_GENESIS: "${SLUICE_AUDIT_GENESIS:?set SLUICE_AUDIT_GENESIS}"
+    volumes:
+      - ../server.yaml:/etc/sluice/server.yaml:ro
+      - ../policies.d:/etc/sluice/policies.d:ro
+      # User 65532 must own this directory: it reads the TLS key and writes the audit log.
+      - ../data:/etc/sluice/data
+    working_dir: /etc/sluice
+    command: ["serve", "--config=/etc/sluice/server.yaml"]
+    restart: unless-stopped

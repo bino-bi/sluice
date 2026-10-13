@@ -12,7 +12,7 @@ services:
     environment:
       SLUICE_APIKEY_PEPPER: "multi-tenant-demo-pepper"
       SLUICE_AUDIT_GENESIS: "multi-tenant-demo-genesis"
-      # hex(HMAC-SHA256(pepper, "<id>:<material>")) — same values printed by
+      # hex(HMAC-SHA256(pepper, "<id>:<material>")) - same values printed by
       #   sluice apikey hash --pepper multi-tenant-demo-pepper \
       #                      --id sl_demo_acme --material supersecret
       # (and --id sl_demo_beta for the second key).
@@ -21,7 +21,7 @@ services:
     volumes:
       - ./server.yaml:/etc/sluice/server.yaml:ro
       - ./policies.d:/etc/sluice/policies.d:ro
-      - ./data:/data
+      - ./data:/etc/sluice/data
     working_dir: /etc/sluice
     command:
       - "serve"

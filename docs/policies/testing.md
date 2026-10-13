@@ -2,198 +2,125 @@
 
 # Testing policies
 
-`sluice policy test <policy-dir>` runs declarative test suites against a policy directory: each
-case names an identity and a SQL statement and asserts the resulting decision. The runner drives
-the same parse → evaluate → rewrite pipeline the server uses, so a passing suite reflects real
-enforcement behaviour — treat it as the unit test suite for your authorization rules.
+`sluice policy test` runs suites against a policy directory. A case has an identity, a SQL statement and the result you expect. It needs no server and no database.
 
-## Layout
+## Example
 
-Suite files default to `<policy-dir>/tests/*.yaml` (override with `--tests <file-or-dir>`). The
-`tests/` subdirectory is one of the directories the policy loader skips (along with `testdata`
-and dot-directories), so suites can live right next to the manifests they exercise:
+The policy directory holds an allow, a row filter and a column mask.
 
+```yaml
+--8<-- "examples/policies/policies.d/allow.yaml"
 ```
-policies.d/
-  access.yaml
-  filters.yaml
-  tests/
-    basic.yaml
+
+The suite:
+
+```yaml
+--8<-- "examples/policies/tests/basic.yaml"
 ```
+
+```bash
+--8<-- "examples/policies/steps/01-policy-test.sh"
+```
+
+```text
+--8<-- "examples/policies/expected/01-policy-test.txt"
+```
+
+The fourth case comes from a second suite, shown below.
 
 ## Suite format
 
-A suite is a plain YAML file with a `cases` list — it is not a policy object and carries no
-`apiVersion`. Every `expect` field is optional; only the fields you set are checked:
+A suite is a YAML file without `apiVersion`. The test runner ignores unknown keys: a typo such as `outcom` skips the check.
+
+| Key | Meaning |
+|---|---|
+| `schema` | Columns of masked tables. See below. |
+| `cases[].name` | Printed in the report. |
+| `cases[].identity.subject` | Subject id. Without it, the case has no subject. |
+| `cases[].identity.groups`, `.claims` | Groups and claims. Claims can nest. |
+| `cases[].identity.issuer`, `.email` | Issuer and email. |
+| `cases[].sql` | One SQL statement. |
+| `cases[].expect` | The checks. Every field is optional. |
+
+| `expect` field | Compared with |
+|---|---|
+| `outcome` | `allow`, `deny` or `reject`. |
+| `denyPolicy` | Name of the deny policy. |
+| `rejections` | Reject rules that fired, as `policy/rule`. |
+| `filters` | Tables with a row filter, as `catalog.schema.table` in lower case. |
+| `masks` | Every mask on the tables read, as `table.column=type`. The column is the policy's pattern, such as `phone_*`. |
+| `postMasks` | The masks that run after the query, same form. |
+| `applied` | Every policy in `Enforce` mode that matched, as `Kind/Name`. |
+| `rewrittenSql` | The whole rewritten SQL. |
+| `rewrittenSqlContains` | Parts of the rewritten SQL. |
+| `errorCode` | The error that must happen: `ACL_DENIED` for a deny, the rule code for a reject, else the rewrite error. The test runner ignores the `errorCode` of a deny policy. |
+
+Lists compare as sets, so the order is free. SQL checks ignore white space. An `allow` case fails when the rewrite fails, unless it sets `errorCode`.
 
 ```yaml
-cases:
-  - name: analyst reads orders with tenant filter
-    identity:
-      subject: alice                   # subject id; omit to simulate anonymous
-      issuer: https://idp.example      # optional
-      email: alice@example.com         # optional
-      groups: [analysts]               # optional
-      claims: { tenant_id: acme }      # optional, nested maps allowed
-    request:                           # optional per-request facts
-      headers: { x-region: eu }
-      userAgent: "bi-tool/2.1"
-    sql: "SELECT id FROM pg.public.orders"
-    expect:
-      outcome: allow                   # allow | deny | reject
-      filters: ["pg.public.orders"]    # table keys carrying a row filter
-      masks: ["pg.public.customers.email=partial"]  # "table.column=type"
-      postMasks: ["pg.hr.employees.ssn=fpe"]        # post-query masks, same format
-      applied:                         # "Kind/Name" of every enforcing policy
-        - SqlAccessPolicy/allow-analysts
-        - RowFilterPolicy/tenant-isolation
-      rewrittenSqlContains: ["tenant_id = $1"]      # substrings of the final SQL
-      # rewrittenSql: "SELECT ..."                  # exact match instead
-      # denyPolicy: deny-salaries                   # deny outcomes: which policy
-      # errorCode: ERR_MASK_UNSUPPORTED_CONTEXT     # expected rewrite-stage error
-      # rejections: ["query-guardrails/no-select-star-with-joins"]  # "policy/rule"
+--8<-- "examples/policy-testing/tests/expect.yaml:deny"
 ```
 
-How assertions compare:
+## Schema fixtures for masked tables
 
-- List assertions (`filters`, `masks`, `postMasks`, `applied`, `rejections`) are compared as
-  **sorted sets** — order never matters, but the sets must be equal, not merely overlapping.
-- `rewrittenSql` and `rewrittenSqlContains` are **whitespace-normalised** on both sides.
-- `errorCode` asserts the error a failing rewrite raises — see the
-  [error code reference](../reference/error-codes.md). A case that sets it always runs the
-  rewrite, and fails when the rewrite succeeds. An `allow` case without `errorCode` fails when
-  the rewrite fails.
-
-### Schema fixtures for masked tables
-
-A table with a column mask is read through a subquery that lists its columns (see
-[Column masks](column-masks.md)). The test runner has no live datasource, so a suite that reads a
-masked table declares its columns in a top-level `schema:` block. Without it the case fails with
-a rewrite error that asks for the block. A table with only a row filter needs none, with one
-exception: on a query with a post-query mask, every table under a `SELECT *` of the outermost
-select list needs an entry. Without it the case fails with `ERR_MASK_UNSUPPORTED_CONTEXT`. A
-star there over a subquery, a CTE or a table function fails with the same code whatever the
-`schema:` block lists: name the columns in the query.
+The test runner has no database. For each masked table, list the columns under `schema`, in table order. The key is `catalog.schema.table`.
 
 ```yaml
-schema:
-  pg.public.customers: [id, email, tenant_id]   # catalog.schema.table: columns in table order
-
-cases:
-  - name: star reads email masked
-    identity: { subject: alice, groups: [analysts] }
-    sql: "SELECT * FROM pg.public.customers"
-    expect:
-      outcome: allow
-      masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(sluice_src.email"]
+--8<-- "examples/policies/tests/select-star.yaml"
 ```
 
-Keys must be fully-qualified three-part `catalog.schema.table` names, matching the three-part
-table names in the test SQL. List the columns in the order of the real table: the rewritten SQL
-lists them in that order, and so does `SELECT *`. The block is static fixture data, never
-introspection. Keep it in sync with the real table by hand.
+Without the entry, the case fails and asks for a `schema` block. A table with only a row filter needs no entry, except under `SELECT *` in a query with a post-query mask.
 
-## Running suites
+## A failing case
 
-Each failing case prints its assertion diff (`outcome: want "deny" got "allow"`). Flags:
-`--tests <file-or-dir>` picks the suites, `--strict` rejects unknown YAML fields in the policies,
-`--json` emits the report as JSON.
-
-| Exit code | Meaning |
-| --------- | ------- |
-| 0 | All cases pass |
-| 1 | I/O or flag error |
-| 3 | Policy compile failure, any case failure — or **zero cases ran** |
-
-Zero cases exiting 3 is deliberate: a suite directory that silently matches no files fails CI
-instead of passing it.
-
-## A worked example
-
-The repository ships a runnable example in `examples/policies/`: an allow for the `analysts`
-group, a tenant row filter on `orders`, and a partial mask on `customers.email`. Its main suite,
-`examples/policies/tests/basic.yaml` (a second suite, `select-star.yaml`, reads the masked table
-with `SELECT *`):
+The second case of this suite is wrong.
 
 ```yaml
-schema:
-  pg.public.customers: [id, email, tenant_id]
-
-cases:
-  - name: analyst reads orders with tenant filter
-    identity: { subject: alice, groups: [analysts], claims: { tenant_id: acme } }
-    sql: "SELECT id FROM pg.public.orders"
-    expect:
-      outcome: allow
-      filters: ["pg.public.orders"]
-      applied: ["RowFilterPolicy/tenant-isolation", "SqlAccessPolicy/allow-analysts"]
-      rewrittenSqlContains: ["tenant_id = $1"]
-
-  - name: non-analyst is denied by default
-    identity: { subject: mallory, groups: [guests] }
-    sql: "SELECT id FROM pg.public.orders"
-    expect:
-      outcome: deny
-
-  - name: email is partially masked
-    identity: { subject: alice, groups: [analysts] }
-    sql: "SELECT id, email FROM pg.public.customers"
-    expect:
-      outcome: allow
-      masks: ["pg.public.customers.email=partial"]
-      rewrittenSqlContains: ["substr(sluice_src.email"]
+--8<-- "examples/policy-testing/failing/wrong-outcome.yaml:2"
 ```
 
-```console
-$ sluice policy test examples/policies
-PASS  analyst reads orders with tenant filter
-PASS  non-analyst is denied by default
-PASS  email is partially masked
-PASS  star reads email masked via schema fixture
-
-4 passed, 0 failed, 4 total
+```bash
+--8<-- "examples/policy-testing/steps/01-failing-case.sh"
 ```
 
-Note the second case: default-deny needs no deny policy, only the absence of a matching allow.
-
-## Continuous integration
-
-Validate and test on every change to the policy directory. Sluice is built from source (CGO —
-pg_query and DuckDB — so the runner needs a C toolchain, which `ubuntu-latest` has):
-
-```yaml
-# fragment — GitHub Actions job steps
-- uses: actions/checkout@v4
-- uses: actions/setup-go@v5
-  with:
-    go-version: "1.26"
-- name: Build sluice
-  run: make build
-- name: Validate policies
-  run: ./bin/sluice policy validate ./policies.d --strict
-- name: Test policies
-  run: ./bin/sluice policy test ./policies.d
+```text
+--8<-- "examples/policy-testing/expected/01-failing-case.txt"
 ```
 
-## Debugging a failing case
+With `--json`:
 
-When a case fails and the assertion diff is not enough, replay the identity against the same
-directory with `sluice policy explain`:
-
-```console
-$ sluice policy explain --policies-dir examples/policies \
-    --user alice --groups analysts --claims tenant_id=acme --table pg.public.orders
-subject : alice
-resource: pg.public.orders
-decision: allow
-Kind             Name              Priority  Effect
-----             ----              --------  ------
-RowFilterPolicy  tenant-isolation  50        applied
-SqlAccessPolicy  allow-analysts    0         applied
-row filters:     pg.public.orders
+```bash
+--8<-- "examples/policy-testing/steps/02-json.sh"
 ```
 
-It lists every enforcing policy that matched and the effective decision, which usually pinpoints
-whether the selector, the priority, or the identity is wrong. Add `--json` to also see
-`Audit`/`DryRun` shadow matches (reported in the `shadow` field).
+```json
+--8<-- "examples/policy-testing/expected/02-json.txt"
+```
+
+## Flags and exit codes
+
+| Flag | Meaning |
+|---|---|
+| `--tests <path>` | Suite file or directory, without subdirectories. Default: `<policy-dir>/tests`. |
+| `--strict` | Refuse unknown fields in policies. |
+| `--json` | Print the report as JSON. |
+
+| Exit status | When |
+|---|---|
+| 0 | All cases pass. |
+| 1 | Bad flag, missing tests path, broken suite file, or a policy compile error such as an unknown tag. |
+| 3 | A policy with an invalid field, a failing case, or no case at all. |
+
+## Limits
+
+- Only the YAML engine runs. OPA and `RelationshipPolicy` do not.
+- No SQL runs. A query on a missing column still passes.
+- SQL that does not parse reads no table. A `deny` case with a typo can then pass, unless it sets `errorCode`.
+- Not checked: timeouts, rate limits, budgets and the server row limit (`limits.maxRows`, `max_rows`). A case cannot expect a held query, but `applied` lists the `ApprovalPolicy`. A `QueryRewritePolicy` limit shows in `rewrittenSql`.
+- No authentication method: `subjects.apiKeys` never matches and `subject.auth_method` is empty.
+
+## See also
+
+- [Policies](index.md)
+- [CLI](../reference/cli.md)
+- [Error codes](../reference/error-codes.md)

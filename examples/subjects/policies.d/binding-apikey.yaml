@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: reporting
+spec:
+  claims:
+    subjectId: "reporting-bot"
+  apiKeys:
+    - id: "sl_demo_report"
+      hashRef: "secret://env/SLUICE_APIKEY_REPORT_HASH"
+      groups: ["analysts"]

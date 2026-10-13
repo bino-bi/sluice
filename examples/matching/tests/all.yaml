@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: CC-BY-4.0
+cases:
+  # --8<-- [start:all]
+  - name: a finance manager matches every clause
+    identity: { subject: fiona, groups: [finance, managers] }
+    sql: "SELECT id FROM shop.main.invoices"
+    expect:
+      outcome: allow
+
+  - name: finance alone is not enough
+    identity: { subject: frank, groups: [finance] }
+    sql: "SELECT id FROM shop.main.invoices"
+    expect:
+      outcome: deny
+  # --8<-- [end:all]
+
+  - name: the all selector covers only the table it names
+    identity: { subject: fiona, groups: [finance, managers] }
+    sql: "SELECT id FROM shop.main.orders"
+    expect:
+      outcome: deny

@@ -1,0 +1,6 @@
+{
+  "code": "ACL_REJECTED",
+  "message": "list the columns you need",
+  "query_id": "<query-id>",
+  "policy": "agent-shapes"
+}

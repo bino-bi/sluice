@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1beta1
+kind: RelationshipPolicy
+metadata:
+  name: shop-table-viewers
+spec:
+  match:
+    any:
+      - resources:
+          catalogs: ["shop"]
+  backend:
+    endpoint: "http://localhost:8091"
+    storeId: "demo-store"
+  checks:
+    - objectTemplate: "table:{{catalog}}.{{schema}}.{{table}}"
+      relation: viewer

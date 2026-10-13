@@ -1,0 +1,26 @@
+sequenceDiagram
+    autonumber
+    participant T as Transport (REST / MCP)
+    participant S as queryservice
+    participant P as parser
+    participant E as policy engine
+    participant B as approval broker
+    participant R as rewriter
+    participant D as DuckDB executor
+    participant A as audit dispatcher
+    T->>S: query (authenticated subject)
+    S->>S: slot, rate limit, budget, input caps
+    S->>P: parse (pg_query)
+    S->>E: evaluate (or rewrite-cache hit)
+    alt deny / reject
+        S->>A: decision record
+        S-->>T: ACL_DENIED / ACL_REJECTED
+    else approval required
+        S->>B: consume grant, or park + sync wait
+    end
+    S->>R: rewrite (filters, masks, LIMIT, sample)
+    S->>D: execute (read-only, streaming)
+    S->>S: attach post-query masks
+    S->>A: access record (fail-closed gate)
+    S-->>T: stream rows
+    S->>A: completion record + budget usage (at close)

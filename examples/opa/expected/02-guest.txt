@@ -1,0 +1,5 @@
+{
+  "code": "ACL_DENIED",
+  "message": "only analysts read the shop catalog",
+  "query_id": "<query-id>"
+}

@@ -2,42 +2,37 @@
 
 # Security
 
-Sluice sits between untrusted SQL clients — AI agents, BI tools — and your data.
-Its posture rests on five properties:
+Sluice stands between clients you do not trust and your data. This page lists the defaults and the fail-closed cases.
 
-- **Default-deny.** An empty policy directory is a valid configuration that
-  rejects every query. Access exists only where a `SqlAccessPolicy` explicitly
-  allows it.
-- **Read-only execution.** Only `SELECT`, `EXPLAIN`, `SET`, `SHOW`, and
-  `PRAGMA` reach the engine. Writes are rejected before execution, and every
-  data source is attached `READ_ONLY`. `EXPLAIN` is refused on a table with a
-  row filter or column mask, because the plan would show the policy SQL with
-  its bound values.
-- **Fail-closed audit.** By default a query is not served unless its access
-  record has been durably enqueued to the hash-chained audit log first.
-- **Separate admin plane.** Operational endpoints (`/admin/*`, `/metrics`)
-  live on their own listener (`:9091`) behind a static bearer token, intended
-  for private networks only.
-- **Secret hygiene.** Credentials are referenced via `secret://` URIs, never
-  inlined; secret byte values never appear in logs, metrics, or audit records.
+## Defaults
 
-## In this chapter
-
-| Page | What it covers |
+| Area | Default |
 |---|---|
-| [Audit trail](audit.md) | Record anatomy, the hash chain, fail-closed serving, verification, retention |
-| [Threat model](threat-model.md) | Assets, adversaries, trust boundaries, mitigations, residual risks |
-| [Hardening](hardening.md) | Production checklist: process, network, credentials, audit, data sources, policies |
-| [Key rotation](key-rotation.md) | Rotating peppers, API keys, JWT keys, the audit genesis seed, and mask salts |
+| Access | Default deny. A query runs only when policies allow every table it reads. |
+| Statements | Read-only. Sluice rejects writes and attaches databases `READ_ONLY`. |
+| [Audit log](audit.md) | `audit.failClosed: true`. A client gets rows only after Sluice queued the audit record. |
+| Admin API | Off. Without `admin.token` it accepts every request. |
+| TLS | Off. REST and admin serve plain HTTP until you set `tls`. MCP over HTTP has no `tls` setting. |
+| Secrets | Sluice writes no secret value to logs, metrics or the audit log. |
 
-## Related reading
+See the [hardening checklist](hardening.md) and the [threat model](threat-model.md).
 
-- [Security model](../architecture/security-model.md) explains the design
-  rationale behind these properties — why the pipeline is shaped the way it is.
-- The full STRIDE analysis lives in
-  [`THREAT_MODEL.md`](https://github.com/bino-bi/sluice/blob/main/THREAT_MODEL.md)
-  at the repository root.
-- To report a vulnerability, follow
-  [`SECURITY.md`](https://github.com/bino-bi/sluice/blob/main/SECURITY.md) —
-  private GitHub reporting or `security@bino.bi`, with a 72-hour
-  acknowledgement target.
+## When Sluice fails closed
+
+In each case the client gets an error and no rows.
+
+| Case | Error code |
+|---|---|
+| No policy allows a table | `ACL_DENIED` |
+| A CEL condition fails with an error | `ACL_DENIED` |
+| OPA returns no decision | `ACL_DENIED` |
+| OPA returns an unknown field, or OpenFGA returns an error | `ERR_INTERNAL` |
+| A policy template uses a claim the subject lacks | `ERR_INTERNAL` |
+| The audit queue does not take the record | `ERR_AUDIT_UNAVAILABLE` |
+| The approval queue is full | `ERR_RATE_LIMITED` |
+
+With budgets on and `budget.failClosed: true`, Sluice does not start when the budget store cannot open.
+
+## Report a vulnerability
+
+Follow [`SECURITY.md`](https://github.com/bino-bi/sluice/blob/main/SECURITY.md) in the repository.

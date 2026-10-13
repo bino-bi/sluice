@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "tenant_id", "amount"],
+  "rows": [
+    [1, "acme", 120],
+    [2, "acme", 80]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

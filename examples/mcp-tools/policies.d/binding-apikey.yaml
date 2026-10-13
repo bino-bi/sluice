@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# The demo key is "mcp.supersecret": key id "mcp", secret "supersecret".
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: agents
+spec:
+  claims:
+    subjectId: "mcp-agent"
+  apiKeys:
+    - id: "mcp"
+      hashRef: "secret://env/SLUICE_APIKEY_MCP_HASH"
+      groups: ["agents"]

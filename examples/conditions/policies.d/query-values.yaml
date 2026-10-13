@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# One reject rule per query value. The suite tests/query-values.yaml shows what each value sees.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-probes
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["probes"]
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRejectPolicy
+metadata:
+  name: query-values
+  priority: 100
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["probes"]
+  reject:
+    rules:
+      - name: joins
+        expression: "query.joins > 0"
+      - name: star
+        expression: "query.has_select_star == true"
+      - name: limit
+        expression: "query.has_limit == true"
+      - name: order-by
+        expression: "query.has_order_by == true"
+      - name: cte
+        expression: "query.has_cte == true"
+      - name: union
+        expression: "query.has_union == true"
+      - name: customers
+        expression: "'shop.main.customers' in query.tables"
+      - name: bare-orders
+        expression: "'..orders' in query.tables"

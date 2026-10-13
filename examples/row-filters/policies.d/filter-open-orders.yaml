@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata:
+  name: filter-open-orders
+  priority: 70
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["leads"]
+        resources:
+          catalogs: ["shop"]
+          schemas: ["main"]
+          tables: ["orders"]
+  # OR with the filters before this one.
+  combine: permissive
+  filter:
+    predicate:
+      column: status
+      op: Equals
+      value: "open"

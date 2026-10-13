@@ -3,7 +3,7 @@ site_name: Sluice
 site_description: Policy-enforcing SQL/MCP gateway for DuckDB-attached data sources.
 site_url: https://bino-bi.github.io/sluice/
 site_author: Sluice maintainers
-copyright: Copyright &copy; Sluice maintainers — docs CC-BY-4.0
+copyright: Copyright &copy; Sluice maintainers. Docs CC-BY-4.0
 repo_name: bino-bi/sluice
 repo_url: https://github.com/bino-bi/sluice
 edit_uri: edit/main/docs/
@@ -54,6 +54,7 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.snippets:
       check_paths: true
+      dedent_subsections: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -69,6 +70,17 @@ plugins:
   - minify:
       minify_html: true
 
+# A link to a missing page or heading fails `mkdocs build --strict`.
+validation:
+  links:
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+
+# Pages include files from examples/ as snippets.
+watch:
+  - examples
+
 # Build inputs that live under docs/ but must not be published.
 exclude_docs: |
   requirements.txt
@@ -76,15 +88,12 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Getting started:
-      - getting-started/index.md
+      - Quickstart: getting-started/index.md
       - Install: getting-started/install.md
-      - Quickstart: getting-started/quickstart.md
-      - First query: getting-started/first-query.md
   - Architecture:
       - architecture/index.md
       - Request lifecycle: architecture/request-lifecycle.md
       - Policy engines: architecture/policy-engines.md
-      - Security model: architecture/security-model.md
   - Policies:
       - policies/index.md
       - Fundamentals:
@@ -112,15 +121,10 @@ nav:
       - Observability: operations/observability.md
   - Security:
       - security/index.md
-      - Audit trail: security/audit.md
+      - Audit log: security/audit.md
       - Threat model: security/threat-model.md
       - Hardening: security/hardening.md
       - Key rotation: security/key-rotation.md
-  - Compliance:
-      - compliance/index.md
-      - GDPR: compliance/gdpr.md
-      - BSI C5: compliance/bsi-c5.md
-      - SOC 2: compliance/soc2.md
   - Reference:
       - reference/index.md
       - CLI: reference/cli.md
@@ -131,6 +135,7 @@ nav:
       - Metrics: reference/metrics.md
       - Error codes: reference/error-codes.md
       - Configuration: reference/configuration.md
+      - Glossary: reference/glossary.md
   - Cookbook:
       - cookbook/index.md
       - Multi-tenant isolation: cookbook/multi-tenant.md

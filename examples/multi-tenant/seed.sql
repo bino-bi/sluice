@@ -1,7 +1,4 @@
 -- SPDX-License-Identifier: CC-BY-4.0
--- Multi-tenant example — three tenants share one catalog. The RowFilterPolicy
--- rewrites every query to constrain `tenant_id` to the caller's tenant,
--- proven by two API keys seeing disjoint result sets over the same SQL.
 
 CREATE TABLE IF NOT EXISTS customers (
   id         INTEGER PRIMARY KEY,

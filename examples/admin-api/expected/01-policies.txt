@@ -1,0 +1,27 @@
+{
+  "version": "<version>",
+  "digest": "<digest>",
+  "policies": {
+    "ColumnMaskPolicy": [
+      {
+        "name": "mask-email",
+        "priority": 50,
+        "enforcement": "Enforce"
+      }
+    ],
+    "RowFilterPolicy": [
+      {
+        "name": "filter-tenant",
+        "priority": 80,
+        "enforcement": "Enforce"
+      }
+    ],
+    "SqlAccessPolicy": [
+      {
+        "name": "allow-analysts",
+        "priority": 100,
+        "enforcement": "Enforce"
+      }
+    ]
+  }
+}

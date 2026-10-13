@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# A table with a DuckDB keyword as its name. Only tests/refused-forms.yaml reads it.
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata: { name: allow-show, priority: 100 }
+spec:
+  effect: allow
+  match: { any: [{ resources: { catalogs: ["shop"], schemas: ["main"], tables: ["show"] } }] }
+---
+apiVersion: sluice.bino.bi/v1alpha1
+kind: RowFilterPolicy
+metadata: { name: filter-own-shows, priority: 80 }
+spec:
+  match:
+    any:
+      - subjects: { groups: ["sales"] }
+        resources: { catalogs: ["shop"], schemas: ["main"], tables: ["show"] }
+  filter:
+    predicate: { column: owner, op: Equals, value: "{{ subject.sub }}" }

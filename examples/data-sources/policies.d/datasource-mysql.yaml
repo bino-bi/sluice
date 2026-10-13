@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crm
+spec:
+  type: mysql
+  connection: "mysql://sluice@mysql.internal:3306/crm"
+  credentialsRef: "secret://env/SLUICE_MYSQL_PASSWORD"

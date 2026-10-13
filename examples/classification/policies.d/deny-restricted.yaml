@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-restricted
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          tags: ["restricted"]
+  exclude:
+    any:
+      - subjects:
+          groups: ["auditors"]
+  message: "restricted data needs the auditors group"

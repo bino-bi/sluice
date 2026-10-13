@@ -1,8 +1,4 @@
 # SPDX-License-Identifier: CC-BY-4.0
-# Default mask for the analytics group: email → null. The `exclude`
-# clause carves `sre` out, so break-glass callers see the real value.
-# A separate audit record tags every elevated query, so opening the
-# break-glass is never silent.
 apiVersion: sluice.bino.bi/v1alpha1
 kind: ColumnMaskPolicy
 metadata:
@@ -18,6 +14,7 @@ spec:
           schemas: ["main"]
           tables: ["customers"]
           columns: ["email"]
+  # Subjects in the sre group are not masked.
   exclude:
     any:
       - subjects:

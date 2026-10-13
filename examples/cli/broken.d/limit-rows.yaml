@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRewritePolicy
+metadata:
+  name: limit-rows
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["analysts"]
+  rewrite:
+    limit:
+      # Not valid: the limit must be 1 or more.
+      max: 0

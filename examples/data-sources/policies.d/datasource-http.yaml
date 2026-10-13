@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: web
+spec:
+  type: http
+  # One view per URL: web.main.exports_countries_csv.
+  urls:
+    - "https://data.example.com/exports/countries.csv"
+  headersRef: "secret://env/SLUICE_HTTP_HEADERS"

@@ -1,0 +1,19 @@
+flowchart LR
+    subgraph clients["Client network"]
+        A["AI agent (MCP)"]
+        B["BI tool (REST)"]
+    end
+    subgraph gateway["Sluice process"]
+        I[Identity] --> P[Policy engine] --> R[Rewriter] --> E[DuckDB executor]
+        E --> AU[(Hash-chained audit)]
+    end
+    subgraph ops["Private network"]
+        O[Operator] --> ADM["Admin API :9091"]
+    end
+    subgraph data["Data plane"]
+        DB[("Postgres / MySQL / S3 / ...")]
+    end
+    A -->|"TLS"| I
+    B -->|"TLS"| I
+    E -->|"read-only ATTACH"| DB
+    ADM -.-> P

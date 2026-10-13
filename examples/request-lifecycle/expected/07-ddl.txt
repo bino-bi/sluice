@@ -1,0 +1,5 @@
+{
+  "code": "ERR_UNSUPPORTED_SYNTAX",
+  "message": "DDL not supported",
+  "query_id": "<query-id>"
+}
