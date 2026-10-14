@@ -5,6 +5,7 @@ package pgquery_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/parser"
@@ -28,6 +29,8 @@ func FuzzParse(f *testing.F) {
 		"UPDATE t SET a = 1",
 		"not a sql",
 		"SELECT '", // unterminated literal
+		"SELECT * FROM " + strings.Repeat("t", 64),
+		"SELECT * FROM t semi",
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -62,6 +65,10 @@ func acceptableParseError(err error) bool {
 		errors.Is(err, parser.ErrUnsupported),
 		errors.Is(err, parser.ErrDeparseFailed),
 		errors.Is(err, parser.ErrInputTooLarge),
+		errors.Is(err, parser.ErrIdentifierChars),
+		errors.Is(err, parser.ErrTooDeep),
+		errors.Is(err, parser.ErrIdentifierTooLong),
+		errors.Is(err, parser.ErrAliasKeyword),
 		errors.Is(err, context.Canceled),
 		errors.Is(err, context.DeadlineExceeded):
 		return true

@@ -10,7 +10,7 @@ make test-integration
 
 …which invokes `go test -race -tags=integration ./...`. The nightly
 CI workflow (`.github/workflows/nightly.yaml`) wires this lane into a
-matrix of service containers (Postgres 16, MySQL 8, MinIO, and a
+matrix of service containers (Postgres 16, MySQL 8, and a
 sqlite-file fixture) so every driver gets exercised against the real
 backend — not a mock.
 

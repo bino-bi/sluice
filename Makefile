@@ -69,7 +69,7 @@ build-static: libduckdb
 test:
 	$(GO) test -race -short ./...
 
-# Integration tests pull up testcontainers (postgres, mysql, minio). Runs
+# Integration tests pull up testcontainers (postgres, mysql). Runs
 # only when the `integration` build tag is present so unit-test PRs stay
 # fast. The nightly CI lane sets INTEGRATION=1.
 test-integration:

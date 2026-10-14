@@ -41,41 +41,16 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
-      # NOTE: minio cannot be a service container. Its entrypoint needs a
-      # `server <path>` argument and `services:` has no way to pass a
-      # command, so the container just prints usage and exits. It is
-      # started as a step below instead.
     env:
       INTEGRATION: '1'
       POSTGRES_DSN: postgres://postgres:sluice@localhost:5432/sluice_it?sslmode=disable
       MYSQL_DSN: root:sluice@tcp(localhost:3306)/sluice_it
-      S3_ENDPOINT: http://localhost:9000
-      S3_ACCESS_KEY: sluice
-      S3_SECRET_KEY: sluicesluice
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
           cache: true
-      # Readiness is polled from the runner rather than via --health-cmd
-      # so a failed start surfaces `docker logs` in the step output.
-      - name: start minio
-        run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=sluice \
-            -e MINIO_ROOT_PASSWORD=sluicesluice \
-            minio/minio:latest server /data
-          for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:9000/minio/health/live; then
-              echo "minio ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::minio did not become ready in 60s"
-          docker logs minio
-          exit 1
       # The integration smoke test execs ../../bin/sluice, which
       # `make test-integration` does not build.
       - name: build
