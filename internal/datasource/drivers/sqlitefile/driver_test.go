@@ -110,3 +110,24 @@ func TestFactoryRegisteredViaInit(t *testing.T) {
 		t.Fatal("sqlitefile driver did not self-register via init()")
 	}
 }
+
+func TestHealthCheckMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gone.sqlite")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := newDriver(context.Background(), pkgds.Spec{Name: "gone", Type: Type, Raw: map[string]any{"path": path}})
+	if err != nil {
+		t.Fatalf("newDriver: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// The file check runs before the query, so no connection is needed.
+	if err := ds.HealthCheck(context.Background(), nil, pkgds.HealthOptions{}); err == nil {
+		t.Fatal("HealthCheck passed for a removed file")
+	}
+	if ds.(*driver).lastProbeOK {
+		t.Error("lastProbeOK = true after a failed check")
+	}
+}
