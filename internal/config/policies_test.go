@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bino-bi/sluice/pkg/apitypes"
@@ -141,5 +142,61 @@ func TestLoadDirectory_IgnoresNonYAML(t *testing.T) {
 	}
 	if len(snap.Policies) != 0 {
 		t.Errorf("non-YAML files should be ignored; got %d policies", len(snap.Policies))
+	}
+}
+
+func TestLoadDirectory_SyntheticCrossChecks(t *testing.T) {
+	const crm = `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crm
+spec:
+  type: sqlite
+  path: /tmp/crm.db
+`
+	syn := func(name, source, seed string) string {
+		return `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ` + name + `
+spec:
+  type: synthetic
+  synthetic:
+    source: ` + source + `
+    seed: ` + seed + `
+    tables:
+      - name: main.customers
+        size: { ratio: 0.2 }
+`
+	}
+	cases := []struct {
+		name, docs, want string
+	}{
+		{"ok", crm + "---\n" + syn("crmsynth", "crm", "secret://env/SEED"), ""},
+		{"missing source", syn("crmsynth", "nope", "secret://env/SEED"), `spec.synthetic.source: no DataSource "nope"`},
+		{"synthetic source", crm + "---\n" + syn("crmsynth", "crm", "secret://env/SEED") + "---\n" + syn("second", "crmsynth", "secret://env/SEED"), `DataSource "crmsynth" is synthetic`},
+		{"bad seed provider", crm + "---\n" + syn("crmsynth", "crm", "secret://nope/SEED"), "spec.synthetic.seed: secrets:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "ds.yaml"), []byte(tc.docs), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadDirectory(context.Background(), LoadOptions{Sources: []SourceDir{{Path: dir}}})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("LoadDirectory: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+			var verrs ValidationErrors
+			if !errors.As(err, &verrs) || verrs[0].File == "" {
+				t.Errorf("want ValidationErrors with a file, got %#v", err)
+			}
+		})
 	}
 }

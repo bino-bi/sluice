@@ -43,6 +43,9 @@ type DataSourceSpec struct {
 	Database string `yaml:"database,omitempty" json:"database,omitempty"`
 	TokenRef string `yaml:"tokenRef,omitempty" json:"tokenRef,omitempty"`
 
+	// synthetic
+	Synthetic *SyntheticSpec `yaml:"synthetic,omitempty" json:"synthetic,omitempty"`
+
 	// common
 	// Readonly, Schemas, Tables, AttachMode and HealthCheck have no
 	// effect: every data source is attached read-only and exposes all its
@@ -65,6 +68,7 @@ const (
 	DSHTTP       DataSourceType = "http"
 	DSDuckDBFile DataSourceType = "duckdb_file"
 	DSMotherDuck DataSourceType = "motherduck"
+	DSSynthetic  DataSourceType = "synthetic"
 )
 
 // FileFormat selects the DuckDB reader backing a file-based view.

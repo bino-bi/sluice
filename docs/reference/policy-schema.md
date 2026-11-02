@@ -95,6 +95,29 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `value` | any |  | Value to compare with. |
 | `values` | []any |  | For `In`, `NotIn`, `Between`. |
 
+### SyntheticPrivacy
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `minGroupSize` | int |  | Smallest group of source rows a value, bin or bound may come from. 2 or more. Default 5. |
+| `clipOutliers.lower` | float |  | Source quantile of the lower bound. 0 or more, below `upper`. |
+| `clipOutliers.upper` | float |  | Source quantile of the upper bound. At most 1. |
+| `extremeJitter` | object |  | Moves the lower and upper bound by a random share of the range. `off` turns it off. |
+| `extremeJitter.min` | float |  | Smallest share. 0 or more. |
+| `extremeJitter.max` | float |  | Largest share. At most 0.5. |
+| `spikeWarning` | bool |  | Warn about a few rows far from the rest. Default true. |
+| `strictTags` | []string |  | Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source. |
+
+### SyntheticRule
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `match.columns` | []string |  | Column name patterns. `*` is a wildcard. Case does not matter. |
+| `match.types` | []string |  | Column type patterns, for example `DECIMAL*`. Case does not matter. |
+| `match.tags` | []string |  | Tags of a `DataClassification`. |
+| `generator` | string | yes | Generator name, for example `distribution`, `categorical` or `randomString`. |
+| `args` | map |  | Arguments of the generator. |
+
 ## SqlAccessPolicy
 
 | Field | Type | Required | Meaning |

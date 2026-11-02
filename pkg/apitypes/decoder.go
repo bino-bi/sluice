@@ -452,6 +452,11 @@ func validateDataSource(d *DataSource) error {
 		return noEffect(d, "spec.healthCheck", "every data source gets the built-in health test every 30 seconds")
 	case s.Prefix != "":
 		return noEffect(d, "spec.prefix", "name the files in spec.allowedPaths")
+	case s.Synthetic != nil && s.Type != DSSynthetic:
+		return &ValidationError{
+			Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.synthetic",
+			Reason: "only for type synthetic",
+		}
 	}
 	switch s.Type {
 	case DSPostgres, DSMySQL:
@@ -499,6 +504,8 @@ func validateDataSource(d *DataSource) error {
 				Reason: "required for motherduck",
 			}
 		}
+	case DSSynthetic:
+		return validateSynthetic(d)
 	case "s3_parquet":
 		return &ValidationError{
 			Kind: d.GetKind(), Name: d.Metadata.Name, Field: "spec.type",

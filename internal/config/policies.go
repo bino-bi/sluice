@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -132,12 +133,48 @@ func LoadDirectory(_ context.Context, opts LoadOptions) (*Snapshot, error) {
 		}
 	}
 
+	verrs = append(verrs, checkSynthetic(snap.DataSources, seen)...)
+
 	if len(verrs) > 0 {
 		return nil, verrs
 	}
 
 	snap.Digest = hex.EncodeToString(h.Sum(nil))
 	return snap, nil
+}
+
+// checkSynthetic runs the checks of a synthetic data source that need the
+// other objects: its source exists and is not synthetic, and its seed is
+// a reference the built-in providers resolve. files maps kind/name to the
+// file that declared it.
+func checkSynthetic(sources []*apitypes.DataSource, files map[string]string) ValidationErrors {
+	byName := make(map[string]*apitypes.DataSource, len(sources))
+	for _, ds := range sources {
+		byName[ds.Metadata.Name] = ds
+	}
+	var verrs ValidationErrors
+	for _, ds := range sources {
+		syn := ds.Spec.Synthetic
+		if ds.Spec.Type != apitypes.DSSynthetic || syn == nil {
+			continue
+		}
+		fail := func(msg string) {
+			verrs = append(verrs, &ValidationError{
+				File: files[string(apitypes.KindDataSource)+"/"+ds.Metadata.Name],
+				Kind: apitypes.KindDataSource, Name: ds.Metadata.Name, Msg: msg,
+			})
+		}
+		switch src, ok := byName[syn.Source]; {
+		case !ok:
+			fail(fmt.Sprintf("spec.synthetic.source: no DataSource %q", syn.Source))
+		case src.Spec.Type == apitypes.DSSynthetic:
+			fail(fmt.Sprintf("spec.synthetic.source: DataSource %q is synthetic, use a real source", syn.Source))
+		}
+		if err := secrets.CheckRef(syn.Seed); err != nil {
+			fail("spec.synthetic.seed: " + err.Error())
+		}
+	}
+	return verrs
 }
 
 // collectFiles walks every source directory and returns sorted absolute file

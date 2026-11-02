@@ -46,6 +46,8 @@ var skip = map[string]bool{
 	"SubjectBinding.groupsSource":         true, // the decoder refuses it
 	"RelationshipPolicy.backend.type":     true, // only openfga loads
 	"RelationshipPolicy.backend.cacheTtl": true, // the decoder refuses it: the TTL is policies.rebac.cacheTtl
+	"DataSource.synthetic":                true, // no driver yet
+	"DataSourceType=synthetic":            true, // no driver yet
 }
 
 // pages links each kind to the page that explains it.
@@ -173,6 +175,21 @@ var docs = map[string]doc{
 	"DataSource.format":         {"", "`s3`, `http`: {values}. Default: the file extension."},
 	"DataSource.database":       {"for `motherduck`", "Database name."},
 	"DataSource.tokenRef":       {"for `motherduck`", "Secret reference to the token."},
+
+	"SyntheticPrivacy.minGroupSize":       {"", "Smallest group of source rows a value, bin or bound may come from. 2 or more. Default 5."},
+	"SyntheticPrivacy.clipOutliers.lower": {"", "Source quantile of the lower bound. 0 or more, below `upper`."},
+	"SyntheticPrivacy.clipOutliers.upper": {"", "Source quantile of the upper bound. At most 1."},
+	"SyntheticPrivacy.extremeJitter":      {"", "Moves the lower and upper bound by a random share of the range. `off` turns it off."},
+	"SyntheticPrivacy.extremeJitter.min":  {"", "Smallest share. 0 or more."},
+	"SyntheticPrivacy.extremeJitter.max":  {"", "Largest share. At most 0.5."},
+	"SyntheticPrivacy.spikeWarning":       {"", "Warn about a few rows far from the rest. Default true."},
+	"SyntheticPrivacy.strictTags":         {"", "Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source."},
+
+	"SyntheticRule.match.columns": {"", "Column name patterns. `*` is a wildcard. Case does not matter."},
+	"SyntheticRule.match.types":   {"", "Column type patterns, for example `DECIMAL*`. Case does not matter."},
+	"SyntheticRule.match.tags":    {"", "Tags of a `DataClassification`."},
+	"SyntheticRule.generator":     {"yes", "Generator name, for example `distribution`, `categorical` or `randomString`."},
+	"SyntheticRule.args":          {"", "Arguments of the generator."},
 
 	"SubjectBinding.issuer":                  {"", "Issuer (`iss`) of the JWTs."},
 	"SubjectBinding.audience":                {"", "Expected audience (`aud`)."},
