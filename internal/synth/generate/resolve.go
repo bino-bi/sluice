@@ -176,7 +176,7 @@ func (r *Resolver) byType(col Column, counts profile.Counts) Choice {
 	kind := col.Kind()
 	if kind == profile.KindOther {
 		c := def(apitypes.GenNull, nil)
-		c.Warning = "type " + col.Type + ", written as NULL"
+		c.Warning = "type " + profile.DisplayType(col.Type) + ", written as NULL"
 		return c
 	}
 	// Every profile-based default fails on fewer than k non-null rows,

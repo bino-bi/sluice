@@ -32,6 +32,9 @@ const (
 	EventApprovalApproved  EventType = "approval-approved"
 	EventApprovalRejected  EventType = "approval-rejected"
 	EventApprovalExpired   EventType = "approval-expired"
+	// EventSyntheticBuild is written at the start and the end of a
+	// synthetic snapshot build.
+	EventSyntheticBuild EventType = "synthetic-build"
 )
 
 // Decision labels used in Record.Decision. They mirror policy.Outcome plus

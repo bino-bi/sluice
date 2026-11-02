@@ -212,5 +212,5 @@ func cumulative(weights []float64) []float64 {
 
 // typeError names the column and its type, not a value.
 func typeError(col Column, g apitypes.SyntheticGenerator) error {
-	return fmt.Errorf("%w: %s on %s", ErrType, g, col.Type)
+	return fmt.Errorf("%w: %s on %s", ErrType, g, profile.DisplayType(col.Type))
 }

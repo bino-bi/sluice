@@ -56,6 +56,31 @@ func KindOf(dataType string) Kind {
 	return KindOther
 }
 
+// DisplayType returns dataType with every ENUM label list cut to the bare
+// word ENUM. The list holds rare labels too, so it must not reach a
+// report, a log or an error text (plan 1.8, 1.14).
+func DisplayType(dataType string) string {
+	var b strings.Builder
+	for i := 0; i < len(dataType); {
+		if !strings.HasPrefix(strings.ToUpper(dataType[i:]), "ENUM(") {
+			b.WriteByte(dataType[i])
+			i++
+			continue
+		}
+		b.WriteString("ENUM")
+		i += len("ENUM(")
+		for quoted := false; i < len(dataType); i++ {
+			if c := dataType[i]; c == '\'' {
+				quoted = !quoted
+			} else if c == ')' && !quoted {
+				i++
+				break
+			}
+		}
+	}
+	return b.String()
+}
+
 // Numeric reports whether the kind has a number axis: the value for
 // numbers, days since 1970-01-01 for DATE, seconds since the epoch for
 // TIMESTAMP and seconds of the day for TIME.
@@ -84,6 +109,10 @@ func (k Kind) axis(x string) string {
 	}
 	return ""
 }
+
+// Axis returns the SQL expression of the number axis of the quoted
+// column x of type dataType, or "" when the type has none.
+func Axis(dataType, x string) string { return KindOf(dataType).axis(x) }
 
 // defaultUnit is the smallest step of a value of dataType on the number
 // axis, or 0 for continuous types. DECIMAL(p,s) steps by 10^-s, because
