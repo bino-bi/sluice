@@ -39,9 +39,11 @@ Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also ha
 | 1 | ~datasource check~ | A policy file is not valid, or the name is unknown. |
 | 2 | ~serve~ | A listener failed, for example the port is in use. |
 | 2 | ~datasource check~ | The directory holds no ~DataSource~ object. |
-| 3 | ~config validate~, ~policy validate~, ~policy explain~ | A policy or the server config is not valid. |
+| 3 | ~config validate~, ~policy validate~, ~policy explain~, ~synth build~ | A policy or the server config is not valid. |
 | 3 | ~policy test~ | A policy file is not valid or does not compile, a case failed, or no case ran. |
 | 1 | ~audit verify~ | The chain is keyed and ~--key-ref~ is missing. |
+| 1 | ~synth build~, ~synth report~ | The name is unknown or not a ~synthetic~ data source, or there is no report. |
+| 4 | ~synth build~ | The build failed: a check such as size or ~strictTags~, or an error while reading the source. |
 | 4 | ~audit verify~ | The hash chain is broken, a line is not JSON, the anchor or the key differs, or the directory has no record. |
 `
 
@@ -85,6 +87,10 @@ var notes = map[string]string{
 	"schema export": `Without ~--kind~ the output is one schema with a ~oneOf~ over all kinds.`,
 
 	"serve": `Starts the REST API. The MCP server and the admin API start when the server config enables them. ~SIGINT~ and ~SIGTERM~ stop the server. ~SIGHUP~ reloads the policies. A binary built with ~-tags=pure_parser~ does not start.`,
+
+	"synth build": `The command reads the source data. It does not use policies. It writes no audit record to the audit log. It prints the record as one JSON line on stderr and stores it in the report.`,
+
+	"synth report": `Without ~--build~ the command prints the report of the current build. ~--json~ prints the report file.`,
 }
 
 // overrides maps an exact help text to its page text: style rule breaks, glossary terms, facts the help leaves out.
@@ -96,6 +102,7 @@ var overrides = map[string]string{
 	"path to sluice.yaml (optional)":                     "path to the server config (optional)",
 	"path to sluice.yaml (defaults apply when omitted)":  "path to the server config (defaults apply when omitted)",
 	"override policies.directory from sluice.yaml":       "override policies.directory from the server config",
+	"override synthetic.dir from sluice.yaml":            "override synthetic.dir from the server config",
 	"server config file (SLUICE_* env also applies)":     "server config (SLUICE_* env also applies)",
 	"directory containing DataSource manifests":          "directory containing DataSource objects",
 	"directory containing policy manifests":              "directory containing policy files",

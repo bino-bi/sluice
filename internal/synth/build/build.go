@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	"github.com/bino-bi/sluice/internal/executor"
@@ -76,6 +77,10 @@ type Input struct {
 	// Log gets the build log. Raw DuckDB errors go there at debug level.
 	// Nil uses slog.Default.
 	Log *slog.Logger
+	// Audit, when set, returns the record stored in the report's audit
+	// field. It runs each time the report is written. The CLI uses it,
+	// because it does not write to the audit log.
+	Audit func(*Report) *audit.Record
 }
 
 // Run builds one snapshot and publishes it. It returns the report also
@@ -142,7 +147,7 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 	}
 	b.cleanup()
 	b.finish(ResultFailed, err)
-	if werr := l.writeReport(b.rep); werr != nil {
+	if werr := b.writeReport(); werr != nil {
 		b.log.Error("synthetic build: cannot write the report", "name", l.Name, "build_id", id, "error", werr)
 	}
 	return b.rep, err
@@ -170,6 +175,13 @@ func (b *builder) finish(result string, err error) {
 	}
 	b.rep.FinishedAt = now.UTC()
 	b.rep.DurationMs = now.Sub(b.rep.StartedAt).Milliseconds()
+}
+
+func (b *builder) writeReport() error {
+	if b.in.Audit != nil {
+		b.rep.Audit = b.in.Audit(b.rep)
+	}
+	return b.l.writeReport(b.rep)
 }
 
 // cleanup removes the files of a failed build. The report stays.
@@ -231,7 +243,7 @@ func (b *builder) run(ctx context.Context) error {
 
 	b.rep.ContentHash = "sha256:" + hex.EncodeToString(b.hash.Sum(nil))
 	b.finish(ResultSucceeded, nil)
-	if err := b.l.writeReport(b.rep); err != nil {
+	if err := b.writeReport(); err != nil {
 		return fmt.Errorf("report: %w", err)
 	}
 	return b.l.publish(b.rep.BuildID)

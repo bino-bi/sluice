@@ -122,3 +122,4 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `sample.maxRows` | `10000` | Most rows of one sample. |
 | `sample.minGroupRows` | `10` | Smallest group a stratified sample keeps. |
 | `synthetic.dir` | `./synthetic` | Folder of the synthetic snapshots and reports. Sluice reads it. Builds write to it. |
+| `synthetic.maxRatio` | `0.2` | Largest share of source rows a synthetic table may have. A build over it fails. |

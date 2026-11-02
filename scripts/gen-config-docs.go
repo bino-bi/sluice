@@ -170,6 +170,7 @@ var meaning = map[string]string{
 	"sample.maxRows":      "Most rows of one sample.",
 	"sample.minGroupRows": "Smallest group a stratified sample keeps.",
 	"synthetic.dir":       "Folder of the synthetic snapshots and reports. Sluice reads it. Builds write to it.",
+	"synthetic.maxRatio":  "Largest share of source rows a synthetic table may have. A build over it fails.",
 }
 
 const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->

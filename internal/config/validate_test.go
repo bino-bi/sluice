@@ -3,6 +3,7 @@
 package config
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -183,6 +184,25 @@ func TestServerConfigValidate(t *testing.T) {
 			name:    "empty synthetic dir rejected",
 			mutate:  func(c *ServerConfig) { c.Synthetic.Dir = "" },
 			wantErr: []string{"synthetic.dir"},
+		},
+		{
+			name:    "synthetic maxRatio of zero rejected",
+			mutate:  func(c *ServerConfig) { c.Synthetic.MaxRatio = 0 },
+			wantErr: []string{"synthetic.maxRatio"},
+		},
+		{
+			name:    "synthetic maxRatio above one rejected",
+			mutate:  func(c *ServerConfig) { c.Synthetic.MaxRatio = 1.5 },
+			wantErr: []string{"synthetic.maxRatio"},
+		},
+		{
+			name:    "synthetic maxRatio of NaN rejected",
+			mutate:  func(c *ServerConfig) { c.Synthetic.MaxRatio = math.NaN() },
+			wantErr: []string{"synthetic.maxRatio"},
+		},
+		{
+			name:   "synthetic maxRatio of one is valid",
+			mutate: func(c *ServerConfig) { c.Synthetic.MaxRatio = 1 },
 		},
 		{
 			name: "mcp.tls with cert and key is valid",

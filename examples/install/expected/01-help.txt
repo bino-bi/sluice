@@ -15,6 +15,7 @@ Available Commands:
   policy      Inspect, validate, and explain policies
   schema      Inspect the policy DSL schema
   serve       Start the sluice server
+  synth       Build and inspect synthetic data snapshots
   version     Print sluice build identity
 
 Flags:

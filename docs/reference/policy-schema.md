@@ -191,7 +191,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `type` | string | yes | `postgres`, `mysql`, `sqlite`, `s3`, `http`, `duckdb_file`, `motherduck`. |
+| `type` | string | yes | `postgres`, `mysql`, `sqlite`, `s3`, `http`, `duckdb_file`, `motherduck`, `synthetic`. |
 | `connection` | string | for `postgres`, `mysql` | Connection URL. |
 | `credentialsRef` | string |  | Secret reference. `postgres`, `mysql`: the password. `s3`: the access key as JSON. |
 | `path` | string | for `sqlite`, `duckdb_file` | Database file. |
@@ -204,6 +204,19 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `format` | string |  | `s3`, `http`: `parquet`, `csv`, `json`, `xlsx`. Default: the file extension. |
 | `database` | string | for `motherduck` | Database name. |
 | `tokenRef` | string | for `motherduck` | Secret reference to the token. |
+| `synthetic` | object | for `synthetic` | Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits. |
+| `synthetic.source` | string | yes | Name of the data source to profile. Not a `synthetic` one. |
+| `synthetic.seed` | string | yes | Secret reference to the seed. At least 16 bytes. The same seed and data give the same rows. |
+| `synthetic.build.onStart` | string |  | `never`, `ifMissing`. Default `never`. `ifMissing` builds at server start when no snapshot exists. |
+| `synthetic.privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for all tables. |
+| `synthetic.rules` | [SyntheticRule](#syntheticrule) list |  | Generator rules for all tables. A table rule comes first. |
+| `synthetic.tables` | list | yes | At least one table. |
+| `synthetic.tables[].name` | string | yes | Source table as `schema.table`. |
+| `synthetic.tables[].size.ratio` | float | one of two | Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails. |
+| `synthetic.tables[].size.rows` | int | one of two | Fixed row count. 0 copies only the columns. |
+| `synthetic.tables[].privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for this table. Not `strictTags`. |
+| `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. |
+| `synthetic.tables[].rules` | [SyntheticRule](#syntheticrule) list |  | Generator rules for this table. A column entry comes first. |
 
 ## SubjectBinding
 

@@ -130,6 +130,10 @@ func (c *ServerConfig) Validate() error {
 	if c.Synthetic.Dir == "" {
 		errs = append(errs, errors.New("synthetic.dir: must not be empty"))
 	}
+	// Written so NaN fails the check.
+	if !(c.Synthetic.MaxRatio > 0 && c.Synthetic.MaxRatio <= 1) {
+		errs = append(errs, fmt.Errorf("synthetic.maxRatio: %v out of range (0, 1]", c.Synthetic.MaxRatio))
+	}
 	// The names that the MCP transport accepts (mcp.ParseTransport).
 	switch c.MCP.Transport {
 	case "", "stdio":

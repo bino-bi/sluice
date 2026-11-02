@@ -257,6 +257,9 @@ type SampleConfig struct {
 type SyntheticConfig struct {
 	// Dir holds the snapshots and reports, one folder per data source.
 	Dir string `mapstructure:"dir"`
+	// MaxRatio caps the synthetic rows of a table as a share of its
+	// source rows.
+	MaxRatio float64 `mapstructure:"maxRatio"`
 }
 
 // ApprovalConfig configures the human-approval workflow. The feature
@@ -397,7 +400,8 @@ func DefaultServerConfig() ServerConfig {
 			MinGroupRows: 10,
 		},
 		Synthetic: SyntheticConfig{
-			Dir: "./synthetic",
+			Dir:      "./synthetic",
+			MaxRatio: 0.2,
 		},
 	}
 }

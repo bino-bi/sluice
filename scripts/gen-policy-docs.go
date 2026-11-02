@@ -46,8 +46,6 @@ var skip = map[string]bool{
 	"SubjectBinding.groupsSource":         true, // the decoder refuses it
 	"RelationshipPolicy.backend.type":     true, // only openfga loads
 	"RelationshipPolicy.backend.cacheTtl": true, // the decoder refuses it: the TTL is policies.rebac.cacheTtl
-	"DataSource.synthetic":                true, // no driver yet
-	"DataSourceType=synthetic":            true, // no driver yet
 }
 
 // pages links each kind to the page that explains it.
@@ -175,6 +173,20 @@ var docs = map[string]doc{
 	"DataSource.format":         {"", "`s3`, `http`: {values}. Default: the file extension."},
 	"DataSource.database":       {"for `motherduck`", "Database name."},
 	"DataSource.tokenRef":       {"for `motherduck`", "Secret reference to the token."},
+
+	"DataSource.synthetic":                     {"for `synthetic`", "Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits."},
+	"DataSource.synthetic.source":              {"yes", "Name of the data source to profile. Not a `synthetic` one."},
+	"DataSource.synthetic.seed":                {"yes", "Secret reference to the seed. At least 16 bytes. The same seed and data give the same rows."},
+	"DataSource.synthetic.build.onStart":       {"", "{values}. Default `never`. `ifMissing` builds at server start when no snapshot exists."},
+	"DataSource.synthetic.privacy":             {"", "Privacy settings for all tables."},
+	"DataSource.synthetic.rules":               {"", "Generator rules for all tables. A table rule comes first."},
+	"DataSource.synthetic.tables":              {"yes", "At least one table."},
+	"DataSource.synthetic.tables[].name":       {"yes", "Source table as `schema.table`."},
+	"DataSource.synthetic.tables[].size.ratio": {"one of two", "Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails."},
+	"DataSource.synthetic.tables[].size.rows":  {"one of two", "Fixed row count. 0 copies only the columns."},
+	"DataSource.synthetic.tables[].privacy":    {"", "Privacy settings for this table. Not `strictTags`."},
+	"DataSource.synthetic.tables[].columns":    {"", "Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`."},
+	"DataSource.synthetic.tables[].rules":      {"", "Generator rules for this table. A column entry comes first."},
 
 	"SyntheticPrivacy.minGroupSize":       {"", "Smallest group of source rows a value, bin or bound may come from. 2 or more. Default 5."},
 	"SyntheticPrivacy.clipOutliers.lower": {"", "Source quantile of the lower bound. 0 or more, below `upper`."},

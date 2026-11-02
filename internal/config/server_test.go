@@ -40,6 +40,9 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Synthetic.Dir != "./synthetic" {
 		t.Errorf("Synthetic.Dir = %q, want ./synthetic", cfg.Synthetic.Dir)
 	}
+	if cfg.Synthetic.MaxRatio != 0.2 {
+		t.Errorf("Synthetic.MaxRatio = %v, want 0.2", cfg.Synthetic.MaxRatio)
+	}
 }
 
 // An explicit 0 turns the cut of logged errors off. It must not fall back
