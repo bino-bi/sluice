@@ -33,6 +33,7 @@ type ServerConfig struct {
 	Approval    ApprovalConfig    `mapstructure:"approval"`
 	Budget      BudgetConfig      `mapstructure:"budget"`
 	Sample      SampleConfig      `mapstructure:"sample"`
+	Synthetic   SyntheticConfig   `mapstructure:"synthetic"`
 }
 
 // RESTConfig configures the public REST transport. TLS is MVP-optional.
@@ -252,6 +253,12 @@ type SampleConfig struct {
 	MinGroupRows int64 `mapstructure:"minGroupRows"`
 }
 
+// SyntheticConfig configures synthetic data sources.
+type SyntheticConfig struct {
+	// Dir holds the snapshots and reports, one folder per data source.
+	Dir string `mapstructure:"dir"`
+}
+
 // ApprovalConfig configures the human-approval workflow. The feature
 // activates when at least one ApprovalPolicy is loaded; PublicBaseURL is
 // then required (validated at serve boot).
@@ -388,6 +395,9 @@ func DefaultServerConfig() ServerConfig {
 		Sample: SampleConfig{
 			MaxRows:      10_000,
 			MinGroupRows: 10,
+		},
+		Synthetic: SyntheticConfig{
+			Dir: "./synthetic",
 		},
 	}
 }

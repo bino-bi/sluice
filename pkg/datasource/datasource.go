@@ -61,6 +61,13 @@ type ExternalPather interface {
 	ExternalPaths() []string
 }
 
+// StateReporter is an optional interface for drivers whose data has a
+// build state, such as a synthetic source ("not_built", "ready",
+// "stale"). The registry copies State into the admin status view.
+type StateReporter interface {
+	State() string
+}
+
 // Reloadable is an optional interface for drivers that can reapply
 // configuration (e.g. rotated credentials) without tearing down connections.
 // Runtime support lands in v1; declaring the interface here lets drivers

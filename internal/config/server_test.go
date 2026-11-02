@@ -37,6 +37,9 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Sample.MinGroupRows != 10 {
 		t.Errorf("Sample.MinGroupRows = %d, want 10", cfg.Sample.MinGroupRows)
 	}
+	if cfg.Synthetic.Dir != "./synthetic" {
+		t.Errorf("Synthetic.Dir = %q, want ./synthetic", cfg.Synthetic.Dir)
+	}
 }
 
 // An explicit 0 turns the cut of logged errors off. It must not fall back

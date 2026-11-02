@@ -15,6 +15,8 @@ type dataSourceEntry struct {
 	LastError      string    `json:"last_error,omitempty"`
 	LatencyMs      int64     `json:"latency_ms,omitempty"`
 	SchemaPulledAt time.Time `json:"schema_pulled_at"`
+	// Status is the build state of a synthetic source.
+	Status string `json:"status,omitempty"`
 }
 
 type dataSourcesResponse struct {
@@ -36,6 +38,7 @@ func (s *Server) handleDataSources(w http.ResponseWriter, _ *http.Request) {
 				LastError:      st.LastError,
 				LatencyMs:      st.LastLatency.Milliseconds(),
 				SchemaPulledAt: st.SchemaPulledAt,
+				Status:         st.State,
 			})
 		}
 	}

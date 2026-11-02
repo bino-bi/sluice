@@ -21,6 +21,7 @@ import (
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/postgres"   // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/s3"         // driver registration
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/sqlitefile" // driver registration
+	_ "github.com/bino-bi/sluice/internal/datasource/drivers/synthetic"  // driver registration
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
@@ -163,17 +164,18 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 
 	// 7. Data-source registry (AttachHook only usable after executor init).
 	deps.sourceReg, err = datasource.New(ctx, datasource.Options{
-		Snapshot: &datasource.Snapshot{DataSources: snap.DataSources},
-		Secrets:  secrets.NewDataSourceResolver(deps.resolver),
-		Logger:   deps.log,
-		FailFast: scfg.DataSources.FailFast,
+		Snapshot:     &datasource.Snapshot{DataSources: snap.DataSources},
+		Secrets:      secrets.NewDataSourceResolver(deps.resolver),
+		Logger:       deps.log,
+		FailFast:     scfg.DataSources.FailFast,
+		SyntheticDir: scfg.Synthetic.Dir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("datasource registry: %w", err)
 	}
 
-	// 8. Executor (DuckDB); installs AttachHook so every fresh connection
-	//    re-ATTACHes every catalog.
+	// 8. Executor (DuckDB); installs AttachHook, which ATTACHes every
+	//    catalog once for the whole instance before the hardening lock.
 	deps.exec, err = executor.New(ctx, executor.Config{
 		Path: "",
 		Harden: executor.HardenConfig{

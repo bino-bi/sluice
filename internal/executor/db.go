@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -57,6 +58,13 @@ type Executor struct {
 	cfg Config
 	db  *sql.DB
 	log *slog.Logger
+
+	// attachMu orders catalog swaps against query starts. ATTACH and
+	// DETACH change the whole instance, so Exclusive holds the write
+	// side while it swaps; Execute holds the read side from ensureInit
+	// until QueryContext returns. A result that streams after that keeps
+	// reading even when its catalog is detached.
+	attachMu sync.RWMutex
 }
 
 // New opens the embedded DuckDB instance and returns an Executor. A
@@ -120,6 +128,8 @@ func (e *Executor) Ping(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", ErrOpen, err)
 	}
 	defer func() { _ = conn.Close() }()
+	e.attachMu.RLock()
+	defer e.attachMu.RUnlock()
 	if err := e.ensureInit(ctx, conn); err != nil {
 		return err
 	}
@@ -141,6 +151,8 @@ func (e *Executor) CurrentDatabase(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrOpen, err)
 	}
 	defer func() { _ = conn.Close() }()
+	e.attachMu.RLock()
+	defer e.attachMu.RUnlock()
 	if err := e.ensureInit(ctx, conn); err != nil {
 		return "", err
 	}
@@ -149,6 +161,38 @@ func (e *Executor) CurrentDatabase(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: %w", ErrExecute, err)
 	}
 	return name, nil
+}
+
+// exclusivePoll is how often Exclusive tries the write lock.
+const exclusivePoll = 10 * time.Millisecond
+
+// Exclusive runs fn on a hardened connection while no query starts. It
+// is for changes to the whole instance, such as a DETACH and ATTACH of a
+// catalog. It does not wait for open results to close. The connection
+// is taken before the lock, so a full pool does not block new queries
+// while Exclusive waits. New queries also keep starting while Exclusive
+// waits for running ones, so under steady load it may wait until ctx ends.
+func (e *Executor) Exclusive(ctx context.Context, fn func(ctx context.Context, conn *sql.Conn) error) error {
+	conn, err := e.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrConnUnavailable, err)
+	}
+	defer func() { _ = conn.Close() }()
+	// A blocked Lock makes every new RLock wait behind it, and QueryContext
+	// holds RLock until a blocking operator (aggregate, sort) is done. So
+	// one long query would stall all query starts. TryLock does not.
+	for !e.attachMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return wrapRunErr(ctx.Err())
+		case <-time.After(exclusivePoll):
+		}
+	}
+	defer e.attachMu.Unlock()
+	if err := e.ensureInit(ctx, conn); err != nil {
+		return err
+	}
+	return fn(ctx, conn)
 }
 
 // Close drains the pool and releases the DuckDB instance. Safe to call
@@ -161,14 +205,16 @@ func (e *Executor) Close() error {
 }
 
 // ensureInit runs the attach + hardening sequence on conn if the
-// connection hasn't already been initialised. The order matters:
+// instance hasn't already been initialised. The order matters:
 // data-source drivers need to INSTALL/LOAD extensions (which requires
 // external access) and ATTACH their catalogs before we lock the
-// connection down. We detect fresh connections by probing
-// lock_configuration — DuckDB starts with it false and, post-hardening,
-// we set it true; once true, the setting can't be changed for the
-// connection's lifetime. That means "lock_configuration = true" is a
-// reliable, connection-local fingerprint for "already hardened".
+// configuration down. We detect a fresh instance by probing
+// lock_configuration. DuckDB starts with it false and, post-hardening,
+// we set it true; once true, the setting can't be changed. Settings and
+// ATTACH belong to the whole DuckDB instance, not to one connection, so
+// "lock_configuration = true" means the instance is already hardened
+// and every catalog is attached. In practice the first connection does
+// the work and later connections skip it.
 func (e *Executor) ensureInit(ctx context.Context, conn *sql.Conn) error {
 	var locked bool
 	row := conn.QueryRowContext(ctx, "SELECT value::BOOLEAN FROM duckdb_settings() WHERE name='lock_configuration'")

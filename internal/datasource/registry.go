@@ -29,6 +29,9 @@ type Status struct {
 	// SchemaPulledAt is the most-recent time the schema cache finished
 	// loading this catalog. Zero until the first successful Refresh.
 	SchemaPulledAt time.Time
+	// State is the build state of drivers that implement
+	// pkgds.StateReporter, empty for the others.
+	State string
 }
 
 // AttachHook is the callback the executor installs on every new DuckDB
@@ -66,6 +69,10 @@ type Options struct {
 
 	// Clock returns "now". Nil uses time.Now.
 	Clock func() time.Time
+
+	// SyntheticDir is synthetic.dir, the folder of the synthetic
+	// snapshots. Only synthetic sources receive it.
+	SyntheticDir string
 }
 
 // Snapshot is the subset of the config snapshot this package reads.
@@ -183,7 +190,7 @@ func (r *Registry) addDataSource(ctx context.Context, spec *apitypes.DataSource)
 	driverSpec := pkgds.Spec{
 		Name:    spec.Metadata.Name,
 		Type:    typ,
-		Raw:     marshalSpec(spec.Spec),
+		Raw:     marshalSpec(spec.Spec, r.opts.SyntheticDir),
 		Secrets: r.opts.Secrets,
 	}
 
@@ -211,7 +218,7 @@ func (r *Registry) addDataSource(ctx context.Context, spec *apitypes.DataSource)
 // marshalSpec flattens apitypes.DataSourceSpec into the free-form Raw
 // map drivers consume. We deliberately avoid round-tripping through JSON
 // so this stays allocation-light on the composition hot path.
-func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
+func marshalSpec(s apitypes.DataSourceSpec, syntheticDir string) map[string]any {
 	raw := map[string]any{
 		"type": string(s.Type),
 	}
@@ -251,6 +258,12 @@ func marshalSpec(s apitypes.DataSourceSpec) map[string]any {
 	if s.TokenRef != "" {
 		raw["tokenRef"] = s.TokenRef
 	}
+	if s.Synthetic != nil {
+		raw["synthetic"] = s.Synthetic
+	}
+	if s.Type == apitypes.DSSynthetic {
+		raw["syntheticDir"] = syntheticDir
+	}
 	return raw
 }
 
@@ -287,7 +300,11 @@ func (r *Registry) Statuses() []Status {
 	out := make([]Status, 0, len(r.order))
 	for _, name := range r.order {
 		if s, ok := r.statuses[name]; ok {
-			out = append(out, *s)
+			st := *s
+			if sr, ok := r.sources[name].(pkgds.StateReporter); ok {
+				st.State = sr.State()
+			}
+			out = append(out, st)
 		}
 	}
 	return out

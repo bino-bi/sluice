@@ -270,3 +270,38 @@ func TestRegistryMarshalSpecPassesFileFields(t *testing.T) {
 		t.Errorf("raw urls = %v; want the configured URL", captured["urls"])
 	}
 }
+
+const stateType = "fake_state_registry_test"
+
+type stateSource struct {
+	pkgds.DataSource
+	state string
+}
+
+func (s stateSource) State() string { return s.state }
+
+func init() {
+	pkgds.Register(stateType, func(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
+		return stateSource{DataSource: testfakes.New(spec.Name, pkgds.Schema{}), state: "ready"}, nil
+	})
+}
+
+func TestStatusesCarryState(t *testing.T) {
+	syn := dsSpec("syn")
+	syn.Spec.Type = stateType
+	r, err := datasource.New(context.Background(), datasource.Options{
+		Snapshot:       &datasource.Snapshot{DataSources: []*apitypes.DataSource{dsSpec("pg"), syn}},
+		HealthInterval: -1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got := map[string]string{}
+	for _, s := range r.Statuses() {
+		got[s.Name] = s.State
+	}
+	if got["pg"] != "" || got["syn"] != "ready" {
+		t.Errorf("states = %v; want pg empty, syn ready", got)
+	}
+}

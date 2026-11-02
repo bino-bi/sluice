@@ -180,6 +180,11 @@ func TestServerConfigValidate(t *testing.T) {
 			mutate: func(c *ServerConfig) { c.Sample.MinGroupRows = 0 },
 		},
 		{
+			name:    "empty synthetic dir rejected",
+			mutate:  func(c *ServerConfig) { c.Synthetic.Dir = "" },
+			wantErr: []string{"synthetic.dir"},
+		},
+		{
 			name: "mcp.tls with cert and key is valid",
 			mutate: func(c *ServerConfig) {
 				c.MCP.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}

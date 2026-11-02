@@ -127,13 +127,19 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		}
 		return nil, fmt.Errorf("%w: %w", ErrConnUnavailable, err)
 	}
+	// The read lock is taken after the connection, never while waiting
+	// for one: with MaxOpen=1 Exclusive holds the only connection and
+	// waits for the write lock.
+	e.attachMu.RLock()
 	if err := e.ensureInit(execCtx, conn); err != nil {
+		e.attachMu.RUnlock()
 		cancel()
 		_ = conn.Close()
 		return nil, err
 	}
 
 	rows, err := conn.QueryContext(execCtx, req.SQL, req.Params...)
+	e.attachMu.RUnlock()
 	if err != nil {
 		cancel()
 		_ = conn.Close()

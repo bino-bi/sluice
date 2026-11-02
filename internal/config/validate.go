@@ -127,6 +127,9 @@ func (c *ServerConfig) Validate() error {
 	if c.Sample.MinGroupRows < 0 {
 		errs = append(errs, errors.New("sample.minGroupRows: must not be negative (0 keeps all groups)"))
 	}
+	if c.Synthetic.Dir == "" {
+		errs = append(errs, errors.New("synthetic.dir: must not be empty"))
+	}
 	// The names that the MCP transport accepts (mcp.ParseTransport).
 	switch c.MCP.Transport {
 	case "", "stdio":
