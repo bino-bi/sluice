@@ -1,0 +1,38 @@
+distribution: 24.24 | 11.51 | 42.05 | 58.96 | 12.12 | 35.58
+distribution-int: 53 | 19 | 102 | 99 | 108 | 13
+distribution-steps: 35 | 70 | 70 | 70 | 20 | 70
+distribution-time: 32.01601725952767 | 13.943369111402495 | 17.823140687695417 | <nil> | 15.209311543595485 | 26.382350439556845
+uniform: 1.4374117494590437 | 1.9127456332153512 | 1.1825727448547345 | 1.4018228454261832 | 1.9331211616717479 | 1.916481479968652
+normal: 62.6 | 61.3 | 56 | 51.5 | 42.5 | 24.6
+lognormal: 63.958 | 30.858 | 80.691 | 76.947 | 51.432 | 45.256
+histogram: 62 | 67 | 35 | 37 | 71 | 42
+bucket-edges: 40-59 | <20 | 40-59 | 40-59 | <20 | <20
+bucket-n: <nil> | 43-65 | >=65 | <24 | <nil> | >=65
+constant: 7 | 7 | 7 | 7 | 7 | 7
+sequence: 100 | 105 | 110 | 115 | 120 | 125
+sequence-text: 1 | 2 | 3 | 4 | 5 | 6
+range: 0.62 | 0.65 | 0.73 | 0.15 | 0.49 | 0.28
+categorical: M | M | M | M | W | W
+uniformCategory: W | W | D | M | D | M
+weighted: c | b | c | c | b | c
+boolean: true | false | true | true | true | false
+shuffleLabels: W | M | M | M | D | M
+randomString: sliluf | S2lzlcfteq7d | sjyhexpy | Mxbzreap | s4k6wi | Snjjc6wj
+pattern: Bk-46a | MO-5359 | TY-7668 | Yd-52w | VE-9698 | WK-9403
+regex: HU-762 | DN-791 | GW-363 | EJ-670 | PG-019y | EX-719y
+fake-name: Kai Gomez | Sage Young | Sage Meyer | Morgan Adams | Morgan Foster | Sage Evans
+fake-email: noah.xu@example.org | quinn.owens@example.org | harper.meyer@example.org | harper.hayes@example.org | alex.foster@example.org | harper.foster@example.org
+fake-phone: +1-555-113-6106 | +1-555-609-4463 | +1-555-318-6911 | +1-555-478-7874 | +1-555-634-2973 | +1-555-406-3046
+fake-street: 671 Meyer Lane | 603 Tran Way | 688 Owens Lane | 514 Tran Way | 994 Price Way | 232 Tran Way
+fake-iban: DE19462842859266081157 | DE75883845520784266756 | DE97792924574804473843 | DE65453125845210131861 | DE77498399241752255779 | DE85408819390909041782
+uuid: 4d1d225a-380d-4588-8565-75e4ab59a026 | cab739bb-b9df-405c-b6d7-8af5ccf37285 | 684c089a-eeee-4520-8943-b9773bf289d6 | f5afb0b3-db1f-4399-b3fc-479f2a25351c | 3a8d9f27-927e-4856-a3eb-0eb77afdc8ff | c41ab562-ec02-4810-b0da-73b7a9b8ab2a
+uuid7: 0173aa57-7c2a-7607-8bca-9322778890fe | 0173aa57-7c2b-7c21-b140-3309e2fcfdfa | 0173aa57-7c2c-7ef3-90a7-fe541bdf4340 | 0173aa57-7c2d-7c74-adcc-0f102076cc51 | 0173aa57-7c2e-7e95-b67c-018126469da5 | 0173aa57-7c2f-7c63-bc47-b009375a0927
+prefixKeep: DE35jia6 | DEdWo58U | AT5wgFyJ | DEbabd4N | DET9kvlXXiH1 | DEnrwz
+loremText: Quis ratione tempore. | Beatae eos sunt. | Molestiae error esse. | Cupidatat rem voluptatem. | Aliquid esse porro. | Possimus.
+randomText: quo ab q | repellen | enim magnam | quaerat | totam | tempor fugit
+redact: [redacted] | [redacted] | [redacted] | [redacted] | [redacted] | [redacted]
+dateDistribution: 2020-12-11T00:00:00Z | 2020-03-23T00:00:00Z | 2020-03-27T00:00:00Z | 2020-03-20T00:00:00Z | 2020-03-09T00:00:00Z | 2020-03-09T00:00:00Z
+dateDistribution-ts: 2020-07-14T23:00:00Z | 2020-12-13T12:00:00Z | 2020-06-23T08:00:00Z | 2020-09-05T18:00:00Z | 2020-01-27T12:00:00Z | 2020-04-23T23:00:00Z
+dateRange: 2024-10-12T00:00:00Z | 2024-12-12T00:00:00Z | 2024-09-12T00:00:00Z | 2024-05-18T00:00:00Z | 2024-11-15T00:00:00Z | 2024-10-23T00:00:00Z
+null: <nil> | <nil> | <nil> | <nil> | <nil> | <nil>
+nullRate: <nil> | <nil> | 3 | 4 | 5 | 6

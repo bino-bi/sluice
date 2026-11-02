@@ -34,3 +34,24 @@ var fakeCountries = []string{
 	"Aldland", "Bracia", "Cadonia", "Doria", "Estara", "Ferland", "Galvia",
 	"Haldistan", "Iberis", "Jorvik", "Kelmar", "Lorien",
 }
+
+// FakeWords returns a copy of the word list of a fake kind: first_name,
+// last_name, company, city or country. It returns nil for other kinds.
+func FakeWords(kind string) []string {
+	var list []string
+	switch kind {
+	case fakeFirstName:
+		list = fakeFirstNames
+	case fakeLastName:
+		list = fakeLastNames
+	case fakeCompany:
+		list = fakeCompanies
+	case fakeCity:
+		list = fakeCities
+	case fakeCountry:
+		list = fakeCountries
+	default:
+		return nil
+	}
+	return append([]string(nil), list...)
+}

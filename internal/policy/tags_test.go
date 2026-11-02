@@ -182,3 +182,51 @@ func TestTags_AllowByColumnOnlyTagIsRefused(t *testing.T) {
 		t.Fatalf("a mask by a column-only tag must load: %v", err)
 	}
 }
+
+func TestColumnTagger(t *testing.T) {
+	snap := snapshotWithByKind(
+		classification("pii",
+			apitypes.ClassificationRule{
+				Resources: apitypes.ResourceSelector{Catalogs: []string{"crm"}, Schemas: []string{"crm"}, Tables: []string{"customers"}, Columns: []string{"Email", "phone_*"}},
+				Tags:      []string{"pii", "contact"},
+			},
+			apitypes.ClassificationRule{
+				Resources: apitypes.ResourceSelector{Tables: []string{"secrets"}},
+				Tags:      []string{"secret"},
+			}),
+		classification("more",
+			apitypes.ClassificationRule{
+				Resources: apitypes.ResourceSelector{Catalogs: []string{"crm"}, Columns: []string{"email"}},
+				Tags:      []string{"pii"},
+			}),
+	)
+	tagger, err := NewColumnTagger(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		catalog, schema, table, column string
+		want                           string
+	}{
+		{"crm", "crm", "customers", "email", "contact,pii"},
+		{"crm", "crm", "Customers", "EMAIL", "contact,pii"},
+		{"crm", "crm", "customers", "phone_home", "contact,pii"},
+		{"crm", "crm", "customers", "name", ""},
+		{"crm", "other", "orders", "email", "pii"},
+		{"shop", "crm", "customers", "email", ""},
+		{"shop", "x", "secrets", "anything", "secret"},
+	} {
+		got := strings.Join(tagger.Tags(tc.catalog, tc.schema, tc.table, tc.column), ",")
+		if got != tc.want {
+			t.Errorf("Tags(%s.%s.%s.%s) = %q, want %q", tc.catalog, tc.schema, tc.table, tc.column, got, tc.want)
+		}
+	}
+
+	empty, err := NewColumnTagger(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.Tags("crm", "crm", "customers", "email"); got != nil {
+		t.Errorf("nil snapshot: %v", got)
+	}
+}
