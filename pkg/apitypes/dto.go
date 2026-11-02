@@ -15,6 +15,31 @@ type QueryRequest struct {
 	Meta map[string]string `json:"meta,omitempty"`
 }
 
+// SampleRequest is the REST wire shape of POST /v1/sample. Rows and Rate
+// of 0 read as absent. Seed is a pointer because 0 is a valid seed.
+type SampleRequest struct {
+	Table      string         `json:"table"`
+	Columns    []string       `json:"columns,omitempty"`
+	Rows       int64          `json:"rows,omitempty"`
+	Rate       float64        `json:"rate,omitempty"`
+	Method     SampleMethod   `json:"method,omitempty"`
+	StratifyBy []string       `json:"stratify_by,omitempty"`
+	Seed       *int64         `json:"seed,omitempty"`
+	Where      string         `json:"where,omitempty"`
+	Format     ResponseFormat `json:"format,omitempty"`
+}
+
+// SampleMethod names a method of the sample endpoint. It is not a
+// SampleMode: a policy must not accept stratified.
+type SampleMethod string
+
+const (
+	SampleMethodReservoir  SampleMethod = "reservoir"
+	SampleMethodBernoulli  SampleMethod = "bernoulli"
+	SampleMethodSystem     SampleMethod = "system"
+	SampleMethodStratified SampleMethod = "stratified"
+)
+
 // ResponseFormat names the response encoding. FormatJSON is the default
 // used when a client does not set Format explicitly.
 type ResponseFormat string

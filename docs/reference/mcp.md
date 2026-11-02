@@ -29,6 +29,7 @@ The answer holds the rows as text and as `structuredContent`.
 | Tool | Input | Returns |
 |---|---|---|
 | `execute_sql` | `sql` (required), `row_limit` | `query_id`, `columns`, `rows`, `row_count`, `truncated` |
+| `sample_table` | `table` (required), `columns`, `rows`, `rate`, `method`, `stratify_by`, `seed`, `where` | The same as `execute_sql` |
 | `list_catalogs` | none | `catalogs` with `name`, `type`, `healthy` |
 | `list_tables` | `catalog` (required), `schema`, `limit`, `cursor` | `tables`, `next_cursor` |
 | `list_accessible_tables` | `catalog`, `limit`, `cursor` | `tables`, `next_cursor` |
@@ -39,10 +40,11 @@ The answer holds the rows as text and as `structuredContent`.
 | `await_approval` | `approval_id` (required), `timeout_seconds` | The same, after a wait of at most 55 seconds |
 
 - `row_limit` works like `max_rows` in the [REST API](rest-api.md).
+- `sample_table` takes the fields of `POST /v1/sample`. The [sample request fields](rest-api.md#sample-request-fields) list the rules.
 - `table` is a name of the form `catalog.schema.table`. Sluice does not add a missing catalog or schema. A policy that names them does not match a shorter name.
 - `limit` is 500 by default and at most 1000. Pass `next_cursor` as `cursor` to get the next page. A `cursor` that is not valid gives `ERR_SYNTAX`.
 - `explain_access` runs no query.
-- The approval tools read the state of a held query. An unknown id gives `ERR_APPROVAL_EXPIRED`. Without `approval.publicBaseUrl` both tools give `ERR_INTERNAL`. See [Approvals](../policies/approvals.md).
+- The approval tools read the state of a held `execute_sql` or `sample_table` call. An unknown id gives `ERR_APPROVAL_EXPIRED`. Without `approval.publicBaseUrl` both tools give `ERR_INTERNAL`. See [Approvals](../policies/approvals.md).
 - A failed call has `isError: true`. Its text starts with the [error code](error-codes.md) and can name the policy and the query id.
 
 ## Transports
@@ -81,7 +83,7 @@ Sluice reads the tables of a data source on the first call, and again after a re
 
 ## Audit records
 
-`execute_sql` and `explain_access` write audit records with `origin: mcp`. The other tools write none.
+`execute_sql`, `sample_table` and `explain_access` write audit records with `origin: mcp`. The other tools write none.
 
 ## See also
 

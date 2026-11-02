@@ -269,7 +269,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			return nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid).
 				WithMessage("approval required but no approval broker configured")
 		}
-		sqlHash := sqlHashHex(req.SQL)
+		sqlHash := approvalHash(req)
 		subjectKey := subjectKeyOf(req.User)
 		if apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash); ok {
 			if rec.Extras == nil {
@@ -295,6 +295,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		var reErr error
 		rewriteResp, reErr = s.opts.Rewriter.Rewrite(rwCtx, rewriter.RewriteRequest{
 			AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
+			Sample: req.Sample,
 		})
 		rwSpan.End()
 		if reErr != nil {

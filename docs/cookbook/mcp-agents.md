@@ -88,7 +88,7 @@ Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` che
 
 ## Limits
 
-- Sluice writes an audit record for `execute_sql` and `explain_access`, not for the other tools.
+- Sluice writes an audit record for `execute_sql`, `sample_table` and `explain_access`, not for the other tools.
 
 ## See also
 

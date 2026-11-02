@@ -2,6 +2,8 @@
 
 package parser
 
+import "strings"
+
 // unsafeBareAliases are the DuckDB keywords that pg_query deparses bare
 // and that DuckDB does not read as the alias of a subquery before JOIN.
 // pg_query does not know the join-type prefixes semi, anti, asof and
@@ -32,4 +34,9 @@ func FoldASCII(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// QuoteIdent quotes s as a SQL identifier and doubles every double quote.
+func QuoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }

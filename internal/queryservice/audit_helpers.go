@@ -41,6 +41,18 @@ func (s *Service) buildAuditBase(req QueryRequest, qid string, tables []parser.T
 	rec.Tables = tablesToStrings(tables)
 	rec.Catalogs = catalogsFromTables(tables)
 	rec.ClientMeta = clientMetaFor(req.Metadata)
+	if sp := req.Sample; sp != nil {
+		sample := map[string]any{"method": string(sp.Method), "seed": sp.Seed}
+		if sp.Rows > 0 {
+			sample["rows"] = sp.Rows
+		} else {
+			sample["rate"] = sp.Rate
+		}
+		if sp.Method == pkgapi.SampleMethodStratified {
+			sample["stratify_by"] = append([]string(nil), sp.StratifyBy...)
+		}
+		rec.Extras = map[string]any{"action": "sample", "sample": sample}
+	}
 	return rec
 }
 

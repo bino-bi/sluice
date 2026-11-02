@@ -29,7 +29,7 @@ type Subject struct {
 type RequireInput struct {
 	Subject    Subject
 	SubjectKey string // issuer\x00subject; drives dedupe + grant ownership
-	SQLHash    string // sha256 hex of the raw SQL
+	SQLHash    string // sha256 hex of the raw SQL; "sample:" + hash of SQL and spec for a sample
 	SQLSample  string // capped SQL text for the webhook payload
 	Reasons    []string
 	Policies   []string

@@ -33,7 +33,7 @@ data: {
         }
       },
       {
-        "description": "Check the state of an approval request returned by execute_sql (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql to execute.",
+        "description": "Check the state of an approval request returned by execute_sql or sample_table (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql or sample_table call to execute.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -369,6 +369,82 @@ data: {
             }
           },
           "required": ["tables"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "description": "Return a random sample of rows from one table, subject to Sluice policies. Use it to look at real values before writing SQL.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string",
+              "description": "table as catalog.schema.table"
+            },
+            "columns": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              },
+              "description": "columns to return, all when empty"
+            },
+            "rows": {
+              "type": "integer",
+              "description": "number of rows, not with rate"
+            },
+            "rate": {
+              "type": "number",
+              "description": "share of rows from 0.000001 to 1, not with rows"
+            },
+            "method": {
+              "type": "string",
+              "description": "reservoir, bernoulli, system or stratified"
+            },
+            "stratify_by": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              },
+              "description": "columns whose value mix the sample keeps, only with stratified"
+            },
+            "seed": {
+              "type": ["null", "integer"],
+              "description": "seed from 0 to 2147483647, random when empty"
+            },
+            "where": {
+              "type": "string",
+              "description": "SQL predicate on the table"
+            }
+          },
+          "required": ["table"],
+          "additionalProperties": false
+        },
+        "name": "sample_table",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "query_id": "<query-id>",
+            "columns": {
+              "type": ["null", "array"],
+              "items": {
+                "type": "string"
+              }
+            },
+            "rows": {
+              "type": ["null", "array"],
+              "items": {
+                "type": ["null", "array"],
+                "items": true
+              }
+            },
+            "row_count": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": ["query_id", "columns", "rows", "row_count", "truncated"],
           "additionalProperties": false
         }
       },

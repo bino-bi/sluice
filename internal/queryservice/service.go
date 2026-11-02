@@ -132,6 +132,14 @@ type Limits struct {
 	// references carry a catalog — parity with the policy-rule
 	// equivalent size(query.catalogs) > 1.
 	DisableCrossCatalog bool
+
+	// SampleMaxRows caps rows of one sample of the sample endpoint. Zero
+	// falls back to 10,000.
+	SampleMaxRows int64
+
+	// SampleMinGroupRows is the smallest group a stratified sample keeps.
+	// Zero keeps all groups.
+	SampleMinGroupRows int64
 }
 
 // Service is the orchestrator. One instance is shared across all
@@ -179,6 +187,9 @@ func New(opts Options) *Service {
 	if opts.Limits.MaxTimeout <= 0 {
 		opts.Limits.MaxTimeout = opts.Limits.DefaultTimeout
 	}
+	if opts.Limits.SampleMaxRows <= 0 {
+		opts.Limits.SampleMaxRows = defaultSampleMaxRows
+	}
 	if opts.Limits.MaxSQLBytes <= 0 {
 		opts.Limits.MaxSQLBytes = parser.DefaultMaxSQLBytes
 	}
@@ -212,6 +223,8 @@ type QueryRequest struct {
 	Origin   Origin
 	Facts    *policy.RequestFacts
 	Metadata map[string]string
+	// Sample is set by Service.Sample only. Transports never set it.
+	Sample *rewriter.SampleSpec
 }
 
 // QueryResult is the output of Execute. Rows is an iterator the caller

@@ -33,6 +33,7 @@ func (s *Server) routes() http.Handler {
 	// cannot exhaust JWKS fetches / key hashing; health and approval
 	// capability endpoints stay unlimited (probes must not 429).
 	mux.Handle("POST /v1/query", s.rateLimitMW(authMW(http.HandlerFunc(s.handleQuery))))
+	mux.Handle("POST /v1/sample", s.rateLimitMW(authMW(http.HandlerFunc(s.handleSample))))
 
 	// Approval capability endpoints. Accept/reject are PUBLIC — the
 	// capability token in the request IS the authorisation, so no identity

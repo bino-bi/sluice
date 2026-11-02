@@ -73,6 +73,9 @@ type RewriteRequest struct {
 	User     *identity.UserCtx
 	Facts    *policy.RequestFacts
 	Raw      string
+	// Sample is the sample of the sample endpoint. It forces the mutation
+	// path, so DuckDB runs the canonical deparse.
+	Sample *SampleSpec
 }
 
 // RewriteResult carries the rewritten SQL, positional parameters, and an
@@ -184,7 +187,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	}
 
 	// Step 3: pass-through fast path.
-	if !needsMutation(req.Decision) {
+	if !needsMutation(req.Decision) && req.Sample == nil {
 		if req.AST == nil {
 			return r.regexFallback(req)
 		}
@@ -216,6 +219,11 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	if err := r.checkDuckDBParse(ctx, req, clone); err != nil {
 		return nil, err
 	}
+	if req.Sample != nil {
+		if err := CheckSampleStatement(clone); err != nil {
+			return nil, err
+		}
+	}
 
 	state := &state{
 		ctx:             ctx,
@@ -228,6 +236,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		masks:           r.opts.Masks,
 		salts:           r.opts.Salts,
 		snippets:        r.snippets,
+		sample:          req.Sample,
 	}
 
 	if err := state.checkReservedName(clone); err != nil {
@@ -240,6 +249,9 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		return nil, err
 	}
 	if err := state.applyPostMasks(clone); err != nil {
+		return nil, err
+	}
+	if err := state.checkSampleStratify(); err != nil {
 		return nil, err
 	}
 	if err := state.applyWrapTables(clone); err != nil {
@@ -270,6 +282,12 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	// fingerprint above is intentionally computed on the inner SQL (the
 	// wrapped form no longer parses under the PG grammar).
 	sampled := false
+	if req.Sample != nil {
+		var note string
+		sql, note = endpointSampleWrap(sql, req.Sample)
+		state.rewrites = append(state.rewrites, note)
+		sampled = true
+	}
 	if eff := req.Decision.Rewrite; eff != nil && eff.Sample != nil {
 		if req.AST.Statement() == parser.StmtSelect {
 			var note string
@@ -305,6 +323,8 @@ type state struct {
 	masks           *pkgmask.Registry
 	salts           pkgmask.SaltStore
 	snippets        *snippetMemo
+	// sample is the sample endpoint's request, nil for other queries.
+	sample *SampleSpec
 
 	params    []any
 	rewrites  []string

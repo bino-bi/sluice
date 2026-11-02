@@ -67,7 +67,7 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `row_count`, `truncated` | Result size, on `query-result` only. Left out when 0 or `false` |
 | `duration_ms` | Time since the request started. Left out when 0. The examples leave it out |
 | `client_meta` | The `meta` pairs of the request |
-| `extras` | Other data, for example `approval_id` |
+| `extras` | Other data, for example `approval_id`. A sample request sets `action: sample` and `sample` with `method`, `rows` or `rate`, `seed` and `stratify_by` |
 | `sluice_version`, `parser_version` | The build. The parser, on `genesis` only |
 | `prior_hash`, `hash` | The hash chain |
 

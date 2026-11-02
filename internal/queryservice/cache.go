@@ -10,9 +10,11 @@ import (
 // and applicable. Caching requires a configured cache, a policy engine
 // that can report its snapshot identity, and a clean parse (parseErr nil).
 // A zero snapshot version means no snapshot is active, so the request is
-// left uncacheable (default-deny still applies downstream).
+// left uncacheable (default-deny still applies downstream). A sample is
+// never cached: its inner SQL equals a plain query, and the key holds the
+// SQL text only.
 func (s *Service) cacheKey(req QueryRequest, parseErr error) (policycache.Key, bool) {
-	if s.opts.Cache == nil || parseErr != nil {
+	if s.opts.Cache == nil || parseErr != nil || req.Sample != nil {
 		return policycache.Key{}, false
 	}
 	si, ok := s.opts.Policy.(snapshotInfoer)

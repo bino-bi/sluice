@@ -166,6 +166,9 @@ var meaning = map[string]string{
 	"budget.flushInterval": "Time between writes to the store.",
 	"budget.failClosed":    "Stop at start when the store cannot open.",
 	"budget.retentionDays": "Days of usage kept.",
+
+	"sample.maxRows":      "Most rows of one sample.",
+	"sample.minGroupRows": "Smallest group a stratified sample keeps.",
 }
 
 const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->

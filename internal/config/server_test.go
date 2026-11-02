@@ -31,6 +31,12 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Logging.MaxErrorBytes != 4096 {
 		t.Errorf("Logging.MaxErrorBytes = %d, want 4096", cfg.Logging.MaxErrorBytes)
 	}
+	if cfg.Sample.MaxRows != 10_000 {
+		t.Errorf("Sample.MaxRows = %d, want 10000", cfg.Sample.MaxRows)
+	}
+	if cfg.Sample.MinGroupRows != 10 {
+		t.Errorf("Sample.MinGroupRows = %d, want 10", cfg.Sample.MinGroupRows)
+	}
 }
 
 // An explicit 0 turns the cut of logged errors off. It must not fall back
@@ -117,6 +123,22 @@ func TestLoadServer_EnvOverride(t *testing.T) {
 	}
 	if cfg.Limits.MaxRows != 42 {
 		t.Errorf("MaxRows = %d, want 42 (via env)", cfg.Limits.MaxRows)
+	}
+}
+
+func TestLoadServer_SampleEnvOverride(t *testing.T) {
+	t.Setenv("SLUICE_SAMPLE__MAXROWS", "500")
+	t.Setenv("SLUICE_SAMPLE__MINGROUPROWS", "0")
+
+	cfg, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if cfg.Sample.MaxRows != 500 {
+		t.Errorf("Sample.MaxRows = %d, want 500 (via env)", cfg.Sample.MaxRows)
+	}
+	if cfg.Sample.MinGroupRows != 0 {
+		t.Errorf("Sample.MinGroupRows = %d, want 0 (via env)", cfg.Sample.MinGroupRows)
 	}
 }
 

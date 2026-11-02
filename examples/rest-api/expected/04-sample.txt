@@ -1,0 +1,10 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["id", "name", "price_cents"],
+  "rows": [
+    [1, "Ceramic Mug", 1299],
+    [3, "Black Pen", 199]
+  ],
+  "row_count": 2,
+  "truncated": false
+}

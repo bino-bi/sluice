@@ -119,3 +119,5 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `budget.flushInterval` | `5s` | Time between writes to the store. |
 | `budget.failClosed` | `true` | Stop at start when the store cannot open. |
 | `budget.retentionDays` | `35` | Days of usage kept. |
+| `sample.maxRows` | `10000` | Most rows of one sample. |
+| `sample.minGroupRows` | `10` | Smallest group a stratified sample keeps. |

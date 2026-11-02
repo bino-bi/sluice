@@ -166,6 +166,20 @@ func TestServerConfigValidate(t *testing.T) {
 			mutate: func(c *ServerConfig) { c.Limits.MaxResultBytes = 0 },
 		},
 		{
+			name:    "sample row cap of zero rejected",
+			mutate:  func(c *ServerConfig) { c.Sample.MaxRows = 0 },
+			wantErr: []string{"sample.maxRows"},
+		},
+		{
+			name:    "negative sample group size rejected",
+			mutate:  func(c *ServerConfig) { c.Sample.MinGroupRows = -1 },
+			wantErr: []string{"sample.minGroupRows"},
+		},
+		{
+			name:   "sample group size of zero keeps all groups",
+			mutate: func(c *ServerConfig) { c.Sample.MinGroupRows = 0 },
+		},
+		{
 			name: "mcp.tls with cert and key is valid",
 			mutate: func(c *ServerConfig) {
 				c.MCP.TLS = &TLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"}

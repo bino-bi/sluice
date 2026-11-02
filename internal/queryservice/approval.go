@@ -6,17 +6,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"maps"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/policy"
+	"github.com/bino-bi/sluice/internal/rewriter"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
 const approvalGuidance = "human approval required; a decision has been requested. " +
-	"Poll or await the approval, then re-run the IDENTICAL query within the grant window to execute."
+	"Poll or await the approval, then re-run the IDENTICAL query (execute_sql or sample_table call) within the grant window to execute."
 
 // awaitApproval parks the query on the broker, fires the webhook (via the
 // broker's Notifier), and waits up to the sync window. The admission slot
@@ -36,12 +41,18 @@ func (s *Service) awaitApproval(
 	for _, p := range dec.Approval.Policies {
 		names = append(names, p.Name)
 	}
+	reasons := dec.Approval.Reasons
+	if req.Sample != nil {
+		// SQLSample shows the inner SQL only, so the approver needs this
+		// line to see that the request is a sample.
+		reasons = append([]string{sampleReason(req.Sample)}, reasons...)
+	}
 	ticket, created, err := s.opts.Approvals.Require(ctx, approval.RequireInput{
 		Subject:    approvalSubject(req.User),
 		SubjectKey: subjectKey,
 		SQLHash:    sqlHash,
 		SQLSample:  sqlSampleFor(req.SQL, s.opts.Limits.ApprovalSQLSampleBytes),
-		Reasons:    dec.Approval.Reasons,
+		Reasons:    reasons,
 		Policies:   names,
 	})
 	if err != nil {
@@ -57,6 +68,9 @@ func (s *Service) awaitApproval(
 		reqRec := *rec
 		reqRec.EventType = audit.EventApprovalRequested
 		reqRec.Decision = audit.DecisionError
+		// A shallow copy shares the map, and the later records of rec must
+		// not carry the approval fields.
+		reqRec.Extras = maps.Clone(rec.Extras)
 		if reqRec.Extras == nil {
 			reqRec.Extras = map[string]any{}
 		}
@@ -141,6 +155,41 @@ func (s *Service) AwaitApproval(ctx context.Context, user *identity.UserCtx, id 
 	}
 	v, _ = s.opts.Approvals.Get(id)
 	return v, nil
+}
+
+// approvalHash keys an approval grant. A sample hashes its spec too, so a
+// grant for a sample does not run the plain query of the same SQL and the
+// other way round. The "sample:" prefix keeps sample keys apart from plain
+// keys: a plain SQL text equal to the sample's hash input would otherwise
+// get the same key. The seed is left out: a client that re-runs a sample
+// without a seed gets a new random seed and must still find its grant.
+func approvalHash(req QueryRequest) string {
+	if req.Sample == nil {
+		return sqlHashHex(req.SQL)
+	}
+	sp := req.Sample
+	// JSON keeps the field borders, so no two specs give the same text.
+	spec, _ := json.Marshal(struct {
+		Method     string
+		Rows       int64
+		Rate       float64
+		StratifyBy []string
+	}{string(sp.Method), sp.Rows, sp.Rate, sp.StratifyBy})
+	return "sample:" + sqlHashHex(req.SQL+"\x00"+string(spec))
+}
+
+// sampleReason describes a sample for the approver.
+func sampleReason(sp *rewriter.SampleSpec) string {
+	out := "sample: method=" + string(sp.Method)
+	if sp.Rows > 0 {
+		out += " rows=" + strconv.FormatInt(sp.Rows, 10)
+	} else {
+		out += " rate=" + strconv.FormatFloat(sp.Rate, 'f', -1, 64)
+	}
+	if len(sp.StratifyBy) > 0 {
+		out += " stratify_by=" + strings.Join(sp.StratifyBy, ",")
+	}
+	return out
 }
 
 func sqlHashHex(sql string) string {

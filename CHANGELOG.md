@@ -7,6 +7,11 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 ## [Unreleased]
 
+### Added
+
+- **`POST /v1/sample` returns a random sample of one table.** The request names `table`, optional `columns`, either `rows` or `rate`, a `method` (`reservoir`, `bernoulli`, `system` or `stratified`), `stratify_by`, `seed` and a `where` predicate. Sluice builds a SELECT from the request and runs it through the normal query path. Access policies, row filters, column masks, rewrite policies, limits, budgets and approvals apply. Row filters run before the sample, so the sample holds only rows the subject may see. `stratified` keeps the mix of the `stratify_by` values and drops groups below `sample.minGroupRows` (default 10). `rows` is capped by `sample.maxRows` (default 10000) and `limits.maxRows`. A `rate` sample is capped by `limits.maxRows` only. With the same seed and data, `reservoir` and `stratified` return the same rows. The audit record carries `extras.action: sample` and the request in `extras.sample`. The new metric `sluice_sample_requests_total{method}` counts the requests.
+- **The MCP tool `sample_table` returns a sample.** It takes the fields of `POST /v1/sample` and returns rows like `execute_sql`.
+
 ## [0.1.0-rc.3] - 2026-10-13
 
 Third release candidate for v0.1.0. It holds the fixes from a security review of the query path and from an audit of the docs against the code. Several changes are marked **Breaking**: read the **Changed** and **Removed** sections before an upgrade from `v0.1.0-rc.2`.

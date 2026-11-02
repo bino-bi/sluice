@@ -36,10 +36,12 @@ const helloSluiceDir = "../../examples/hello-sluice"
 type countingExecutor struct {
 	inner *executor.Executor
 	calls int
+	last  executor.Request
 }
 
 func (c *countingExecutor) Execute(ctx context.Context, req executor.Request) (*executor.Response, error) {
 	c.calls++
+	c.last = req
 	return c.inner.Execute(ctx, req)
 }
 
@@ -61,6 +63,13 @@ func newHelloSluiceServiceWithSchema(t *testing.T, cache schema.Cache, extraPoli
 
 // newSeededHelloSluiceService runs extraSeed after the example seed.
 func newSeededHelloSluiceService(t *testing.T, cache schema.Cache, extraSeed string, extraPolicies ...string) (*queryservice.Service, *countingExecutor, *fakeAudit) {
+	t.Helper()
+	return newSeededHelloSluiceServiceOpts(t, cache, extraSeed, nil, extraPolicies...)
+}
+
+// newSeededHelloSluiceServiceOpts is newSeededHelloSluiceService with a hook
+// that changes the service options before New.
+func newSeededHelloSluiceServiceOpts(t *testing.T, cache schema.Cache, extraSeed string, mod func(*queryservice.Options), extraPolicies ...string) (*queryservice.Service, *countingExecutor, *fakeAudit) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -142,7 +151,7 @@ func newSeededHelloSluiceService(t *testing.T, cache schema.Cache, extraSeed str
 	p := pgquery.New(parser.Options{})
 	ex := &countingExecutor{inner: exec}
 	a := &fakeAudit{}
-	svc := queryservice.New(queryservice.Options{
+	opts := queryservice.Options{
 		Parser: p,
 		Policy: eng,
 		Rewriter: rewriter.New(rewriter.Options{
@@ -154,8 +163,11 @@ func newSeededHelloSluiceService(t *testing.T, cache schema.Cache, extraSeed str
 		Executor: ex,
 		Audit:    a,
 		Catalogs: reg.Catalogs,
-	})
-	return svc, ex, a
+	}
+	if mod != nil {
+		mod(&opts)
+	}
+	return queryservice.New(opts), ex, a
 }
 
 // helloUser is the subject the hello-sluice API key resolves to.

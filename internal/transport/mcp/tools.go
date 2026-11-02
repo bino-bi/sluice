@@ -16,6 +16,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -27,6 +28,13 @@ func (s *Server) registerTools() {
 			Description: "Execute a SELECT against attached catalogs, subject to Sluice policies.",
 		},
 		s.toolExecuteSQL,
+	)
+	sdkmcp.AddTool(s.mcp,
+		&sdkmcp.Tool{
+			Name:        "sample_table",
+			Description: "Return a random sample of rows from one table, subject to Sluice policies. Use it to look at real values before writing SQL.",
+		},
+		s.toolSampleTable,
 	)
 	sdkmcp.AddTool(s.mcp,
 		&sdkmcp.Tool{
@@ -73,7 +81,7 @@ func (s *Server) registerTools() {
 	sdkmcp.AddTool(s.mcp,
 		&sdkmcp.Tool{
 			Name:        "check_approval",
-			Description: "Check the state of an approval request returned by execute_sql (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql to execute.",
+			Description: "Check the state of an approval request returned by execute_sql or sample_table (ERR_APPROVAL_PENDING). Returns pending / approved / rejected / expired. Once approved, re-run the IDENTICAL execute_sql or sample_table call to execute.",
 		},
 		s.toolCheckApproval,
 	)
@@ -346,6 +354,46 @@ func (s *Server) toolExecuteSQL(ctx context.Context, req *sdkmcp.CallToolRequest
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ExecuteSQLOutput{}, nil
 	}
+	return s.resultOutput(ctx, res)
+}
+
+// SampleTableArgs is the typed argument schema for sample_table. The
+// fields are those of POST /v1/sample.
+type SampleTableArgs struct {
+	Table      string   `json:"table" jsonschema:"table as catalog.schema.table"`
+	Columns    []string `json:"columns,omitempty" jsonschema:"columns to return, all when empty"`
+	Rows       int64    `json:"rows,omitempty" jsonschema:"number of rows, not with rate"`
+	Rate       float64  `json:"rate,omitempty" jsonschema:"share of rows from 0.000001 to 1, not with rows"`
+	Method     string   `json:"method,omitempty" jsonschema:"reservoir, bernoulli, system or stratified"`
+	StratifyBy []string `json:"stratify_by,omitempty" jsonschema:"columns whose value mix the sample keeps, only with stratified"`
+	Seed       *int64   `json:"seed,omitempty" jsonschema:"seed from 0 to 2147483647, random when empty"`
+	Where      string   `json:"where,omitempty" jsonschema:"SQL predicate on the table"`
+}
+
+func (s *Server) toolSampleTable(ctx context.Context, req *sdkmcp.CallToolRequest, in SampleTableArgs) (*sdkmcp.CallToolResult, ExecuteSQLOutput, error) {
+	user, _ := userFrom(ctx)
+	res, err := s.deps.Service.Sample(ctx, queryservice.SampleRequest{
+		Table:      in.Table,
+		Columns:    in.Columns,
+		Rows:       in.Rows,
+		Rate:       in.Rate,
+		Method:     apitypes.SampleMethod(in.Method),
+		StratifyBy: in.StratifyBy,
+		Seed:       in.Seed,
+		Where:      in.Where,
+		Format:     executor.FormatJSON,
+		User:       user,
+		Facts:      requestFacts(ctx, req),
+		Origin:     queryservice.OriginMCP,
+	})
+	if err != nil {
+		return s.toolErrorResult(ctx, err), ExecuteSQLOutput{}, nil
+	}
+	return s.resultOutput(ctx, res)
+}
+
+// resultOutput drains res into the tool output and closes its rows.
+func (s *Server) resultOutput(ctx context.Context, res *queryservice.QueryResult) (*sdkmcp.CallToolResult, ExecuteSQLOutput, error) {
 	defer func() { _ = res.Rows.Close() }()
 
 	out := ExecuteSQLOutput{

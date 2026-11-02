@@ -6,4 +6,5 @@
 "name":"list_accessible_tables"
 "name":"list_catalogs"
 "name":"list_tables"
+"name":"sample_table"
 "name":"whoami"

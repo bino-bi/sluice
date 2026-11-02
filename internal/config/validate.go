@@ -121,6 +121,12 @@ func (c *ServerConfig) Validate() error {
 	if c.Limits.MaxResultBytes < 0 {
 		errs = append(errs, errors.New("limits.maxResultBytes: must not be negative (0 turns the cap off)"))
 	}
+	if c.Sample.MaxRows < 1 {
+		errs = append(errs, errors.New("sample.maxRows: must be at least 1"))
+	}
+	if c.Sample.MinGroupRows < 0 {
+		errs = append(errs, errors.New("sample.minGroupRows: must not be negative (0 keeps all groups)"))
+	}
 	// The names that the MCP transport accepts (mcp.ParseTransport).
 	switch c.MCP.Transport {
 	case "", "stdio":

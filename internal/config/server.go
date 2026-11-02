@@ -32,6 +32,7 @@ type ServerConfig struct {
 	Cache       CacheConfig       `mapstructure:"cache"`
 	Approval    ApprovalConfig    `mapstructure:"approval"`
 	Budget      BudgetConfig      `mapstructure:"budget"`
+	Sample      SampleConfig      `mapstructure:"sample"`
 }
 
 // RESTConfig configures the public REST transport. TLS is MVP-optional.
@@ -245,6 +246,12 @@ type BudgetConfig struct {
 	RetentionDays int           `mapstructure:"retentionDays"`
 }
 
+// SampleConfig bounds the sample endpoint.
+type SampleConfig struct {
+	MaxRows      int64 `mapstructure:"maxRows"`
+	MinGroupRows int64 `mapstructure:"minGroupRows"`
+}
+
 // ApprovalConfig configures the human-approval workflow. The feature
 // activates when at least one ApprovalPolicy is loaded; PublicBaseURL is
 // then required (validated at serve boot).
@@ -377,6 +384,10 @@ func DefaultServerConfig() ServerConfig {
 			FlushInterval: 5 * time.Second,
 			FailClosed:    true,
 			RetentionDays: 35,
+		},
+		Sample: SampleConfig{
+			MaxRows:      10_000,
+			MinGroupRows: 10,
 		},
 	}
 }

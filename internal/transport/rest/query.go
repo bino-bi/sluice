@@ -25,20 +25,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	user, _ := identity.FromContext(r.Context())
 
 	var req apitypes.QueryRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		var maxErr *http.MaxBytesError
-		if stderrors.As(err, &maxErr) {
-			s.writeError(w, r, pkgerr.New(pkgerr.CodePayloadTooLarge).
-				WithMessage("request body exceeds limit"))
-			return
-		}
-		s.writeError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "invalid JSON body: %s", err.Error()))
+	if !s.decodeBody(w, r, &req) {
 		return
 	}
-	// Drain any trailing bytes to let keep-alive reuse the connection.
-	_, _ = io.Copy(io.Discard, r.Body)
 
 	format, err := negotiateFormat(r, req.Format)
 	if err != nil {
@@ -62,6 +51,31 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, execErr)
 		return
 	}
+	s.serveResult(w, r, format, res)
+}
+
+// decodeBody decodes the JSON body into v and writes the error response
+// when it fails. Unknown fields are refused.
+func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		var maxErr *http.MaxBytesError
+		if stderrors.As(err, &maxErr) {
+			s.writeError(w, r, pkgerr.New(pkgerr.CodePayloadTooLarge).
+				WithMessage("request body exceeds limit"))
+			return false
+		}
+		s.writeError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "invalid JSON body: %s", err.Error()))
+		return false
+	}
+	// Drain any trailing bytes to let keep-alive reuse the connection.
+	_, _ = io.Copy(io.Discard, r.Body)
+	return true
+}
+
+// serveResult streams res in the negotiated format and closes its rows.
+func (s *Server) serveResult(w http.ResponseWriter, r *http.Request, format executor.OutputFormat, res *queryservice.QueryResult) {
 	defer func() { _ = res.Rows.Close() }()
 
 	w.Header().Set("X-Query-Id", res.QueryID)

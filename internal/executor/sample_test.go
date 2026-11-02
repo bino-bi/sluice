@@ -43,3 +43,37 @@ func TestExecutorUsingSampleSubquery(t *testing.T) {
 		})
 	}
 }
+
+// TestExecutorUsingSampleSeeded pins the seeded forms of the sample
+// endpoint's wrap on a FROM subquery.
+func TestExecutorUsingSampleSeeded(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	cases := []struct {
+		clause string
+		want   int
+	}{
+		{"10 ROWS (reservoir, 7)", 10},
+		{"100% (bernoulli, 7)", 100},
+	}
+	for _, tc := range cases {
+		t.Run(tc.clause, func(t *testing.T) {
+			resp, err := e.Execute(context.Background(), executor.Request{
+				SQL: "SELECT * FROM (SELECT range AS id FROM range(100)) AS sluice_endpoint_sample USING SAMPLE " + tc.clause,
+			})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			defer func() { _ = resp.Rows.Close() }()
+			var count int
+			for resp.Rows.Next() {
+				count++
+			}
+			if err := resp.Rows.Err(); err != nil {
+				t.Fatalf("rows err: %v", err)
+			}
+			if count != tc.want {
+				t.Fatalf("count = %d, want %d", count, tc.want)
+			}
+		})
+	}
+}

@@ -20,6 +20,12 @@ func (s *state) applyRewrite(res *pg.ParseResult) error {
 	if eff == nil || eff.LimitMax <= 0 || len(res.Stmts) == 0 {
 		return nil
 	}
+	// A LIMIT inside would draw the sample from the first rows only. The
+	// MaxRows clamp in queryservice still caps the sample's output.
+	if s.sample != nil {
+		s.rewrites = append(s.rewrites, "limit-deferred:sample")
+		return nil
+	}
 	sel := res.Stmts[0].Stmt.GetSelectStmt()
 	if sel == nil {
 		// EXPLAIN carries no row set to bound; queryservice's MaxRows clamp

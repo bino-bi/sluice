@@ -352,6 +352,8 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			DisableCrossCatalog:    scfg.Limits.DisableCrossCatalog,
 			SQLSampleBytes:         scfg.Audit.SQLSampleBytes,
 			ApprovalSQLSampleBytes: scfg.Approval.SQLSampleBytes,
+			SampleMaxRows:          scfg.Sample.MaxRows,
+			SampleMinGroupRows:     scfg.Sample.MinGroupRows,
 		},
 	}
 	if deps.rewriteCache != nil {

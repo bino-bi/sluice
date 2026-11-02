@@ -110,7 +110,7 @@ The `customers` table holds rows for three tenants; the caller sees only their o
 - **Hot reload** — fsnotify, SIGHUP, or `POST /admin/reload`; bad snapshots are rejected, the old one stays live.
 - **Policy test harness** — `sluice policy test` runs YAML fixture suites against a policy directory.
 - **Tamper-evident audit** — hash-chained JSONL with `sluice audit verify`.
-- **MCP server** — 9 tools (`execute_sql`, `explain_access`, `whoami`, …) over stdio or Streamable HTTP.
+- **MCP server** — 10 tools (`execute_sql`, `explain_access`, `whoami`, …) over stdio or Streamable HTTP.
 - **7 datasource drivers** — Postgres, MySQL, SQLite, S3 (Parquet/CSV/JSON/Excel), HTTP(S) files, DuckDB file, MotherDuck.
 
 ## Install

@@ -24,6 +24,7 @@ Sluice serves Prometheus metrics at `GET /metrics` on the [admin API](admin-api.
 | `sluice_policy_evaluations_total` | counter | `outcome` | Policy engine evaluations by outcome. |
 | `sluice_policy_rejections_total` | counter | `policy`, `rule` | Policy engine rejections by policy + rule. |
 | `sluice_rest_rate_limited_total` | counter | `scope` | REST requests refused by `limits.globalRps` or `limits.perIpRps`. |
+| `sluice_sample_requests_total` | counter | `method` | Sample requests that passed validation, by method. |
 | `sluice_schema_cache_hits_total` | counter | `catalog` | Schema cache hits. |
 | `sluice_schema_cache_misses_total` | counter | `catalog` | Schema cache misses that triggered an introspection. |
 | `sluice_schema_refresh_duration_seconds` | histogram |  | Duration of one read of the tables of a catalog. |
