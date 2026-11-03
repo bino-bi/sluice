@@ -229,3 +229,189 @@ func moveToWeekday(t time.Time, w int, in func(time.Time) bool) time.Time {
 	}
 	return c
 }
+
+type age struct{}
+
+func (age) Check(col Column, args Args) error {
+	return checkDate(col, apitypes.GenAge, args)
+}
+
+func (age) Needs(col Column, args Args) profile.Needs {
+	n := profile.Needs{Parts: profile.PartRange | profile.PartAges, Unit: granUnit(col, granularity(col, args))}
+	if t, ok := parseDate(args["asOf"]); ok {
+		n.AsOf = &t
+	}
+	return n
+}
+
+func (age) New(col Column, p *profile.Column, args Args, s Streams) (ColumnGen, error) {
+	ages, err := newNominalPicker(p.Ages)
+	if err != nil {
+		return nil, err
+	}
+	return &ageGen{asOf: p.AsOf, ages: ages, gran: granularity(col, args), r: s.Values}, nil
+}
+
+// ageGen draws an age, then a date in the year of life that has this age
+// at asOf.
+type ageGen struct {
+	asOf time.Time
+	ages *nominalPicker
+	gran string
+	r    *rng.Stream
+}
+
+func (g *ageGen) Pool() int64 { return -1 }
+
+func (g *ageGen) Next(RowCtx) (any, error) {
+	a := pickInt(g.ages, g.r)
+	// The values in (lo, hi] have age a at asOf. Draw a start of a
+	// granularity unit in it, so the cut value keeps age a.
+	hi, lo := subYears(g.asOf, a), subYears(g.asOf, a+1)
+	first := truncate(lo, g.gran)
+	if !first.After(lo) {
+		first = addUnit(first, g.gran, 1)
+	}
+	last := truncate(hi, g.gran)
+	var n int
+	switch g.gran {
+	case "month":
+		n = (last.Year()-first.Year())*12 + int(last.Month()-first.Month()) + 1
+	case "year":
+		n = last.Year() - first.Year() + 1
+	default:
+		n = int(last.Sub(first)/unitOf(g.gran)) + 1
+	}
+	// Around Feb 29 the values with age a are not one interval, so redraw
+	// the few that miss.
+	var t time.Time
+	for i := 0; i < maxAgeDraws; i++ {
+		if t = addUnit(first, g.gran, g.r.IntN(n)); yearsTo(t, g.asOf) == a {
+			break
+		}
+	}
+	return t, nil
+}
+
+// maxAgeDraws caps the redraws of age. A miss needs a value on Feb 28 or
+// 29, so the cap is never reached in practice.
+const maxAgeDraws = 16
+
+// yearsTo counts whole years from t to ref as DuckDB's date_sub('year')
+// does in the profile query.
+func yearsTo(t, ref time.Time) int {
+	if ref.AddDate(0, 0, 1).Day() == 1 && t.Month() == ref.Month() && t.Day() > ref.Day() {
+		// DuckDB counts a later day as the last day of the month of ref.
+		t = time.Date(t.Year(), t.Month(), ref.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	}
+	a := ref.Year() - t.Year()
+	tt := time.Date(ref.Year(), 1, 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	rt := time.Date(ref.Year(), 1, 1, ref.Hour(), ref.Minute(), ref.Second(), ref.Nanosecond(), time.UTC)
+	if t.Month() > ref.Month() || t.Month() == ref.Month() && (t.Day() > ref.Day() || t.Day() == ref.Day() && tt.After(rt)) {
+		a--
+	}
+	return a
+}
+
+// subYears is the latest value with n whole years to t, as DuckDB's
+// date_sub('year') counts them. It counts all of Feb 28 as a full year
+// to Feb 29, and Feb 29 like Feb 28 when t is the last day of February.
+// time.AddDate would give Mar 1 for both.
+func subYears(t time.Time, n int) time.Time {
+	y := t.Year() - n
+	last := time.Date(y, t.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	d := t.Day()
+	switch {
+	case d > last:
+		return time.Date(y, t.Month()+1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Microsecond)
+	case t.Month() == time.February && d == 28 && last == 29 && t.AddDate(0, 0, 1).Month() == time.March:
+		d = 29
+	}
+	return time.Date(y, t.Month(), d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+}
+
+func unitOf(gran string) time.Duration {
+	switch gran {
+	case "minute":
+		return time.Minute
+	case "hour":
+		return time.Hour
+	case "day":
+		return 24 * time.Hour
+	}
+	return time.Second
+}
+
+func addUnit(t time.Time, gran string, k int) time.Time {
+	switch gran {
+	case "month":
+		return t.AddDate(0, k, 0)
+	case "year":
+		return t.AddDate(k, 0, 0)
+	}
+	return t.Add(time.Duration(k) * unitOf(gran))
+}
+
+type timeOfDay struct{}
+
+func (timeOfDay) Check(col Column, _ Args) error {
+	k := col.Kind()
+	return fits(col, apitypes.GenTimeOfDay, k == profile.KindTime || k == profile.KindTimestamp)
+}
+
+// Needs reads the dates of a TIMESTAMP as dateDistribution with
+// granularity day does.
+func (timeOfDay) Needs(col Column, _ Args) profile.Needs {
+	if col.Kind() == profile.KindTimestamp {
+		return profile.Needs{Parts: profile.PartQuantiles | profile.PartTimes, Unit: secondsPerDay}
+	}
+	return profile.Needs{Parts: profile.PartTimes}
+}
+
+func (timeOfDay) New(col Column, p *profile.Column, _ Args, s Streams) (ColumnGen, error) {
+	slots, err := newNominalPicker(p.Times)
+	if err != nil {
+		return nil, err
+	}
+	g := &timeGen{slots: slots, r: s.Values}
+	if col.Kind() == profile.KindTimestamp {
+		if len(p.Quantiles) < 2 {
+			return nil, errNoGrid
+		}
+		d := &dateGen{st: StageTimestamp, lo: p.Lo, hi: p.Hi, gran: "day", r: s.Values}
+		d.draw = func() float64 { return gridValue(p.Quantiles, d.r.Float64(), true) }
+		g.days = d
+	}
+	return g, nil
+}
+
+// timeGen draws a slot of the day and a second in it. With days it adds
+// the second to a drawn day.
+type timeGen struct {
+	slots *nominalPicker
+	days  *dateGen
+	r     *rng.Stream
+}
+
+func (g *timeGen) Pool() int64 { return -1 }
+
+func (g *timeGen) Next(RowCtx) (any, error) {
+	sec := pickInt(g.slots, g.r)*profile.TimeSlot + g.r.IntN(profile.TimeSlot)
+	if g.days == nil {
+		return float64(sec), nil
+	}
+	// The day is cut to midnight, so the time can pass the range on its
+	// first or last day. Move it one day into the range.
+	t := g.days.next().Add(time.Duration(sec) * time.Second)
+	lo, hi := fromAxis(StageTimestamp, g.days.lo).(time.Time), fromAxis(StageTimestamp, g.days.hi).(time.Time)
+	if t.After(hi) {
+		t = t.AddDate(0, 0, -1)
+	}
+	if t.Before(lo) {
+		t = t.AddDate(0, 0, 1)
+	}
+	if t.After(hi) {
+		t = hi
+	}
+	return t, nil
+}

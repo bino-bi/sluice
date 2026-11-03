@@ -44,7 +44,7 @@ const (
 // noisyParts are the parts with a noisy variant. Measurements refuses
 // every other part, so a new part cannot skip the noise.
 const noisyParts = numberParts | PartTopValues | PartInitials | PartPatterns | PartPrefixes |
-	PartLengths | PartWordCounts | PartWeekdays | PartMonths | PartCaseStyles | PartCharClasses
+	PartLengths | PartWordCounts | PartWeekdays | PartMonths | PartCaseStyles | PartCharClasses | PartAges | PartTimes
 
 // Measurements is the number of noisy measurements of needs (plan 1.5):
 // one for all number parts except PartRange alone, one per other part.

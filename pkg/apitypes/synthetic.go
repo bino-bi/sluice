@@ -195,6 +195,8 @@ const (
 	GenSourceVocabulary SyntheticGenerator = "sourceVocabulary"
 	GenSentenceShape    SyntheticGenerator = "sentenceShape"
 	GenCorrelated       SyntheticGenerator = "correlated"
+	GenAge              SyntheticGenerator = "age"
+	GenTimeOfDay        SyntheticGenerator = "timeOfDay"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -263,6 +265,8 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenRedact:           {args: map[string]argCheck{"value": stringArg}},
 	GenDateDistribution: {args: map[string]argCheck{"granularity": granularityArg, "keepWeekday": boolArg, "keepSeasonality": boolArg, "by": byArg}},
 	GenDateRange:        {args: map[string]argCheck{"min": dateArg, "max": dateArg, "granularity": granularityArg}, cross: dateMinBelowMax},
+	GenAge:              {args: map[string]argCheck{"asOf": dateArg, "granularity": granularityArg}},
+	GenTimeOfDay:        {args: map[string]argCheck{}},
 	GenNull:             {args: map[string]argCheck{}},
 	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
 	GenDateOffset:       {args: map[string]argCheck{"from": columnArg, "offset": offsetArg}, required: []string{"from"}},

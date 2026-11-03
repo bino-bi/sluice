@@ -144,6 +144,14 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 			}
 			return p.nominal(&out.Months, &out.Suppressed, "month", "month("+p.x+")", p.x+" IS NOT NULL", 0)
 		}},
+		{PartAges, func() error { return p.ages(needs, s, out) }},
+		{PartTimes, func() error {
+			expr, where := p.timeSlot()
+			if noise != nil {
+				return p.noisyFixed(&out.Times, "times", expr, where, 0, slots-1)
+			}
+			return p.nominal(&out.Times, &out.Suppressed, "time", expr, where, 0)
+		}},
 		{PartLengths, func() error {
 			if noise != nil {
 				return p.noisyOrdinal(&out.Lengths, "lengths", "length("+p.x+")", p.x+" IS NOT NULL", 0)
@@ -235,6 +243,7 @@ func (p *colRun) check(needs Needs) error {
 		parts&PartOffset != 0 && (p.kind != KindDate && p.kind != KindTimestamp || needs.From == "") ||
 		parts&(textParts|wordParts) != 0 && p.kind != KindText ||
 		parts&dateParts != 0 && p.kind != KindDate && p.kind != KindTimestamp ||
+		parts&PartTimes != 0 && p.kind != KindTime && p.kind != KindTimestamp ||
 		parts&PartTopValues != 0 && p.kind == KindOther ||
 		parts&PartFanOut != 0 && (needs.Parent == nil || p.kind != KindInteger && p.kind != KindText && p.kind != KindUUID)
 	if bad {

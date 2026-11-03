@@ -104,6 +104,9 @@ func dateProfile() *profile.Column {
 		Quantiles: []float64{18262, 18350, 18450, 18628},
 		Weekdays:  profile.Nominal{Values: []profile.Value{{V: int64(1), Count: 300}, {V: int64(5), Count: 200}}},
 		Months:    profile.Nominal{Values: []profile.Value{{V: int64(3), Count: 300}, {V: int64(12), Count: 100}}},
+		Ages:      profile.Nominal{Values: []profile.Value{{V: int64(30), Count: 300}, {V: int64(45), Count: 200}}},
+		AsOf:      time.Date(2024, 6, 30, 0, 0, 0, 0, time.UTC),
+		Times:     profile.Nominal{Values: []profile.Value{{V: int64(36), Count: 300}, {V: int64(70), Count: 100}}},
 	}
 }
 
@@ -172,6 +175,10 @@ func cases() []genCase {
 		{"dateDistribution", apitypes.GenDateDistribution, col("birth", "DATE"), Args{"keepWeekday": true, "keepSeasonality": true}, dateProfile()},
 		{"dateDistribution-ts", apitypes.GenDateDistribution, col("seen", "TIMESTAMP WITH TIME ZONE"), Args{"granularity": "hour"}, tsProfile()},
 		{"dateRange", apitypes.GenDateRange, col("d", "DATE"), Args{"min": "2024-01-01", "max": "2024-12-31"}, nil},
+		{"age", apitypes.GenAge, col("born", "DATE"), nil, dateProfile()},
+		{"age-ts", apitypes.GenAge, col("born2", "TIMESTAMP"), Args{"granularity": "minute"}, tsProfile()},
+		{"timeOfDay", apitypes.GenTimeOfDay, col("at", "TIME"), nil, dateProfile()},
+		{"timeOfDay-ts", apitypes.GenTimeOfDay, col("at2", "TIMESTAMP WITH TIME ZONE"), nil, tsProfile()},
 		{"null", apitypes.GenNull, col("blob", "BLOB"), nil, nil},
 		{"nullRate", apitypes.GenSequence, col("id2", "BIGINT"), Args{"nullRate": 0.5}, nil},
 	}
@@ -605,6 +612,12 @@ func TestCheckTypes(t *testing.T) {
 		{apitypes.GenNull, "STRUCT(a INTEGER)", nil, true},
 		{apitypes.GenSequence, "VARCHAR", nil, true},
 		{apitypes.GenSequence, "DOUBLE", nil, false},
+		{apitypes.GenAge, "DATE", Args{"granularity": "hour"}, false},
+		{apitypes.GenAge, "TIMESTAMP", nil, true},
+		{apitypes.GenAge, "TIME", nil, false},
+		{apitypes.GenTimeOfDay, "TIME", nil, true},
+		{apitypes.GenTimeOfDay, "TIMESTAMP WITH TIME ZONE", nil, true},
+		{apitypes.GenTimeOfDay, "DATE", nil, false},
 	} {
 		g, _ := Lookup(tc.gen)
 		err := g.Check(col("c", tc.typ), tc.args)
@@ -633,7 +646,7 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	names[apitypes.GenForeignKey] = true
 	// correlated needs a group; copula_test.go covers it.
 	names[apitypes.GenCorrelated] = true
-	if len(registry) != 33 || len(names) != 33 {
-		t.Errorf("registry has %d generators, cases cover %d, want 33", len(registry), len(names))
+	if len(registry) != 35 || len(names) != 35 {
+		t.Errorf("registry has %d generators, cases cover %d, want 35", len(registry), len(names))
 	}
 }

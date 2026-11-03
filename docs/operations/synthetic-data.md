@@ -127,6 +127,8 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 | `redact` | Text | `value` (`[redacted]`) | One fixed text. |
 | `dateDistribution` | `DATE`, `TIMESTAMP` types | `granularity`, `keepWeekday`, `keepSeasonality` | Follows the dates of the source. |
 | `dateRange` | `DATE`, `TIMESTAMP` types | `min`, `max` (source bounds), `granularity` | Even spread between the bounds. |
+| `age` | `DATE`, `TIMESTAMP` types | `asOf` (upper source bound), `granularity` | Dates with the source ages at `asOf`, such as birth dates. See [Ages](#ages). |
+| `timeOfDay` | `TIME`, `TIMESTAMP` types | None | Keeps the times of day, such as office hours. See [Times of day](#times-of-day). |
 | `null` | Any | None | Always `NULL`. |
 | `foreignKey` | Integers, text, `UUID` | `table` and `column`, both required, `fanOut` (`source`), `orphanRate` (0) | Keys of a parent table. See [Foreign keys](#foreign-keys). |
 | `dateOffset` | `DATE`, `TIMESTAMP` types | `from`, required, `offset` (`source`) | The value of `from` plus a gap like the source gaps. |
@@ -144,9 +146,35 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 - `sourceVocabulary` keeps a word only when it occurs `minWordCount` times and in `minGroupSize` rows. A word is a run of letters, so digits never appear. `maxWords` is the size of the word list.
 - `sentenceShape.vocabulary` is one of `lorem`, `en`, `de`, `source`. `minWordCount` and `maxWords` work only with `source`.
 - `fake.kind` is one of `name`, `first_name`, `last_name`, `email`, `phone`, `company`, `city`, `country`, `street`, `iban`, `uuid`.
-- `granularity` is one of `second`, `minute`, `hour`, `day`, `month`, `year`.
+- `granularity` is one of `second`, `minute`, `hour`, `day`, `month`, `year`. A `DATE` column takes only `day`, `month` and `year`.
 - Quote the keys `"Y"` and `"N"` in `weighted.values`. YAML reads them as booleans otherwise.
 - A generator that does not fit the column type fails the build before Sluice profiles the column.
+
+## Ages
+
+`age` keeps the age mix of a birth date column. Sluice counts the source rows per age in whole years at the date `asOf`. For each row it draws an age with these shares and writes a date in that year of life before `asOf`.
+
+```yaml
+birth_date:
+  generator: age
+  args:
+    asOf: "2024-06-30"
+```
+
+- `asOf` is an ISO date or timestamp. Without it, `asOf` is the upper bound of the column after `clipOutliers` and `extremeJitter`. Set it to the date of the source data, so the ages mean something.
+- An age with fewer than `minGroupSize` rows never appears. Its rows are left out of the shares.
+- `clipOutliers` cuts the dates before Sluice counts the ages. A spike at the lowest or highest date gives a warning.
+- A date after `asOf` counts as age 0. An age above 150 counts as 150.
+- `granularity` cuts the written date. The cut date keeps the drawn age.
+- With `noise` and `bounds` on the column, `asOf` defaults to `bounds.max`, and dates outside the bounds count as the nearest bound.
+
+## Times of day
+
+`timeOfDay` keeps the times of day of a column. Sluice counts the source rows per 15 minutes of the day. Each row gets a slot with these shares and a second in that slot.
+
+- A slot with fewer than `minGroupSize` rows never appears. Its rows are left out of the shares.
+- On a `TIMESTAMP` column the date comes from the source dates, as with `dateDistribution` and `granularity: day`. Then the time of day is added. A value past the range on the first or last day moves one day into the range.
+- On a `TIME` column the times have whole seconds.
 
 ## Correlated columns
 
@@ -242,7 +270,7 @@ What happened: the build made 22 noisy measurements, so each got an `epsilon` of
 ### Counts
 
 - Each count is the true count plus noise, rounded, and at least 0.
-- A histogram cell, such as a bin or a weekday, is kept when it reaches `minGroupSize` and a floor that grows with the noise.
+- A histogram cell, such as a bin, a weekday, an age or a time slot, is kept when it reaches `minGroupSize` and a floor that grows with the noise.
 - A value, initial, pattern or prefix is kept when its noisy count reaches `minGroupSize`.
 - Quantiles, mean and deviation come from a noisy histogram of 200 bins, or of `bins` for `histogram`.
 - The same data, seed, spec and DuckDB version give the same rows. Any change in the source changes the noise of every count.

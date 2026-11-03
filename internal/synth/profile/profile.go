@@ -5,7 +5,11 @@
 // the filtered profile. The profile lives in memory and is never written.
 package profile
 
-import "github.com/bino-bi/sluice/pkg/apitypes"
+import (
+	"time"
+
+	"github.com/bino-bi/sluice/pkg/apitypes"
+)
 
 // Part is one profile part. A generator lists the parts it reads.
 type Part uint32
@@ -63,13 +67,21 @@ const (
 	PartSentenceWords
 	// PartTerminators reads the sentence ends ., ! and ?.
 	PartTerminators
+	// PartAges reads the age in whole years at Needs.AsOf, or at hi' of
+	// PartRange without it. The generator reads PartRange with it.
+	PartAges
+	// PartTimes reads the time of day in slots of TimeSlot seconds.
+	PartTimes
 )
+
+// TimeSlot is the width of one PartTimes slot in seconds.
+const TimeSlot = 900
 
 const (
 	numberParts = PartRange | PartStats | PartQuantiles | PartLogStats | PartBins
 	textParts   = PartLengths | PartInitials | PartCharClasses | PartCaseStyles | PartPatterns | PartPrefixes | PartWordCounts
 	wordParts   = PartVocabulary | PartSentences | PartSentenceWords | PartTerminators
-	dateParts   = PartWeekdays | PartMonths
+	dateParts   = PartWeekdays | PartMonths | PartAges
 )
 
 // Needs is what a generator reads from the profile. The zero value
@@ -96,6 +108,8 @@ type Needs struct {
 	// PartVocabulary.
 	MinWordCount int
 	MaxWords     int
+	// AsOf is the reference date of PartAges. Nil takes hi'.
+	AsOf *time.Time
 }
 
 // ReadsNumbers reports whether needs reads a number part.
@@ -211,6 +225,11 @@ type Column struct {
 	// both as int64.
 	Weekdays Nominal
 	Months   Nominal
+	// Ages holds the age in whole years at AsOf, Times the slot of the
+	// time of day (0 to 86400/TimeSlot - 1), both as int64.
+	Ages  Nominal
+	AsOf  time.Time
+	Times Nominal
 
 	// Lengths and WordCounts have one bin per length (Lo == Hi).
 	Lengths     []Bin
