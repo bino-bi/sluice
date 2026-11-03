@@ -14,6 +14,7 @@ export SHOP_SYNTH_SEED="synthetic-data-demo-seed-0001"
 
 # --8<-- [start:build]
 sluice synth build shopsynth --config server.yaml
+sluice synth build shopnoisy --config server.yaml
 # --8<-- [end:build]
 
 exec sluice serve --config server.yaml

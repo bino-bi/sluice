@@ -28,6 +28,7 @@ CREATE TABLE orders (
   region      TEXT    NOT NULL,
   product     TEXT    NOT NULL,
   amount      REAL    NOT NULL,
+  quantity    INTEGER NOT NULL,
   placed_on   DATE    NOT NULL,
   shipped_on  DATE    NOT NULL
 );
@@ -46,6 +47,7 @@ SELECT
        WHEN i % 5 < 4 THEN 'tea'
        ELSE 'mug' END,
   round(5 + (i * 37 % 1000) * (i * 37 % 1000) / 4000.0, 2),
+  1 + (i * 37 % 1000) / 125 + i % 3,
   date('2026-01-01', '+' || (i * 7 % 300) || ' days'),
   date('2026-01-01', '+' || (i * 7 % 300 + 1 + i % 9) || ' days')
 FROM n;

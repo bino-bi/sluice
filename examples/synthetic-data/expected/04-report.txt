@@ -9,7 +9,8 @@ main.orders     id           sequence          1000.5         200.5             
 main.orders     customer_id  foreignKey        189.5          39.5              tv 0.198   0
 main.orders     region       categorical       -              -                 tv 0.02    0
 main.orders     product      categorical       -              -                 tv 0.05    0
-main.orders     amount       distribution      67.375         71.1433           ks 0.11    1
-main.orders     placed_on    dateDistribution  20602.5        20608.5           ks 0.0229  0
-main.orders     shipped_on   dateOffset        20607.5        20615.5           ks 0.11    0
-warning: main.orders.amount: 1 by-groups have a spike at a bound
+main.orders     amount       correlated        67.375         67.905            ks 0.0636  0
+main.orders     quantity     correlated        5.5            7                 ks 0.12    0
+main.orders     placed_on    dateDistribution  20602.5        20601             ks 0.0567  0
+main.orders     shipped_on   dateOffset        20607.5        20606             ks 0.11    0
+correlated main.orders: amount, quantity max_diff 0.028 shrinkage 0.00

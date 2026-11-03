@@ -1,0 +1,15 @@
+build <build-id> succeeded, origin cli, finished <time>
+noise: epsilon 10, 22 measurements
+TABLE        COLUMN       GENERATOR         SOURCE MEDIAN  SYNTHETIC MEDIAN  DISTANCE   WARNINGS
+main.orders  id           distribution      1000.5         1029              ks 0.0701  1
+main.orders  customer_id  distribution      189.5          151               ks 0.023   1
+main.orders  region       categorical       -              -                 tv 0.0222  0
+main.orders  product      categorical       -              -                 tv 0.0213  0
+main.orders  amount       histogram         67.375         71.99             -          0
+main.orders  quantity     categorical       5.5            5                 tv 0.0649  0
+main.orders  placed_on    dateDistribution  20602.5        20591             ks 0.0323  1
+main.orders  shipped_on   dateDistribution  20607.5        20611.5           ks 0.0292  1
+warning: main.orders.id: range is not covered by noise, set privacy.bounds
+warning: main.orders.customer_id: range is not covered by noise, set privacy.bounds
+warning: main.orders.placed_on: range is not covered by noise, set privacy.bounds
+warning: main.orders.shipped_on: range is not covered by noise, set privacy.bounds

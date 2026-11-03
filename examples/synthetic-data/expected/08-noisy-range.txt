@@ -1,0 +1,9 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["min_amount", "max_amount"],
+  "rows": [
+    [0, 259]
+  ],
+  "row_count": 1,
+  "truncated": false
+}

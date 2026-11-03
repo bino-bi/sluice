@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: shopnoisy
+spec:
+  type: synthetic
+  synthetic:
+    source: shop
+    seed: secret://env/SHOP_SYNTH_SEED
+    privacy:
+      minGroupSize: 5
+      noise: { epsilon: 10 }
+    tables:
+      - name: main.orders
+        size: { ratio: 0.2 }
+        columns:
+          product: { generator: categorical }
+          amount:
+            generator: histogram
+            args: { bins: 20, decimals: 2 }
+            privacy:
+              bounds: { min: 0, max: 260 }

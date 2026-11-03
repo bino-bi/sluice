@@ -17,7 +17,8 @@ The `shop` data source holds 400 customers and 2000 orders. `shopsynth` builds 2
 ```
 
 - `customer_id` takes the keys of the synthetic customers. Each customer gets about as many orders as in the source.
-- `amount` follows the amounts of the same product in the source.
+- `amount` and `quantity` keep their rank correlation. See [Correlated columns](#correlated-columns).
+- `placed_on` follows the dates of the same product in the source.
 - `shipped_on` is `placed_on` plus a gap like the source gaps.
 - `email` is built from the synthetic names of the same row.
 - No synthetic customer has the first and last name of a source customer.
@@ -94,13 +95,14 @@ A default column with fewer than `minGroupSize` non-null rows is written as `NUL
 `source` means "from the profile of the source column". Every generator also takes `nullRate` and `unique`:
 
 - `nullRate`: `source` (default) or a share from 0 to 1. For `template` and `expression` the default is 0.
-- `unique: true`: no value repeats in the column. The build fails when the generator runs out of values. `template`, `expression` and `foreignKey` do not take it.
+- `unique: true`: no value repeats in the column. The build fails when the generator runs out of values. `template`, `expression`, `foreignKey` and `correlated` do not take it.
 
 Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VARCHAR`.
 
 | Generator | Column types | Args, default in parentheses | Values |
 |---|---|---|---|
 | `distribution` | Numbers, `TIME` | `decimals`, `integer`, `smooth` (`true`) | Follows the quantiles of the source. |
+| `correlated` | Numbers, `TIME` | `with`, `decimals`, `integer`, `smooth` (`true`) | Keeps the rank correlation between the columns of a group. See [Correlated columns](#correlated-columns). |
 | `uniform` | Numbers, `TIME` | `min`, `max` (source bounds) | Even spread between the bounds. |
 | `normal` | Numbers | `truncate` (`true`), `decimals`, `integer` | Normal curve with the source mean and deviation. |
 | `lognormal` | Numbers | `truncate` (`true`), `decimals`, `integer` | Log-normal curve. The source must hold only positive values. |
@@ -146,6 +148,33 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 - Quote the keys `"Y"` and `"N"` in `weighted.values`. YAML reads them as booleans otherwise.
 - A generator that does not fit the column type fails the build before Sluice profiles the column.
 
+## Correlated columns
+
+`correlated` keeps the rank correlation between number columns of one table. In the example source, a larger `amount` comes with a larger `quantity`:
+
+```yaml
+--8<-- "examples/synthetic-data/policies.d/datasource-shopsynth.yaml:correlated"
+```
+
+```bash
+--8<-- "examples/synthetic-data/steps/06-correlation.sh"
+```
+
+```json
+--8<-- "examples/synthetic-data/expected/06-correlation.txt"
+```
+
+What happened: each column got its own values, as with `distribution`. The group only decided which values meet in one row.
+
+- `with` names 1 to 7 other `correlated` columns of the same table entry. One side is enough: `quantity` needs no `with`.
+- Columns that `with` links form a group of 2 to 8 columns.
+- Sluice measures the rank correlation (Spearman) of each pair from a table of up to 20 by 20 cells.
+- A pair needs `2 x minGroupSize` rows where both values are set. Fewer rows fail the build.
+- A pair without spread, such as a constant column, gets the correlation 0 and a report warning.
+- When the measured values do not fit together, Sluice moves them toward 0 until they do. The report shows this share as `shrinkage`.
+- `correlated` is set only under `tables[].columns`, not in a rule. `DATE` and `TIMESTAMP` columns are refused.
+- `correlated` does not take `unique`, and `rejectExactMatches` cannot name it. Sluice cannot draw one row of a group again.
+
 ## Privacy settings
 
 Set `privacy` on the data source, on a table, or on a column entry. The most specific level wins.
@@ -158,11 +187,14 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 | `spikeWarning` | `true` | Warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
 | `strictTags` | `[pii]` | A column with one of these tags needs a column entry or a rule. The default generator is not enough. |
 | `rejectExactMatches` | Off | Columns that together must not equal a source row. Sluice draws matching rows again. |
+| `noise` | Off | Adds random noise to the counts of the profile. Takes `epsilon` from 0.001 to 100. See [Noise](#noise). |
+| `bounds` | None | The public `min` and `max` of a number, `TIME` or date column. Needs `noise`. |
 
 - Columns with fewer than `minGroupSize` non-null rows fail the build, unless the generator needs no profile. Examples: `constant`, `sequence`, `range`, `weighted`, `regex`, `uuid`, `redact`, `null`.
 - A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Set `clipOutliers` to remove it.
 - `strictTags` is set only on the data source. Tags come from `DataClassification` objects on the source catalog.
 - `rejectExactMatches` is set only on a table. It takes 1 to 32 column names.
+- `noise` is set only on the data source. `bounds` is set only on a column entry.
 
 `rejectExactMatches` compares the listed columns of each synthetic row with every source row:
 
@@ -170,6 +202,73 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 - The build fails when more than 1% of the rows match. Then the columns are too predictable together.
 - Otherwise Sluice draws the listed columns of the matching rows again, and the columns that read them. It checks again, up to 10 rounds. Rows that still match fail the build.
 - Source rows stay inside DuckDB. Errors and the report hold only counts and column names.
+
+## Noise
+
+`noise` adds random noise (Laplace noise) to the counts that Sluice reads from the source. One source row then changes the snapshot only a little. A smaller `epsilon` means more noise.
+
+`shopnoisy` builds the orders of the example with noise. `amount` gets public bounds:
+
+```yaml
+--8<-- "examples/synthetic-data/policies.d/datasource-shopnoisy.yaml:2"
+```
+
+```bash
+--8<-- "examples/synthetic-data/steps/09-report-noisy.sh"
+```
+
+```text
+--8<-- "examples/synthetic-data/expected/09-report-noisy.txt"
+```
+
+```bash
+--8<-- "examples/synthetic-data/steps/08-noisy-range.sh"
+```
+
+```json
+--8<-- "examples/synthetic-data/expected/08-noisy-range.txt"
+```
+
+What happened: the build made 22 noisy measurements, so each got an `epsilon` of 10 / 22. The range of `amount` comes from its bounds and the kept bins. The other number and date columns warn that their range has no noise.
+
+### Budget
+
+- `epsilon` is the budget of one build of the whole data source. Sluice splits it evenly over all noisy measurements of the build.
+- A measurement is one released set of counts. Examples: the rows of a table, the nulls of a column, one histogram, one correlated pair.
+- A rebuild over changed data spends `epsilon` again. Nothing adds up the budget over builds.
+- Sluice counts the measurements before it reads data. A default with a fallback counts every generator it may fall back to.
+- `foreignKey`, `dateOffset`, `sourceVocabulary`, `sentenceShape` and `by` are refused with `noise`.
+
+### Counts
+
+- Each count is the true count plus noise, rounded, and at least 0.
+- A histogram cell, such as a bin or a weekday, is kept when it reaches `minGroupSize` and a floor that grows with the noise.
+- A value, initial, pattern or prefix is kept when its noisy count reaches `minGroupSize`.
+- Quantiles, mean and deviation come from a noisy histogram of 200 bins, or of `bins` for `histogram`.
+- The same data, seed, spec and DuckDB version give the same rows. Any change in the source changes the noise of every count.
+
+### Min and max
+
+- With `bounds`, Sluice cuts the values to the bounds and splits that range into equal bins. The output range is the outer edges of the kept bins.
+- A lone far value cannot keep its bin, so it does not show in the range.
+- Set `bounds` close to the real range. A bin is (max - min) / 200 wide, so wide bounds put all rows in a few bins.
+- On small tables use `histogram` with fewer `bins`. The example has 2000 rows and needs `epsilon: 10` for usable numbers.
+- Without `bounds`, the range comes from the profile, as without noise. The report marks the column `range: profile` and warns.
+- `bounds` takes numbers for number columns and seconds of the day for `TIME`. For `DATE` and `TIMESTAMP` columns it takes ISO dates or timestamps.
+- `bounds` on a generator that reads no numbers, such as `categorical`, fails the build.
+- A very small `epsilon` can fail the build for a number column. It can also give the column a narrow random range.
+
+### Not covered by noise
+
+Do not call a snapshot differentially private without this list. Noise does not cover:
+
+- Which values, initials, patterns and prefixes appear. `minGroupSize` protects them, as without noise.
+- The range of number and date columns without `bounds`, and spike warnings without `bounds`.
+- The report and the audit record. They hold exact counts of the source.
+- Whether the source changed between two builds.
+- The rows that `rejectExactMatches` compares with the source.
+- Attacks on the rounding of floating-point numbers in the noise.
+- A known seed. Anyone with the seed and the spec can remove the noise.
 
 ## Relations
 
@@ -206,7 +305,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 
 ### Groups with by
 
-`by` names 1 to 3 columns. The generator then uses the profile of the rows that have the same values in these columns. The example uses the amounts of the same product.
+`by` names 1 to 3 columns. The generator then uses the profile of the rows that have the same values in these columns. The example uses the dates of the same product.
 
 - A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
 - Values compare as text. The `by` column needs a generator that keeps source values, such as `categorical`. The report warns when most rows find no group. `bucket` on a `by` column is refused.
@@ -245,7 +344,7 @@ A build writes into `synthetic.dir`:
 
 Sluice changes `current` only after every check passed. A failed build writes its report and leaves `current` as it was. Sluice keeps the current and the previous snapshot and deletes older ones. Clients can read only the `snapshots` folder.
 
-The same spec, seed and source data give the same rows on the same CPU architecture. The report holds a `content_hash` of the rows to compare builds.
+The same spec, seed and source data give the same rows on the same CPU architecture. With `noise`, the DuckDB version must be the same too. The report holds a `content_hash` of the rows to compare builds.
 
 ## Status
 
@@ -281,10 +380,11 @@ The same spec, seed and source data give the same rows on the same CPU architect
 - For `foreignKey`, `tv` compares the fan-outs. For `dateOffset`, `ks` compares the gaps to `from`.
 - Medians of dates are in days since 1970-01-01. Medians of timestamps are in seconds.
 - A spike in a `by` group gives one warning line with the number of such groups.
+- `sluice synth report` prints a `noise` line with the budget, and a `correlated` line for each group.
 - The source `min` and `max` in the JSON are not the real extremes. They hold the `minGroupSize`-th value from each end, or the `clipOutliers` bounds.
 - The report holds no source rows, but it holds counts and statistics of the source. Keep it private.
 
-The JSON has these fields for relations. Each one is left out when it does not apply.
+The JSON has these fields for relations, correlated columns and noise. Each one is left out when it does not apply.
 
 | Field | Meaning |
 |---|---|
@@ -294,13 +394,17 @@ The JSON has these fields for relations. Each one is left out when it does not a
 | `columns[].by` | `columns`, `groups`, `dropped_groups`, `fallback_rows` that used the profile of the whole column, and `spike_groups`. |
 | `columns[].fan_out` | The `parent` column, the number of `parents`, the `scale` and the `orphan_rows`. |
 | `columns[].words` | The number of kept words of `sourceVocabulary` or `sentenceShape`. |
+| `noise` | `epsilon`, the number of `measurements` and `epsilon_per_measurement`. |
+| `tables[].correlations` | Per group: `columns`, `cells` per column, `shrinkage`, the `source` and `synthetic` rank correlations, and `max_diff`. |
+| `columns[].noise_measurements` | The noisy measurements of the column. |
+| `columns[].range` | With noise: `bounds` or `profile`, the origin of the min and max. |
 
 `sluice synth build` also prints one line for each `rejectExactMatches` table and each `foreignKey` column.
 
 ## Limits
 
-- The privacy settings make rare values and extremes hard to find. They are no formal privacy guarantee. `rejectExactMatches` stops exact copies, not near copies. `sourceVocabulary` keeps a name that many rows hold.
-- `by` uses at most 100 groups. Rows of other groups use the profile of the whole column.
+- Without `noise` the settings give no formal privacy guarantee. With `noise`, `epsilon` covers the counts listed in [Noise](#noise), not which labels appear and not ranges without `bounds`.
+- `rejectExactMatches` stops exact copies, not near copies. `sourceVocabulary` keeps a name that many rows hold. `by` uses at most 100 groups.
 - `sluice synth build` writes no record to the audit log. It prints the record on stderr and stores it in the report.
 - A running server picks up a snapshot from `sluice synth build` only after a restart. Each build keeps only the current and the previous snapshot, so two CLI builds delete the file a running server serves. Use the admin API to build in the server.
 - Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec. The seed value is not part of the `stale` check, so build again after you change it.

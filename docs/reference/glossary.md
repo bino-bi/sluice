@@ -18,6 +18,7 @@ The docs use one term for each concept.
 | [CEL](../policies/conditions.md) | Common Expression Language, used in conditions, reject rules and row filters. |
 | Client | A program that sends queries to Sluice. |
 | [Column mask](../policies/column-masks.md) | A policy that replaces the values of a column. |
+| [Copula](../operations/synthetic-data.md#correlated-columns) | The method that `correlated` uses to draw several columns with their rank correlation. |
 | [Data source](../operations/data-sources.md) | A database or file store that Sluice reads. |
 | Default deny | Sluice denies a query unless a policy allows every table it reads. |
 | Deny | Sluice refuses a query because of access control: `ACL_DENIED`. |
@@ -34,6 +35,7 @@ The docs use one term for each concept.
 | [Policy](../policies/index.md) | A YAML object that tells Sluice what to allow, filter, mask, reject, rewrite or hold. |
 | Policy directory | The directory with the YAML files that Sluice loads. |
 | [Policy kind](policy-schema.md) | The `kind` of a policy, for example `RowFilterPolicy`. |
+| [Privacy budget](../operations/synthetic-data.md#budget) | The `epsilon` of one synthetic build. Sluice splits it over the noisy counts. |
 | [ReBAC](../policies/rebac.md) | Access control by relations between subjects and tables. |
 | [Reject](../policies/guardrails.md) | Sluice refuses a statement because of its form: `ACL_REJECTED`. |
 | [Reload](../operations/hot-reload.md) | Sluice loads the policy directory again without a restart. |

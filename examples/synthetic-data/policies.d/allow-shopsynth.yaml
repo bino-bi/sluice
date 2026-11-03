@@ -10,4 +10,4 @@ spec:
       - subjects:
           groups: ["developers"]
         resources:
-          catalogs: ["shopsynth"]
+          catalogs: ["shopsynth", "shopnoisy"]

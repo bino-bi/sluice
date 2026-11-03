@@ -19,8 +19,14 @@ spec:
             generator: foreignKey
             args: { table: main.customers, column: id }
           product: { generator: categorical }
+          # --8<-- [start:correlated]
           amount:
-            generator: distribution
+            generator: correlated
+            args: { with: [quantity], decimals: 2 }
+          quantity: { generator: correlated }
+          # --8<-- [end:correlated]
+          placed_on:
+            generator: dateDistribution
             args: { by: [product] }
           shipped_on:
             generator: dateOffset
