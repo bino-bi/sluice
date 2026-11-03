@@ -106,6 +106,13 @@ func NoisyCounts(c []Counts, cols []ColumnInfo, noise func(column string) *Noise
 	return out
 }
 
+// NoisyRows is the noisy full row count of a sampled table, one more
+// measurement of the table (plan 5, 1.5).
+func NoisyRows(rows int64, noise func(column string) *Noise) int64 {
+	out, _ := noise("").cells("sourceRows", []int64{rows}, 1)
+	return out[0]
+}
+
 // valueKey orders nominal cells before the noise and breaks ties after
 // it. It never leaves the package.
 func valueKey(v any) string {

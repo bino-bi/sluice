@@ -408,8 +408,19 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	if t.Size.Ratio != nil && *t.Size.Ratio > b.in.MaxRatio {
 		return fail(fmt.Errorf("size.ratio %g is above synthetic.maxRatio %g", *t.Size.Ratio, b.in.MaxRatio))
 	}
-	counts, err := runner.Base(ctx, pt, infos)
+	ps, err := b.profileTable(ctx, conn, t, pt, infos)
 	if err != nil {
+		return fail(err)
+	}
+	defer ps.drop()
+	// ppt is the table the profile reads: pt, or its sample.
+	ppt := ps.table
+	counts, err := runner.Base(ctx, ppt, infos)
+	if err != nil {
+		if ps.sampled {
+			// The error of the sample names the builder table.
+			return fail(fmt.Errorf("profile sample: %w", profile.ErrQuery))
+		}
 		return err
 	}
 	srcRows := counts[0].Rows
@@ -417,12 +428,20 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	if nf := b.noiseFor(t); nf != nil {
 		noisy = profile.NoisyCounts(counts, infos, nf)
 	}
-	rows, ratio, err := b.size(t.Size, noisy[0].Rows)
+	sizeRows := noisy[0].Rows
+	if ps.sampled {
+		srcRows, sizeRows = ps.rows, ps.sizeRows
+	}
+	rows, ratio, err := b.size(t.Size, sizeRows)
 	if err != nil {
 		return fail(err)
 	}
 	tr := TableReport{Name: t.Name, SourceRows: srcRows, SyntheticRows: rows, Ratio: ratio, Columns: []ColumnReport{},
 		DependsOn: tableDeps(b.spec, t)}
+	if ps.sampled {
+		tr.ProfiledRows = counts[0].Rows
+		b.rep.Warnings = append(b.rep.Warnings, fmt.Sprintf("%s: profiled on a sample of %d rows", t.Name, tr.ProfiledRows))
+	}
 
 	sibs := make(map[string]generate.Sibling, len(infos))
 	for i, info := range infos {
@@ -438,7 +457,7 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	var order []int
 	var groups []*corrGroup
 	if rows > 0 {
-		if groups, err = b.resolve(ctx, conn, runner, t, pt, resolver, cols, rows); err != nil {
+		if groups, err = b.resolve(ctx, conn, runner, t, pt, ppt, resolver, cols, rows); err != nil {
 			return fail(err)
 		}
 		for _, c := range cols {
@@ -485,7 +504,7 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 		}
 	}
 	for _, c := range cols {
-		cr, err := b.columnReport(ctx, conn, pt, t, c, rows)
+		cr, err := b.columnReport(ctx, conn, pt, ppt, t, c, rows)
 		if err != nil {
 			return fail(err)
 		}
@@ -554,9 +573,9 @@ func snapshotType(dataType string, g apitypes.SyntheticGenerator) string {
 // resolve picks the generator of every column, then reads its profile
 // and builds its value source. Choice errors of all columns come back
 // together, so one run shows every missing choice. It returns the
-// correlated groups.
+// correlated groups. Tags come from pt, the profile from ppt.
 func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable,
-	pt profile.Table, resolver *generate.Resolver, cols []*column, rows int64) ([]*corrGroup, error) {
+	pt, ppt profile.Table, resolver *generate.Resolver, cols []*column, rows int64) ([]*corrGroup, error) {
 	var errs []error
 	for _, c := range cols {
 		if b.in.Tagger != nil {
@@ -581,13 +600,13 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 		if c.choice.Generator == apitypes.GenCorrelated {
 			continue
 		}
-		if err := b.prepare(ctx, conn, runner, t, pt, c, rows); err != nil {
+		if err := b.prepare(ctx, conn, runner, t, ppt, ppt != pt, c, rows); err != nil {
 			return nil, err
 		}
 	}
 	var groups []*corrGroup
 	for _, members := range correlatedGroups(cols) {
-		g, err := b.prepareGroup(ctx, conn, runner, t, pt, cols, members, rows)
+		g, err := b.prepareGroup(ctx, conn, runner, t, ppt, cols, members, rows)
 		if err != nil {
 			return nil, err
 		}
@@ -653,9 +672,10 @@ func checkByGenerators(cols []*column) []error {
 
 // prepare reads the profile of one column and builds its value source.
 // A default choice falls back along its chain when the profile or the
-// generator fails (plan, step C notes).
+// generator fails (plan, step C notes). pt is the table the profile
+// reads; sampled says it is a sample.
 func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable,
-	pt profile.Table, c *column, rows int64) error {
+	pt profile.Table, sampled bool, c *column, rows int64) error {
 	gcol := b.genColumn(ctx, conn, c, rows)
 	stream := func(purpose string) *rng.Stream {
 		return rng.For(b.seed, b.name, t.Name, c.info.Name, purpose)
@@ -672,6 +692,10 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		var prof, genProf *profile.Column
 		var err error
 		needs := g.Needs(gcol, choice.Args)
+		if sampled && needs.Parts&profile.PartFanOut != 0 {
+			// On a sample each fan-out count shrinks (plan 5, 1.6).
+			return fmt.Errorf("column %s: fanOut: source and orphanRate: source need the full table, set fanOut { min, max } and a fixed orphanRate, or remove profile.sampleRows", c.info.Name)
+		}
 		if choice.Generator == apitypes.GenTemplate || choice.Generator == apitypes.GenExpression {
 			prof = &profile.Column{}
 		} else {

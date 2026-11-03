@@ -221,6 +221,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `synthetic.tables[].size.ratio` | float | one of two | Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails. |
 | `synthetic.tables[].size.rows` | int | one of two | Fixed row count. 0 copies only the columns. |
 | `synthetic.tables[].privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for this table. Not `strictTags` or `noise`. `bounds` only on a column entry. |
+| `synthetic.tables[].profile.sampleRows` | int |  | Profile a sample of this many rows when the table has more. 1000 to 100 000 000. Without it the build reads the full table. See [Profile on a sample](../operations/synthetic-data.md#profile-on-a-sample). |
 | `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags` or `noise`. See [Generators](../operations/synthetic-data.md#generators). |
 | `synthetic.tables[].rules` | [SyntheticRule](#syntheticrule) list |  | Generator rules for this table. A column entry comes first. |
 

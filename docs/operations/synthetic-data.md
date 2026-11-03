@@ -346,6 +346,22 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 
 A `template` is `NULL` when a column it reads is `NULL`. A `dateOffset` is `NULL` when `from` is `NULL`. With `offset: source`, the gap keeps its sign: when no source gap is negative, no synthetic gap is either.
 
+## Profile on a sample
+
+By default a build reads the full source table, once for each profile query. For a large table, set `profile.sampleRows` on the table, such as `profile: { sampleRows: 1000000 }`.
+
+- When the table has more rows than `sampleRows`, Sluice reads it once and keeps a sample of about `sampleRows` rows in the builder. Every profile query and the source side of the report then read the sample.
+- Sluice keeps each row by a hash of its values, its copy number among equal rows and the seed. So the sample size varies a little around `sampleRows`.
+- A table with at most `sampleRows` rows is read in full. Without `noise` the build is the same as without the setting.
+- `sampleRows` is 1000 to 100 000 000.
+- The sample follows from the seed and the row values, not from the row order. The same seed and data give the same sample, also from Postgres or MySQL. The DuckDB version must be the same.
+- These steps still read the full table: the row count for `size` and `synthetic.maxRatio`, `rejectExactMatches`, and the source fingerprint of `noise`.
+- `minGroupSize` counts the rows in the sample, so rare values drop out sooner. Sluice does not scale the counts up. A scaled count would let a value of one person pass.
+- `foreignKey` with `fanOut: source` or `orphanRate: source` fails on a sampled table, because each fan-out count would shrink. Set `fanOut: { min, max }` and a fixed `orphanRate` instead.
+- With `noise` the full row count is one more noisy measurement, also when Sluice does not sample. The noisy count decides whether Sluice samples.
+- The sample lives in the memory of the builder. A million rows of 20 columns take a few hundred MB. To number equal rows, DuckDB groups the full table once, and it may spill to disk for that.
+- The report shows `tables[].profiled_rows` and a warning for each sampled table.
+
 ## Build and publish
 
 Three things start a build:
@@ -410,6 +426,7 @@ The JSON has these fields for relations, correlated columns and noise. Each one 
 
 | Field | Meaning |
 |---|---|
+| `tables[].profiled_rows` | The size of the profile sample. See [Profile on a sample](#profile-on-a-sample). |
 | `tables[].depends_on` | The parent tables of the `foreignKey` columns. |
 | `tables[].exact_matches` | `columns`, `matched_rows` in the first round, `redrawn_rows` in all rounds, and `rounds`. |
 | `columns[].depends_on` | The columns that this column reads. |

@@ -80,6 +80,9 @@ func (b *builder) tableBudget(ctx context.Context, conn *sql.Conn, t *apitypes.S
 		sibs[strings.ToLower(c.Name)] = generate.Sibling{Index: i, Name: c.Name, Type: c.Type}
 	}
 	m := 1 // rows
+	if t.Profile != nil && t.Profile.SampleRows != nil {
+		m++ // full rows of a sample (plan 5, 1.5)
+	}
 	var errs []error
 	cols := make([]*column, len(infos))
 	for i, info := range infos {

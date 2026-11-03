@@ -125,9 +125,24 @@ type SyntheticTable struct {
 	Name    string                     `yaml:"name" json:"name"`
 	Size    SyntheticSize              `yaml:"size" json:"size"`
 	Privacy *SyntheticPrivacy          `yaml:"privacy,omitempty" json:"privacy,omitempty"`
+	Profile *SyntheticProfile          `yaml:"profile,omitempty" json:"profile,omitempty"`
 	Columns map[string]SyntheticColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
 	Rules   []SyntheticRule            `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
+
+// SyntheticProfile sets how the build reads a source table. Nil reads
+// the full table.
+type SyntheticProfile struct {
+	// SampleRows profiles a sample of this many rows when the table has
+	// more.
+	SampleRows *int64 `yaml:"sampleRows,omitempty" json:"sampleRows,omitempty"`
+}
+
+// Bounds of SyntheticProfile.SampleRows.
+const (
+	MinSampleRows = 1000
+	MaxSampleRows = 100_000_000
+)
 
 // SyntheticSize sets the row count: a share of the source rows or a fixed
 // number. Exactly one is set.
@@ -398,6 +413,9 @@ func validateSynthetic(d *DataSource) error {
 		if field, reason := checkPrivacy(t.Privacy, path+".privacy", levelTable, noise); field != "" {
 			return fail(field, reason)
 		}
+		if field, reason := checkProfile(t.Profile, path+".profile"); field != "" {
+			return fail(field, reason)
+		}
 		cols := make([]string, 0, len(t.Columns))
 		for name := range t.Columns {
 			cols = append(cols, name)
@@ -447,6 +465,17 @@ func checkSize(s SyntheticSize, path string) (string, string) {
 		return path + ".ratio", "must be above 0 and at most 1"
 	case s.Rows != nil && *s.Rows < 0:
 		return path + ".rows", "must be 0 or more"
+	}
+	return "", ""
+}
+
+func checkProfile(p *SyntheticProfile, path string) (string, string) {
+	switch {
+	case p == nil:
+	case p.SampleRows == nil:
+		return path + ".sampleRows", "is required in profile"
+	case *p.SampleRows < MinSampleRows || *p.SampleRows > MaxSampleRows:
+		return path + ".sampleRows", fmt.Sprintf("must be %d to %d", MinSampleRows, MaxSampleRows)
 	}
 	return "", ""
 }

@@ -868,6 +868,17 @@ func TestSpecHash(t *testing.T) {
 	if !strings.HasPrefix(a, "sha256:") {
 		t.Errorf("hash = %s", a)
 	}
+	s = baseSpec()
+	n := int64(5000)
+	s.Tables[0].Profile = &apitypes.SyntheticProfile{SampleRows: &n}
+	sampled, _ := SpecHash(s)
+	if sampled == a {
+		t.Errorf("sampleRows keeps the hash")
+	}
+	n = 6000
+	if b, _ := SpecHash(s); b == sampled {
+		t.Errorf("a sampleRows change keeps the hash")
+	}
 }
 
 // A level with only noise or only bounds is not report-only.

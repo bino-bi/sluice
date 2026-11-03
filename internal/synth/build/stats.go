@@ -20,7 +20,8 @@ import (
 
 // columnReport collects the report entry of one column after the
 // snapshot table is written.
-func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.Table, t *apitypes.SyntheticTable,
+// The source side reads ppt, the table the profile read (plan 5, 1.4).
+func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt, ppt profile.Table, t *apitypes.SyntheticTable,
 	c *column, rows int64) (ColumnReport, error) {
 	cr := ColumnReport{
 		Name:      c.info.Name,
@@ -92,7 +93,7 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 			slog.String("name", b.name), slog.String("table", t.Name), slog.String("column", c.info.Name), slog.String("side", s.Side))
 	}
 
-	from := parser.QuoteIdent(pt.Catalog) + "." + parser.QuoteIdent(pt.Schema) + "." + parser.QuoteIdent(pt.Name)
+	from := tableSQL(ppt)
 	x := parser.QuoteIdent(c.info.Name)
 	if e := profile.Axis(c.info.Type, x); e != "" && c.exact.NonNull >= 2*k {
 		lo, hi := float64(k)/float64(c.exact.NonNull), 1-float64(k)/float64(c.exact.NonNull)

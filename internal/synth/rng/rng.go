@@ -30,6 +30,7 @@ const (
 	PurposeOrphans = "orphans"
 	PurposeCopula  = "copula"
 	PurposeNoise   = "noise"
+	PurposeSample  = "sample"
 )
 
 // JitterBy is the jitter purpose of one by-group. key is the group key

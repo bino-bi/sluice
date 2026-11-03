@@ -55,8 +55,10 @@ type NoiseReport struct {
 
 // TableReport is one table of a Report.
 type TableReport struct {
-	Name          string         `json:"name"`
-	SourceRows    int64          `json:"source_rows"`
+	Name       string `json:"name"`
+	SourceRows int64  `json:"source_rows"`
+	// ProfiledRows is the size of the profile sample, 0 without one.
+	ProfiledRows  int64          `json:"profiled_rows,omitempty"`
 	SyntheticRows int64          `json:"synthetic_rows"`
 	Ratio         float64        `json:"ratio"`
 	Columns       []ColumnReport `json:"columns"`

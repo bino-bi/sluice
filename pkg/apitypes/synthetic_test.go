@@ -402,6 +402,11 @@ spec:
 		name, body, field string
 	}{
 		{"no tables", "", "spec.synthetic.tables"},
+		{"sampleRows low", table + "        profile: { sampleRows: 999 }\n", "spec.synthetic.tables[0].profile.sampleRows"},
+		{"sampleRows 0", table + "        profile: { sampleRows: 0 }\n", "spec.synthetic.tables[0].profile.sampleRows"},
+		{"sampleRows negative", table + "        profile: { sampleRows: -1 }\n", "spec.synthetic.tables[0].profile.sampleRows"},
+		{"sampleRows high", table + "        profile: { sampleRows: 100000001 }\n", "spec.synthetic.tables[0].profile.sampleRows"},
+		{"empty profile", table + "        profile: {}\n", "spec.synthetic.tables[0].profile.sampleRows"},
 		{"duplicate table", table + "      - name: CRM.customers\n        size: { ratio: 0.1 }\n", "spec.synthetic.tables[1].name"},
 		{"duplicate column", table + "        columns:\n          Email: { generator: \"null\" }\n          email: { generator: \"null\" }\n", "spec.synthetic.tables[0].columns.email"},
 		{"table strictTags", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { strictTags: [pii] }\n", "spec.synthetic.tables[0].privacy.strictTags"},
@@ -798,5 +803,26 @@ spec:
 				}
 			}
 		})
+	}
+}
+
+// A sampleRows of the wrong type and a profile at source level fail at
+// decode.
+func TestSyntheticProfileDecode(t *testing.T) {
+	t.Parallel()
+	base := "apiVersion: sluice.bino.bi/v1alpha1\nkind: DataSource\nmetadata:\n  name: crmsynth\nspec:\n  type: synthetic\n  synthetic:\n    source: crm\n    seed: secret://env/SEED\n"
+	table := "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"string": {table + "        profile: { sampleRows: many }\n", "sampleRows"},
+		"source": {"    profile: { sampleRows: 5000 }\n" + table, `unknown field "profile"`},
+	} {
+		if _, err := decodeSyn(t, base+c.body); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+	for _, n := range []string{"1000", "100000000"} {
+		if _, err := decodeSyn(t, base+table+"        profile: { sampleRows: "+n+" }\n"); err != nil {
+			t.Errorf("sampleRows %s: %v", n, err)
+		}
 	}
 }
