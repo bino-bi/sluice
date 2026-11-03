@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,6 +27,9 @@ import (
 // only. p is a permutation of 0 to 4999, so status has exact counts:
 // vip 3, closed 497, paused 1500, active 3000. Names are not in the fake
 // lists, except the pairs of ids 11, 12 and 13. email is NULL for 10 %.
+// orders has 15 400 rows: customer i has i % 7 orders, customer 42 has
+// 400, and 3 orders have a customer that does not exist. shipped_at is
+// ordered_at plus 1 to 10 days, NULL for 5 %.
 const relationsSQL = `
 CREATE SCHEMA crm;
 CREATE TABLE crm.customers AS
@@ -45,6 +49,20 @@ SELECT
   DATE '2020-01-01' + CAST((i * 37) % 1500 AS INTEGER) AS signup,
   CASE WHEN i % 10 = 0 THEN NULL ELSE 'c' || i || '@example.com' END AS email
 FROM b;
+CREATE TABLE crm.orders AS
+WITH c AS (SELECT CAST(i AS BIGINT) AS cid, CASE WHEN i = 42 THEN 400 ELSE i % 7 END AS n FROM range(1, 5001) r(i)),
+k AS (SELECT cid, unnest(range(n)) AS j FROM c UNION ALL SELECT 5000 + i, 0 FROM range(1, 4) r(i)),
+o AS (SELECT row_number() OVER (ORDER BY cid, j) AS id, cid FROM k)
+SELECT
+  CAST(id AS BIGINT) AS id,
+  cid AS customer_id,
+  ['new', 'paid', 'shipped', 'returned'][id % 4 + 1] AS status,
+  CAST(1 + (id * 13) % 20 AS INTEGER) AS quantity,
+  CAST(5 + ((id * 17) % 1000) / 10 AS DECIMAL(10,2)) AS unit_price,
+  TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000) AS ordered_at,
+  CASE WHEN id % 20 = 0 THEN NULL
+       ELSE TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000 + 86400 + (id * 104729) % (9 * 86400)) END AS shipped_at
+FROM o;
 `
 
 var relFixture struct {
@@ -226,6 +244,98 @@ func TestTemplateUnknownColumn(t *testing.T) {
 	for _, want := range []string{
 		"column email: template names column nope, which is not in the table",
 		"column city: template names column gone, which is not in the table",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not hold %q", err, want)
+		}
+	}
+}
+
+func ordersSpec(cols map[string]apitypes.SyntheticColumn) *apitypes.SyntheticSpec {
+	spec := relSpec(cols)
+	spec.Tables[0].Name = "crm.orders"
+	return spec
+}
+
+// R8.
+func TestDateOffsetColumns(t *testing.T) {
+	spec := ordersSpec(map[string]apitypes.SyntheticColumn{
+		"ordered_at": {Generator: apitypes.GenDateDistribution, Args: map[string]any{"nullRate": 0.1}},
+		"shipped_at": {Generator: apitypes.GenDateOffset, Args: map[string]any{"from": "Ordered_At"}},
+	})
+	dir := t.TempDir()
+	rep, _ := mustRun(t, opts{spec: spec, dir: dir, source: relationsPath(t)})
+	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+
+	if n, m := scalar[int64](t, db, "SELECT count(*) FROM src.crm.orders"), scalar[int64](t, db, "SELECT count(*) FROM syn.crm.orders"); n != 15400 || m != 3080 {
+		t.Fatalf("orders: %d source rows, %d synthetic rows", n, m)
+	}
+	const off = "epoch(shipped_at) - epoch(ordered_at)"
+	for _, q := range []string{
+		"SELECT count(*) FROM syn.crm.orders WHERE shipped_at < ordered_at",
+		"SELECT count(*) FROM syn.crm.orders WHERE ordered_at IS NULL AND shipped_at IS NOT NULL",
+		"SELECT count(*) FROM syn.crm.orders WHERE " + off + " <> round(" + off + ")",
+	} {
+		if n := scalar[int64](t, db, q); n != 0 {
+			t.Errorf("%d rows: %s", n, q)
+		}
+	}
+	if n := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.orders WHERE ordered_at IS NULL"); n == 0 {
+		t.Error("no NULL ordered_at, nullRate 0.1 shows nothing")
+	}
+
+	// The null share of shipped_at counts the rows with an ordered_at.
+	const nullShare = "SELECT count(*) FILTER (WHERE shipped_at IS NULL) / count(*) FROM %s.crm.orders WHERE ordered_at IS NOT NULL"
+	srcNull := scalar[float64](t, db, fmt.Sprintf(nullShare, "src"))
+	synNull := scalar[float64](t, db, fmt.Sprintf(nullShare, "syn"))
+	if math.Abs(srcNull-synNull) > 0.02 {
+		t.Errorf("shipped_at null share %v, source %v", synNull, srcNull)
+	}
+
+	const stats = "SELECT min(" + off + "), max(" + off + "), median(" + off + ") FROM %s.crm.orders"
+	var srcMin, srcMax, srcMed, synMin, synMax, synMed float64
+	if err := db.QueryRow(fmt.Sprintf(stats, "src")).Scan(&srcMin, &srcMax, &srcMed); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(fmt.Sprintf(stats, "syn")).Scan(&synMin, &synMax, &synMed); err != nil {
+		t.Fatal(err)
+	}
+	if r := srcMax - srcMin; math.Abs(synMed-srcMed) > 0.05*r {
+		t.Errorf("median offset %v, source %v, range %v", synMed, srcMed, r)
+	}
+	if synMax == srcMax || synMin == srcMin {
+		t.Errorf("offset bounds %v %v equal a source bound %v %v", synMin, synMax, srcMin, srcMax)
+	}
+
+	var found bool
+	for _, c := range rep.Tables[0].Columns {
+		if c.Name != "shipped_at" {
+			continue
+		}
+		found = true
+		if !slices.Equal(c.DependsOn, []string{"ordered_at"}) || c.Distance == nil || c.Distance.Metric != "ks" || c.Distance.Value > 0.1 {
+			t.Errorf("shipped_at report: depends_on %v, distance %+v", c.DependsOn, c.Distance)
+		}
+	}
+	if !found {
+		t.Error("no shipped_at in the report")
+	}
+}
+
+func TestDateOffsetErrors(t *testing.T) {
+	spec := ordersSpec(map[string]apitypes.SyntheticColumn{
+		"status":     {Generator: apitypes.GenDateOffset, Args: map[string]any{"from": "ordered_at"}},
+		"shipped_at": {Generator: apitypes.GenDateOffset, Args: map[string]any{"from": "nope"}},
+		"ordered_at": {Generator: apitypes.GenDateOffset, Args: map[string]any{"from": "quantity"}},
+	})
+	_, err := run(t, opts{spec: spec, source: relationsPath(t)})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{
+		"column status: generator does not fit the column type: dateOffset on VARCHAR",
+		"column shipped_at: dateOffset names column nope, which is not in the table",
+		"column ordered_at: dateOffset needs a TIMESTAMP column in from, quantity has type INTEGER",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not hold %q", err, want)

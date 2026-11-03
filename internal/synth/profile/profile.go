@@ -44,6 +44,11 @@ const (
 	PartWeekdays
 	// PartMonths reads the month histogram of a date column.
 	PartMonths
+	// PartOffset moves the number parts to the offset axis x - from
+	// (days for DATE, seconds for TIMESTAMP), with Needs.From as from.
+	// The null rate is then the NULL share of x among the rows where
+	// from is not NULL.
+	PartOffset
 )
 
 const (
@@ -65,6 +70,11 @@ type Needs struct {
 	// moves a bound by at least one unit, so rounding cannot give back
 	// the source value. Zero takes the default of the column kind.
 	Unit float64
+	// From is the source name of the other column of PartOffset.
+	From string
+	// KeepSign keeps lo' at or above 0 when the source lo is, so a
+	// jitter cannot turn "always after" into "sometimes before".
+	KeepSign bool
 }
 
 // Default privacy settings (concept 5.8).

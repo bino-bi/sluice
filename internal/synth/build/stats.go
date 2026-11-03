@@ -193,8 +193,9 @@ func (b *builder) syntheticStats(ctx context.Context, conn *sql.Conn, target, x,
 }
 
 // distance compares the synthetic column with the filtered profile: ks
-// for a column drawn from the quantile grid, tv for one drawn from the
-// kept values. Other generators get none.
+// for a column drawn from the quantile grid (on the offset axis for
+// dateOffset), tv for one drawn from the kept values. Other generators
+// get none.
 func (b *builder) distance(ctx context.Context, conn *sql.Conn, target, x string, c *column) (*Distance, error) {
 	p := c.prof
 	e := profile.Axis(c.snapType, x)
@@ -204,6 +205,12 @@ func (b *builder) distance(ctx context.Context, conn *sql.Conn, target, x string
 			return b.totalVariation(ctx, conn, target, x, p)
 		}
 	case apitypes.GenBucket:
+	case apitypes.GenDateOffset:
+		// The profile is on the offset axis, so the distance is too.
+		if len(c.refs) == 1 && len(p.Quantiles) >= 2 {
+			f := parser.QuoteIdent(c.sibs[c.refs[0]].Name)
+			return b.ks(ctx, conn, target, profile.OffsetAxis(c.snapType, x, f), p.Quantiles)
+		}
 	default:
 		if len(p.Quantiles) >= 2 && e != "" {
 			return b.ks(ctx, conn, target, e, p.Quantiles)

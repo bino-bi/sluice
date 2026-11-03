@@ -169,6 +169,7 @@ const (
 	GenDateRange        SyntheticGenerator = "dateRange"
 	GenNull             SyntheticGenerator = "null"
 	GenTemplate         SyntheticGenerator = "template"
+	GenDateOffset       SyntheticGenerator = "dateOffset"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -239,6 +240,7 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenDateRange:        {args: map[string]argCheck{"min": dateArg, "max": dateArg, "granularity": granularityArg}, cross: dateMinBelowMax},
 	GenNull:             {args: map[string]argCheck{}},
 	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
+	GenDateOffset:       {args: map[string]argCheck{"from": columnArg, "offset": offsetArg}, required: []string{"from"}},
 }
 
 // sharedArgs are valid on every generator.

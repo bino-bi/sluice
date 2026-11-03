@@ -5,6 +5,7 @@ package apitypes
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -13,7 +14,8 @@ import (
 // columns of many tables, where a column name would point elsewhere or
 // nowhere, so they are only allowed under tables[].columns.
 var relationGenerators = map[SyntheticGenerator]bool{
-	GenTemplate: true,
+	GenTemplate:   true,
+	GenDateOffset: true,
 }
 
 // maxTemplateBytes caps the template arg.
@@ -29,6 +31,39 @@ func templateArg(v any) error {
 	}
 	_, _, err := ParseTemplate(s)
 	return err
+}
+
+// columnArg is the name of another column of the same table.
+func columnArg(v any) error {
+	if s, ok := v.(string); !ok || strings.TrimSpace(s) == "" {
+		return errors.New("must be a column name")
+	}
+	return nil
+}
+
+// maxOffsetDays bounds dateOffset.offset, about 100 years.
+const maxOffsetDays = 36500
+
+// offsetArg is "source" or {min, max} in days, min <= max.
+func offsetArg(v any) error {
+	bad := fmt.Errorf("must be source or {min, max} in days from %d to %d", -maxOffsetDays, maxOffsetDays)
+	switch x := v.(type) {
+	case string:
+		if x == "source" {
+			return nil
+		}
+	case map[string]any:
+		mn, okMin := x["min"].(float64)
+		mx, okMax := x["max"].(float64)
+		if len(x) != 2 || !okMin || !okMax || math.Abs(mn) > maxOffsetDays || math.Abs(mx) > maxOffsetDays {
+			return bad
+		}
+		if mn > mx {
+			return errors.New("min must not be above max")
+		}
+		return nil
+	}
+	return bad
 }
 
 // ParseTemplate splits a template into literal text and placeholders.
@@ -85,7 +120,8 @@ func TemplateRefs(tmpl string) ([]string, error) {
 // lower-cased. Args that do not parse give no refs; decode refuses them.
 func (c SyntheticColumn) argRefs() map[string][]string {
 	out := map[string][]string{}
-	if c.Generator == GenTemplate {
+	switch c.Generator {
+	case GenTemplate:
 		if s, ok := c.Args["template"].(string); ok {
 			if refs, err := TemplateRefs(s); err == nil {
 				for _, r := range refs {
@@ -93,12 +129,16 @@ func (c SyntheticColumn) argRefs() map[string][]string {
 				}
 			}
 		}
+	case GenDateOffset:
+		if s, ok := c.Args["from"].(string); ok && strings.TrimSpace(s) != "" {
+			out["from"] = []string{strings.ToLower(s)}
+		}
 	}
 	return out
 }
 
 // Refs returns the columns of the same table that c reads: template
-// placeholders, lower-cased, sorted, unique.
+// placeholders and dateOffset.from, lower-cased, sorted, unique.
 func (c SyntheticColumn) Refs() []string {
 	seen := map[string]bool{}
 	var out []string

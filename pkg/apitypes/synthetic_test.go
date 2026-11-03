@@ -70,6 +70,9 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"dateRange":        `{ generator: dateRange, args: { min: "2020-01-01", max: "2024-06-30T12:00:00Z", granularity: day } }`,
 		"null":             `{ generator: "null" }`,
 		"template":         `{ generator: template, args: { template: "{First_Name}.{last_name}@example.org {{x}}", lower: true, nullRate: 0.1 } }`,
+		"dateOffset":       `{ generator: dateOffset, args: { from: Ordered_At } }`,
+		"dateOffset-span":  `{ generator: dateOffset, args: { from: ordered_at, offset: { min: -36500, max: 0.5 }, nullRate: source, unique: true } }`,
+		"dateOffset-src":   `{ generator: dateOffset, args: { from: ordered_at, offset: source } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -214,6 +217,18 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"template missing", synDoc("crmsynth", `{ generator: template }`), "spec.synthetic.tables[0].columns.c.args.template"},
 		{"template unique", synDoc("crmsynth", `{ generator: template, args: { template: "{a}", unique: true } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
 		{"template self ref", synDoc("crmsynth", `{ generator: template, args: { template: "{a}-{C}" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"dateOffset no from", synDoc("crmsynth", `{ generator: dateOffset }`), "spec.synthetic.tables[0].columns.c.args.from"},
+		{"dateOffset empty from", synDoc("crmsynth", `{ generator: dateOffset, args: { from: " " } }`), "spec.synthetic.tables[0].columns.c.args.from"},
+		{"dateOffset from not a string", synDoc("crmsynth", `{ generator: dateOffset, args: { from: 3 } }`), "spec.synthetic.tables[0].columns.c.args.from"},
+		{"dateOffset self ref", synDoc("crmsynth", `{ generator: dateOffset, args: { from: C } }`), "spec.synthetic.tables[0].columns.c.args.from"},
+		{"dateOffset offset word", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: days } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset number", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: 3 } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset no max", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: 1 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset extra key", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: 1, max: 2, unit: 3 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset min above max", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: 2, max: 1 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset too large", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: 0, max: 36501 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset offset too small", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: -36501, max: 0 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
+		{"dateOffset unknown arg", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, days: 3 } }`), "spec.synthetic.tables[0].columns.c.args.days"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
 		{"leading digit", synDoc("1crm", `{ generator: "null" }`), "metadata.name"},
@@ -274,6 +289,9 @@ spec:
 		{"table rule generator", table + "        rules:\n          - match: { types: [VARCHAR] }\n            generator: nope\n", "spec.synthetic.tables[0].rules[0].generator"},
 		{"template in source rule", "    rules:\n      - match: { columns: [email] }\n        generator: template\n        args: { template: \"{a}\" }\n" + table, "spec.synthetic.rules[0].generator"},
 		{"template in table rule", table + "        rules:\n          - match: { columns: [email] }\n            generator: template\n            args: { template: \"{a}\" }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"dateOffset in source rule", "    rules:\n      - match: { types: [DATE] }\n        generator: dateOffset\n        args: { from: a }\n" + table, "spec.synthetic.rules[0].generator"},
+		{"dateOffset in table rule", table + "        rules:\n          - match: { types: [DATE] }\n            generator: dateOffset\n            args: { from: a }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"dateOffset cycle", table + "        columns:\n          a: { generator: dateOffset, args: { from: b } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 		{"template cycle", table + "        columns:\n          a: { generator: template, args: { template: \"{b}\" } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 	}
 	for _, tc := range cases {
@@ -358,6 +376,12 @@ spec:
 			"          c: { generator: template, args: { template: \"{a}\" } }\n",
 			"columns a, b, c depend on each other"},
 		{"self", "        columns:\n          a: { generator: template, args: { template: \"{A}\" } }\n", "refers to the column itself"},
+		{"dateOffset rule", "        rules:\n          - match: { types: [DATE] }\n            generator: dateOffset\n            args: { from: a }\n",
+			"dateOffset refers to other columns, set it under tables[].columns"},
+		{"dateOffset cycle", "        columns:\n" +
+			"          shipped: { generator: dateOffset, args: { from: Ordered } }\n" +
+			"          ordered: { generator: dateOffset, args: { from: shipped } }\n",
+			"columns ordered, shipped depend on each other"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -423,7 +447,11 @@ func TestSyntheticColumnRefs(t *testing.T) {
 	if got := strings.Join(c.Refs(), ","); got != "a,b,zed" {
 		t.Errorf("refs = %s", got)
 	}
-	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}"}}).Refs(); refs != nil {
+	c = SyntheticColumn{Generator: GenDateOffset, Args: map[string]any{"from": "Ordered_At"}}
+	if got := strings.Join(c.Refs(), ","); got != "ordered_at" {
+		t.Errorf("dateOffset refs = %s", got)
+	}
+	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}", "from": "b"}}).Refs(); refs != nil {
 		t.Errorf("fake refs = %v", refs)
 	}
 }

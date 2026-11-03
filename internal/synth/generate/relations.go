@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bino-bi/sluice/internal/synth/profile"
+	"github.com/bino-bi/sluice/internal/synth/rng"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -195,4 +196,106 @@ func formatDecimal(x float64, scale int) string {
 		return "-" + d
 	}
 	return d
+}
+
+type dateOffset struct{}
+
+// fromSibling returns the from column of a dateOffset.
+func fromSibling(col Column, args Args) (Sibling, error) {
+	from := args.strOr("from", "")
+	s, ok := col.Siblings[strings.ToLower(from)]
+	if !ok {
+		return Sibling{}, fmt.Errorf("dateOffset names column %s, which is not in the table", from)
+	}
+	return s, nil
+}
+
+func (dateOffset) Check(col Column, args Args) error {
+	k := col.Kind()
+	if err := fits(col, apitypes.GenDateOffset, isDate(k)); err != nil {
+		return err
+	}
+	s, err := fromSibling(col, args)
+	if err != nil {
+		return err
+	}
+	if profile.KindOf(s.Type) != k {
+		want := "DATE"
+		if k == profile.KindTimestamp {
+			want = "TIMESTAMP"
+		}
+		return fmt.Errorf("dateOffset needs a %s column in from, %s has type %s", want, s.Name, profile.DisplayType(s.Type))
+	}
+	if span, ok := args["offset"].(map[string]any); ok && k == profile.KindDate {
+		lo, _ := span["min"].(float64)
+		hi, _ := span["max"].(float64)
+		if math.Ceil(lo) > math.Floor(hi) {
+			return fmt.Errorf("dateOffset on a DATE needs a whole day in the offset span, {min: %v, max: %v} has none", lo, hi)
+		}
+	}
+	return nil
+}
+
+func (dateOffset) Needs(col Column, args Args) profile.Needs {
+	s, _ := fromSibling(col, args)
+	// The draw rounds to whole days or seconds, so a smaller jitter move
+	// would round back to the source bound.
+	n := profile.Needs{Parts: profile.PartOffset, From: s.Name, KeepSign: true, Unit: 1}
+	if args.isSource("offset", true) {
+		n.Parts |= profile.PartQuantiles
+	}
+	return n
+}
+
+func (dateOffset) New(col Column, p *profile.Column, args Args, s Streams) (ColumnGen, error) {
+	from, err := fromSibling(col, args)
+	if err != nil {
+		return nil, err
+	}
+	g := &offsetGen{from: from.Index, date: col.Kind() == profile.KindDate, r: s.Values}
+	if args.isSource("offset", true) {
+		if len(p.Quantiles) < 2 {
+			return nil, errNoGrid
+		}
+		g.lo, g.hi = p.Quantiles[0], p.Quantiles[len(p.Quantiles)-1]
+		g.draw = func() float64 { return gridValue(p.Quantiles, g.r.Float64(), true) }
+		return g, nil
+	}
+	span, _ := args["offset"].(map[string]any)
+	lo, _ := span["min"].(float64)
+	hi, _ := span["max"].(float64)
+	if !g.date {
+		lo, hi = lo*secondsPerDay, hi*secondsPerDay
+	}
+	g.lo, g.hi = lo, hi
+	g.draw = func() float64 { return lo + float64(g.r.Float64()*(hi-lo)) }
+	return g, nil
+}
+
+// offsetGen adds a drawn offset to the from value of the row: whole days
+// on a DATE, whole seconds on a TIMESTAMP.
+type offsetGen struct {
+	from   int
+	date   bool
+	lo, hi float64
+	r      *rng.Stream
+	draw   func() float64
+}
+
+func (g *offsetGen) Pool() int64 { return -1 }
+
+func (g *offsetGen) Next(row RowCtx) (any, error) {
+	// The draw happens on every row, so a NULL from does not shift the
+	// values of later rows.
+	o := rounding{decimals: 0}.fit(g.draw(), g.lo, g.hi)
+	t, ok := row.Values[g.from].(time.Time)
+	if !ok {
+		return nil, nil
+	}
+	if g.date {
+		return t.AddDate(0, 0, int(o)), nil
+	}
+	// Seconds, not a time.Duration: a source offset to a sentinel like
+	// 9999-12-31 is above the 292 years a Duration holds.
+	return time.Unix(t.Unix()+int64(o), int64(t.Nanosecond())).In(t.Location()), nil
 }

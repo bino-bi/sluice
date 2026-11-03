@@ -86,8 +86,16 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 	if c.NonNull < k {
 		return nil, p.fail(ErrTooFewRows)
 	}
-	if err := p.check(needs.Parts); err != nil {
+	if err := p.check(needs); err != nil {
 		return nil, err
+	}
+	p.axis = p.kind.axis(p.x)
+	if needs.Parts&PartOffset != 0 {
+		f := parser.QuoteIdent(needs.From)
+		p.axis = p.kind.offsetAxis(p.x, f)
+		if err := p.offsetNullRate(f, out); err != nil {
+			return nil, err
+		}
 	}
 	steps := []struct {
 		part Part
@@ -153,6 +161,8 @@ type colRun struct {
 	typ  string // data_type
 	kind Kind
 	k    int64
+	// axis is the number axis of the number parts.
+	axis string
 }
 
 func (p *colRun) fail(err error) error {
@@ -181,8 +191,10 @@ func (p *colRun) query(q string, args []any, scan func(*sql.Rows) error) error {
 	return nil
 }
 
-func (p *colRun) check(parts Part) error {
+func (p *colRun) check(needs Needs) error {
+	parts := needs.Parts
 	bad := parts&numberParts != 0 && !p.kind.Numeric() ||
+		parts&PartOffset != 0 && (p.kind != KindDate && p.kind != KindTimestamp || needs.From == "") ||
 		parts&textParts != 0 && p.kind != KindText ||
 		parts&dateParts != 0 && p.kind != KindDate && p.kind != KindTimestamp ||
 		parts&PartTopValues != 0 && p.kind == KindOther
@@ -195,7 +207,7 @@ func (p *colRun) check(parts Part) error {
 // numbers reads the number parts and applies clip (step 3), grid
 // (step 4), bin merge (step 6), jitter (step 7) and spike check (step 8).
 func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Column) error {
-	e := p.kind.axis(p.x)
+	e := p.axis
 	var lo, hi float64
 	if s.Clip != nil {
 		var qs []float64
@@ -291,6 +303,10 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 	// source bound in the stage or the final CAST.
 	unit := max(needs.Unit, defaultUnit(p.typ))
 	out.Lo, out.Hi = jitterBounds(lo, hi, unit, s, jitter)
+	if needs.KeepSign && lo >= 0 {
+		out.Lo = max(out.Lo, 0)
+		out.Hi = max(out.Hi, out.Lo)
+	}
 	for i, q := range quantiles {
 		quantiles[i] = mapLinear(q, lo, hi, out.Lo, out.Hi)
 	}
@@ -300,6 +316,19 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 		bins[i].Hi = mapLinear(bins[i].Hi, lo, hi, out.Lo, out.Hi)
 	}
 	out.Bins = bins
+	return nil
+}
+
+// offsetNullRate sets the null rate of x among the rows where f is not
+// NULL, with the k rule of nullRate. A NULL f gives a NULL value anyway,
+// so this rate gives the source NULL share overall.
+func (p *colRun) offsetNullRate(f string, out *Column) error {
+	var c Counts
+	q := "SELECT count(*), count(" + p.x + ") FROM " + p.from + " WHERE " + f + " IS NOT NULL"
+	if err := p.query(q, nil, func(rows *sql.Rows) error { return rows.Scan(&c.Rows, &c.NonNull) }); err != nil {
+		return err
+	}
+	out.NullRate = nullRate(c, p.k)
 	return nil
 }
 

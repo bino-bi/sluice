@@ -110,6 +110,27 @@ func (k Kind) axis(x string) string {
 	return ""
 }
 
+// offsetAxis returns the SQL expression of x - f on the number axis of
+// kind k: days for DATE, seconds for TIMESTAMP. Rows with a NULL or
+// infinite side give NULL; DATE 'infinity' minus a date would be finite.
+// It is "" for other kinds.
+func (k Kind) offsetAxis(x, f string) string {
+	finite := "isfinite(" + x + ") AND isfinite(" + f + ")"
+	switch k {
+	case KindDate:
+		// DATE - DATE is BIGINT; the number parts read DOUBLE.
+		return "CASE WHEN " + finite + " THEN CAST(" + x + " - " + f + " AS DOUBLE) END"
+	case KindTimestamp:
+		return "CASE WHEN " + finite + " THEN epoch(" + x + ") - epoch(" + f + ") END"
+	}
+	return ""
+}
+
+// OffsetAxis returns the SQL expression of the offset axis between the
+// quoted columns x and f, where x has type dataType, or "" when the type
+// has none.
+func OffsetAxis(dataType, x, f string) string { return KindOf(dataType).offsetAxis(x, f) }
+
 // Axis returns the SQL expression of the number axis of the quoted
 // column x of type dataType, or "" when the type has none.
 func Axis(dataType, x string) string { return KindOf(dataType).axis(x) }
