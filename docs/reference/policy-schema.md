@@ -108,6 +108,11 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `spikeWarning` | bool |  | Warn about a few rows far from the rest. Default true. |
 | `strictTags` | []string |  | Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source. |
 | `rejectExactMatches` | []string |  | Columns that together must not equal a source row. Only on a table. |
+| `noise` | object |  | Adds Laplace noise to the profile counts. Only on the data source. |
+| `noise.epsilon` | float |  | Privacy budget of one build of the whole data source. From 0.001 to 100. Smaller is more private and less exact. |
+| `bounds` | object |  | Public range of a number, time or date column. Only on a column entry, with `noise`. |
+| `bounds.min` | any |  | Lower end: a number (seconds of the day for `TIME`), or an ISO date or timestamp for `DATE` and `TIMESTAMP`. Same kind as `max`. |
+| `bounds.max` | any |  | Upper end, above `min`. |
 
 ### SyntheticRule
 
@@ -215,8 +220,8 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `synthetic.tables[].name` | string | yes | Source table as `schema.table`. |
 | `synthetic.tables[].size.ratio` | float | one of two | Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails. |
 | `synthetic.tables[].size.rows` | int | one of two | Fixed row count. 0 copies only the columns. |
-| `synthetic.tables[].privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for this table. Not `strictTags`. |
-| `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. See [Generators](../operations/synthetic-data.md#generators). |
+| `synthetic.tables[].privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for this table. Not `strictTags` or `noise`. `bounds` only on a column entry. |
+| `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags` or `noise`. See [Generators](../operations/synthetic-data.md#generators). |
 | `synthetic.tables[].rules` | [SyntheticRule](#syntheticrule) list |  | Generator rules for this table. A column entry comes first. |
 
 ## SubjectBinding

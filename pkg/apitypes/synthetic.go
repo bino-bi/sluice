@@ -40,8 +40,9 @@ const (
 	BuildIfMissing BuildOnStart = "ifMissing"
 )
 
-// SyntheticPrivacy holds the privacy filter settings. StrictTags is read
-// only at source level, RejectExactMatches only at table level.
+// SyntheticPrivacy holds the privacy filter settings. StrictTags and
+// Noise are read only at source level, RejectExactMatches only at table
+// level, Bounds only on a column entry.
 type SyntheticPrivacy struct {
 	MinGroupSize  *int           `yaml:"minGroupSize,omitempty" json:"minGroupSize,omitempty"`
 	ClipOutliers  *ClipOutliers  `yaml:"clipOutliers,omitempty" json:"clipOutliers,omitempty"`
@@ -50,7 +51,23 @@ type SyntheticPrivacy struct {
 	StrictTags    []string       `yaml:"strictTags,omitempty" json:"strictTags,omitempty"`
 	// RejectExactMatches names the columns that together must not equal a
 	// source row.
-	RejectExactMatches []string `yaml:"rejectExactMatches,omitempty" json:"rejectExactMatches,omitempty"`
+	RejectExactMatches []string        `yaml:"rejectExactMatches,omitempty" json:"rejectExactMatches,omitempty"`
+	Noise              *SyntheticNoise `yaml:"noise,omitempty" json:"noise,omitempty"`
+	// Bounds needs Noise at source level.
+	Bounds *SyntheticBounds `yaml:"bounds,omitempty" json:"bounds,omitempty"`
+}
+
+// SyntheticNoise adds Laplace noise to the profile counts.
+type SyntheticNoise struct {
+	// Epsilon is the budget of one build of the whole data source.
+	Epsilon float64 `yaml:"epsilon" json:"epsilon"`
+}
+
+// SyntheticBounds is the public range of a column: numbers, or ISO dates
+// for DATE and TIMESTAMP columns.
+type SyntheticBounds struct {
+	Min any `yaml:"min" json:"min"`
+	Max any `yaml:"max" json:"max"`
 }
 
 // ClipOutliers names the source quantiles that bound number and date
@@ -338,7 +355,8 @@ func validateSynthetic(d *DataSource) error {
 	default:
 		return fail(base+".build.onStart", fmt.Sprintf("unknown value %q (never, ifMissing)", syn.Build.OnStart))
 	}
-	if field, reason := checkPrivacy(syn.Privacy, base+".privacy", levelSource); field != "" {
+	noise := syn.Privacy != nil && syn.Privacy.Noise != nil
+	if field, reason := checkPrivacy(syn.Privacy, base+".privacy", levelSource, noise); field != "" {
 		return fail(field, reason)
 	}
 	for i, r := range syn.Rules {
@@ -369,7 +387,7 @@ func validateSynthetic(d *DataSource) error {
 		if field, reason := checkSize(t.Size, path+".size"); field != "" {
 			return fail(field, reason)
 		}
-		if field, reason := checkPrivacy(t.Privacy, path+".privacy", levelTable); field != "" {
+		if field, reason := checkPrivacy(t.Privacy, path+".privacy", levelTable, noise); field != "" {
 			return fail(field, reason)
 		}
 		cols := make([]string, 0, len(t.Columns))
@@ -391,7 +409,7 @@ func validateSynthetic(d *DataSource) error {
 			if field, reason := checkGenerator(c.Generator, c.Args, cpath); field != "" {
 				return fail(field, reason)
 			}
-			if field, reason := checkPrivacy(c.Privacy, cpath+".privacy", levelColumn); field != "" {
+			if field, reason := checkPrivacy(c.Privacy, cpath+".privacy", levelColumn, noise); field != "" {
 				return fail(field, reason)
 			}
 		}
@@ -434,7 +452,9 @@ const (
 // maxExactColumns caps privacy.rejectExactMatches.
 const maxExactColumns = 32
 
-func checkPrivacy(p *SyntheticPrivacy, path string, level privacyLevel) (string, string) {
+// checkPrivacy checks one privacy level. noise says whether the source
+// level sets privacy.noise.
+func checkPrivacy(p *SyntheticPrivacy, path string, level privacyLevel, noise bool) (string, string) {
 	if p == nil {
 		return "", ""
 	}
@@ -475,6 +495,58 @@ func checkPrivacy(p *SyntheticPrivacy, path string, level privacyLevel) (string,
 			}
 			seen[strings.ToLower(c)] = true
 		}
+	}
+	if n := p.Noise; n != nil {
+		if level != levelSource {
+			return path + ".noise", "only allowed in spec.synthetic.privacy"
+		}
+		if n.Epsilon < 0.001 || n.Epsilon > 100 {
+			return path + ".noise.epsilon", "must be from 0.001 to 100"
+		}
+	}
+	if b := p.Bounds; b != nil {
+		if level != levelColumn {
+			return path + ".bounds", "only allowed on a column entry"
+		}
+		if !noise {
+			return path + ".bounds", "needs spec.synthetic.privacy.noise"
+		}
+		if field, reason := checkBounds(b); field != "" {
+			return path + ".bounds" + field, reason
+		}
+	}
+	return "", ""
+}
+
+// checkBounds returns a field suffix and a reason. Reasons never hold the
+// values.
+func checkBounds(b *SyntheticBounds) (string, string) {
+	if b.Min == nil {
+		return ".min", "required"
+	}
+	if b.Max == nil {
+		return ".max", "required"
+	}
+	if mn, ok := b.Min.(float64); ok {
+		mx, ok := b.Max.(float64)
+		if !ok {
+			return ".max", "must be a number, as min"
+		}
+		if mn >= mx {
+			return ".max", "must be above min"
+		}
+		return "", ""
+	}
+	mn, ok := parseDateArg(b.Min)
+	if !ok {
+		return ".min", "must be a number or an ISO date or timestamp"
+	}
+	mx, ok := parseDateArg(b.Max)
+	if !ok {
+		return ".max", "must be an ISO date or timestamp, as min"
+	}
+	if !mn.Before(mx) {
+		return ".max", "must be after min"
 	}
 	return "", ""
 }

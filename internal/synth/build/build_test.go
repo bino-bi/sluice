@@ -860,6 +860,51 @@ func TestSpecHash(t *testing.T) {
 	}
 }
 
+// A level with only noise or only bounds is not report-only.
+func TestSpecHashNoise(t *testing.T) {
+	hash := func(s *apitypes.SyntheticSpec) string {
+		t.Helper()
+		h, err := SpecHash(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	s := baseSpec()
+	s.Privacy = nil
+	none := hash(s)
+	s.Privacy = &apitypes.SyntheticPrivacy{Noise: &apitypes.SyntheticNoise{Epsilon: 1}}
+	eps1 := hash(s)
+	if eps1 == none {
+		t.Errorf("noise keeps the hash")
+	}
+	s.Privacy.Noise.Epsilon = 2
+	eps2 := hash(s)
+	if eps2 == eps1 {
+		t.Errorf("an epsilon change keeps the hash")
+	}
+	col := s.Tables[0].Columns["revenue"]
+	col.Privacy = &apitypes.SyntheticPrivacy{Bounds: &apitypes.SyntheticBounds{Min: 0.0, Max: 6000.0}}
+	s.Tables[0].Columns["revenue"] = col
+	withBounds := hash(s)
+	if withBounds == eps2 {
+		t.Errorf("bounds keep the hash")
+	}
+	col.Privacy.Bounds.Max = 7000.0
+	if hash(s) == withBounds {
+		t.Errorf("a bounds change keeps the hash")
+	}
+}
+
+func TestNoiseNotSupportedYet(t *testing.T) {
+	spec := baseSpec()
+	spec.Privacy.Noise = &apitypes.SyntheticNoise{Epsilon: 1}
+	_, err := run(t, opts{spec: spec})
+	if err == nil || !strings.Contains(err.Error(), "privacy.noise is not supported yet") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // smallFixture writes a source with a nested ENUM and small integer
 // ranges. rare has one row with 17, the rest is 0 to 9.
 func smallFixture(t *testing.T) string {

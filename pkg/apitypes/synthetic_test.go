@@ -169,6 +169,65 @@ spec:
 	}
 }
 
+func TestSyntheticNoiseValid(t *testing.T) {
+	t.Parallel()
+	doc := `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crmsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: crm
+    seed: secret://env/SEED
+    privacy: { noise: { epsilon: 0.5 } }
+    tables:
+      - name: crm.customers
+        size: { ratio: 0.2 }
+        columns:
+          revenue: { generator: distribution, privacy: { bounds: { min: 0, max: 6000 } } }
+          opened: { generator: dateDistribution, privacy: { bounds: { min: "2000-01-01", max: "2024-12-31T23:59:59" } } }
+`
+	ds, err := decodeSyn(t, doc)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	syn := ds.Spec.Synthetic
+	if n := syn.Privacy.Noise; n == nil || n.Epsilon != 0.5 {
+		t.Errorf("noise = %+v", n)
+	}
+	if b := syn.Tables[0].Columns["revenue"].Privacy.Bounds; b == nil || b.Min != float64(0) || b.Max != float64(6000) {
+		t.Errorf("revenue bounds = %+v", b)
+	}
+	if b := syn.Tables[0].Columns["opened"].Privacy.Bounds; b == nil || b.Min != "2000-01-01" || b.Max != "2024-12-31T23:59:59" {
+		t.Errorf("opened bounds = %+v", b)
+	}
+	for _, eps := range []string{"0.001", "100"} {
+		d := strings.Replace(doc, "epsilon: 0.5", "epsilon: "+eps, 1)
+		if _, err := decodeSyn(t, d); err != nil {
+			t.Errorf("epsilon %s: %v", eps, err)
+		}
+	}
+}
+
+// Bounds errors name the field, never the values.
+func TestSyntheticBoundsReasonHidesValues(t *testing.T) {
+	t.Parallel()
+	doc := synDoc("crmsynth", `{ generator: distribution, privacy: { bounds: { min: 4711, max: "2024-03-17" } } }`)
+	doc = strings.Replace(doc, "    tables:\n", "    privacy: { noise: { epsilon: 1 } }\n    tables:\n", 1)
+	_, err := decodeSyn(t, doc)
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want ValidationError, got %v", err)
+	}
+	if ve.Field != "spec.synthetic.tables[0].columns.c.privacy.bounds.max" {
+		t.Fatalf("field = %q", ve.Field)
+	}
+	if strings.Contains(err.Error(), "4711") || strings.Contains(err.Error(), "2024") {
+		t.Fatalf("error holds a value: %v", err)
+	}
+}
+
 func TestExtremeJitterJSON(t *testing.T) {
 	t.Parallel()
 	for _, in := range []string{`false`, `"off"`} {
@@ -326,6 +385,10 @@ spec:
     seed: secret://env/SEED
 `
 	table := "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n"
+	noisy := "    privacy: { noise: { epsilon: 1 } }\n"
+	bounded := func(b string) string {
+		return "        columns:\n          a: { generator: distribution, privacy: { bounds: " + b + " } }\n"
+	}
 	cases := []struct {
 		name, body, field string
 	}{
@@ -364,6 +427,24 @@ spec:
 		{"duplicate rejectExactMatches", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, A] }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
 		{"rejectExactMatches names expression", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, Total] }\n" +
 			"        columns:\n          total: { generator: expression, args: { sql: \"a\" } }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
+		{"table noise", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { noise: { epsilon: 1 } }\n", "spec.synthetic.tables[0].privacy.noise"},
+		{"column noise", table + "        columns:\n          a: { generator: distribution, privacy: { noise: { epsilon: 1 } } }\n", "spec.synthetic.tables[0].columns.a.privacy.noise"},
+		{"epsilon 0", "    privacy: { noise: { epsilon: 0 } }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
+		{"epsilon missing", "    privacy: { noise: {} }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
+		{"epsilon 101", "    privacy: { noise: { epsilon: 101 } }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
+		{"epsilon below 0.001", "    privacy: { noise: { epsilon: 0.0009 } }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
+		{"epsilon above 100", "    privacy: { noise: { epsilon: 100.0001 } }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
+		{"source bounds", "    privacy: { noise: { epsilon: 1 }, bounds: { min: 0, max: 1 } }\n" + table, "spec.synthetic.privacy.bounds"},
+		{"table bounds", noisy + "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { bounds: { min: 0, max: 1 } }\n", "spec.synthetic.tables[0].privacy.bounds"},
+		{"bounds without noise", table + bounded("{ min: 0, max: 1 }"), "spec.synthetic.tables[0].columns.a.privacy.bounds"},
+		{"bounds mixed", noisy + table + bounded("{ min: 0, max: \"2024-01-01\" }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.max"},
+		{"bounds date and number", noisy + table + bounded("{ min: \"2024-01-01\", max: 5 }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.max"},
+		{"bounds equal", noisy + table + bounded("{ min: 5, max: 5 }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.max"},
+		{"bounds dates reversed", noisy + table + bounded("{ min: \"2024-02-01\", max: \"2024-01-01\" }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.max"},
+		{"bounds no max", noisy + table + bounded("{ min: 0 }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.max"},
+		{"bounds no min", noisy + table + bounded("{ max: 1 }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.min"},
+		{"bounds bad text", noisy + table + bounded("{ min: soon, max: later }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.min"},
+		{"bounds bool", noisy + table + bounded("{ min: true, max: false }"), "spec.synthetic.tables[0].columns.a.privacy.bounds.min"},
 		{"foreignKey cycle", "    tables:\n" +
 			"      - name: crm.a\n        size: { ratio: 0.2 }\n        columns:\n          b_id: { generator: foreignKey, args: { table: crm.b, column: id } }\n" +
 			"      - name: crm.b\n        size: { ratio: 0.2 }\n        columns:\n          a_id: { generator: foreignKey, args: { table: CRM.A, column: id } }\n",

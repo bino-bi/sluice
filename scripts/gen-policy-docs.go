@@ -184,8 +184,8 @@ var docs = map[string]doc{
 	"DataSource.synthetic.tables[].name":       {"yes", "Source table as `schema.table`."},
 	"DataSource.synthetic.tables[].size.ratio": {"one of two", "Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails."},
 	"DataSource.synthetic.tables[].size.rows":  {"one of two", "Fixed row count. 0 copies only the columns."},
-	"DataSource.synthetic.tables[].privacy":    {"", "Privacy settings for this table. Not `strictTags`."},
-	"DataSource.synthetic.tables[].columns":    {"", "Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. See [Generators](../operations/synthetic-data.md#generators)."},
+	"DataSource.synthetic.tables[].privacy":    {"", "Privacy settings for this table. Not `strictTags` or `noise`. `bounds` only on a column entry."},
+	"DataSource.synthetic.tables[].columns":    {"", "Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags` or `noise`. See [Generators](../operations/synthetic-data.md#generators)."},
 	"DataSource.synthetic.tables[].rules":      {"", "Generator rules for this table. A column entry comes first."},
 
 	"SyntheticPrivacy.minGroupSize":       {"", "Smallest group of source rows a value, bin or bound may come from. 2 or more. Default 5."},
@@ -197,6 +197,11 @@ var docs = map[string]doc{
 	"SyntheticPrivacy.spikeWarning":       {"", "Warn about a few rows far from the rest. Default true."},
 	"SyntheticPrivacy.strictTags":         {"", "Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source."},
 	"SyntheticPrivacy.rejectExactMatches": {"", "Columns that together must not equal a source row. Only on a table."},
+	"SyntheticPrivacy.noise":              {"", "Adds Laplace noise to the profile counts. Only on the data source."},
+	"SyntheticPrivacy.noise.epsilon":      {"", "Privacy budget of one build of the whole data source. From 0.001 to 100. Smaller is more private and less exact."},
+	"SyntheticPrivacy.bounds":             {"", "Public range of a number, time or date column. Only on a column entry, with `noise`."},
+	"SyntheticPrivacy.bounds.min":         {"", "Lower end: a number (seconds of the day for `TIME`), or an ISO date or timestamp for `DATE` and `TIMESTAMP`. Same kind as `max`."},
+	"SyntheticPrivacy.bounds.max":         {"", "Upper end, above `min`."},
 
 	"SyntheticRule.match.columns": {"", "Column name patterns. `*` is a wildcard. Case does not matter."},
 	"SyntheticRule.match.types":   {"", "Column type patterns, for example `DECIMAL*`. Case does not matter."},

@@ -211,6 +211,9 @@ func (b *builder) cleanup() {
 }
 
 func (b *builder) run(ctx context.Context) error {
+	if b.spec.Privacy != nil && b.spec.Privacy.Noise != nil {
+		return errors.New("privacy.noise is not supported yet")
+	}
 	if !strings.HasPrefix(b.spec.Seed, "secret://") {
 		return errors.New("seed: must be a secret reference")
 	}
