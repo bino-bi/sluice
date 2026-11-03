@@ -68,7 +68,10 @@ type ColumnReport struct {
 	MergedBins       int   `json:"merged_bins"`
 	// Fallbacks counts the values fake keepInitial drew from the whole
 	// list.
-	Fallbacks int64    `json:"fallbacks,omitempty"`
+	Fallbacks int64 `json:"fallbacks,omitempty"`
+	// DependsOn lists the columns of the same table this column reads,
+	// sorted.
+	DependsOn []string `json:"depends_on,omitempty"`
 	Warnings  []string `json:"warnings"`
 }
 

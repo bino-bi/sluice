@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,10 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 		Tags:      c.tags,
 		Warnings:  []string{},
 	}
+	for _, r := range c.refs {
+		cr.DependsOn = append(cr.DependsOn, c.sibs[r].Name)
+	}
+	sort.Strings(cr.DependsOn)
 	settings := c.settings
 	if c.prof == nil {
 		settings = profile.Effective(t.Privacy, b.spec.Privacy)

@@ -168,6 +168,7 @@ const (
 	GenDateDistribution SyntheticGenerator = "dateDistribution"
 	GenDateRange        SyntheticGenerator = "dateRange"
 	GenNull             SyntheticGenerator = "null"
+	GenTemplate         SyntheticGenerator = "template"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -180,6 +181,9 @@ type genSchema struct {
 	args     map[string]argCheck
 	required []string
 	cross    func(args map[string]any) (arg string, err error)
+	// noUnique refuses the shared arg unique: a redraw of the same row
+	// gives the same value, so the unique retry loop could not end well.
+	noUnique bool
 }
 
 var syntheticGenerators = map[SyntheticGenerator]genSchema{
@@ -234,6 +238,7 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenDateDistribution: {args: map[string]argCheck{"granularity": granularityArg, "keepWeekday": boolArg, "keepSeasonality": boolArg}},
 	GenDateRange:        {args: map[string]argCheck{"min": dateArg, "max": dateArg, "granularity": granularityArg}, cross: dateMinBelowMax},
 	GenNull:             {args: map[string]argCheck{}},
+	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
 }
 
 // sharedArgs are valid on every generator.
@@ -351,6 +356,9 @@ func validateSynthetic(d *DataSource) error {
 				return fail(field, reason)
 			}
 		}
+		if field, reason := checkTableRelations(t, path, cols); field != "" {
+			return fail(field, reason)
+		}
 		for j, r := range t.Rules {
 			if field, reason := checkRule(r, fmt.Sprintf("%s.rules[%d]", path, j)); field != "" {
 				return fail(field, reason)
@@ -413,6 +421,9 @@ func checkRule(r SyntheticRule, path string) (string, string) {
 			}
 		}
 	}
+	if relationGenerators[r.Generator] {
+		return path + ".generator", fmt.Sprintf("%s refers to other columns, set it under tables[].columns", r.Generator)
+	}
 	return checkGenerator(r.Generator, r.Args, path)
 }
 
@@ -439,6 +450,9 @@ func checkGenerator(g SyntheticGenerator, args map[string]any, path string) (str
 		}
 		if err := check(args[k]); err != nil {
 			return path + ".args." + k, err.Error()
+		}
+		if k == "unique" && schema.noUnique {
+			return path + ".args." + k, fmt.Sprintf("not allowed for %s", g)
 		}
 	}
 	for _, k := range schema.required {

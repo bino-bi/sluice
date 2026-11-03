@@ -69,6 +69,7 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"dateDistribution": `{ generator: dateDistribution, args: { granularity: month, keepWeekday: true, keepSeasonality: true } }`,
 		"dateRange":        `{ generator: dateRange, args: { min: "2020-01-01", max: "2024-06-30T12:00:00Z", granularity: day } }`,
 		"null":             `{ generator: "null" }`,
+		"template":         `{ generator: template, args: { template: "{First_Name}.{last_name}@example.org {{x}}", lower: true, nullRate: 0.1 } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -204,6 +205,15 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"regex open repeat", synDoc("crmsynth", `{ generator: regex, args: { pattern: "(x{995,})" } }`), "spec.synthetic.tables[0].columns.c.args.pattern"},
 		{"regex empty width", synDoc("crmsynth", `{ generator: regex, args: { pattern: "^$\\b" } }`), "spec.synthetic.tables[0].columns.c.args.pattern"},
 		{"regex syntax", synDoc("crmsynth", `{ generator: regex, args: { pattern: "(a" } }`), "spec.synthetic.tables[0].columns.c.args.pattern"},
+		{"template unclosed", synDoc("crmsynth", `{ generator: template, args: { template: "{a" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template empty placeholder", synDoc("crmsynth", `{ generator: template, args: { template: "x{}" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template no placeholder", synDoc("crmsynth", `{ generator: template, args: { template: "plain {{text}}" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template stray close", synDoc("crmsynth", `{ generator: template, args: { template: "{a} }" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template not a string", synDoc("crmsynth", `{ generator: template, args: { template: 3 } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template too long", synDoc("crmsynth", `{ generator: template, args: { template: "{a}`+strings.Repeat("x", 1024)+`" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template missing", synDoc("crmsynth", `{ generator: template }`), "spec.synthetic.tables[0].columns.c.args.template"},
+		{"template unique", synDoc("crmsynth", `{ generator: template, args: { template: "{a}", unique: true } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
+		{"template self ref", synDoc("crmsynth", `{ generator: template, args: { template: "{a}-{C}" } }`), "spec.synthetic.tables[0].columns.c.args.template"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
 		{"leading digit", synDoc("1crm", `{ generator: "null" }`), "metadata.name"},
@@ -262,6 +272,9 @@ spec:
 		{"bad glob", "    rules:\n      - match: { columns: [\"a\\\\\"] }\n        generator: redact\n" + table, "spec.synthetic.rules[0].match.columns"},
 		{"rule arg", "    rules:\n      - match: { tags: [pii] }\n        generator: redact\n        args: { length: 3 }\n" + table, "spec.synthetic.rules[0].args.length"},
 		{"table rule generator", table + "        rules:\n          - match: { types: [VARCHAR] }\n            generator: nope\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"template in source rule", "    rules:\n      - match: { columns: [email] }\n        generator: template\n        args: { template: \"{a}\" }\n" + table, "spec.synthetic.rules[0].generator"},
+		{"template in table rule", table + "        rules:\n          - match: { columns: [email] }\n            generator: template\n            args: { template: \"{a}\" }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"template cycle", table + "        columns:\n          a: { generator: template, args: { template: \"{b}\" } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,5 +327,103 @@ func TestSyntheticStrictUnknownField(t *testing.T) {
 	doc := strings.Replace(synDoc("crmsynth", `{ generator: "null" }`), "    source: crm\n", "    source: crm\n    sorce: x\n", 1)
 	if _, err := decodeSyn(t, doc); err == nil || !strings.Contains(err.Error(), "sorce") {
 		t.Fatalf("want unknown field error, got %v", err)
+	}
+}
+
+func TestSyntheticRelationErrors(t *testing.T) {
+	t.Parallel()
+	base := `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crmsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: crm
+    seed: secret://env/SEED
+    tables:
+      - name: crm.customers
+        size: { ratio: 0.2 }
+`
+	cases := []struct {
+		name, body, reason string
+	}{
+		{"rule", "        rules:\n          - match: { columns: [email] }\n            generator: template\n            args: { template: \"{a}\" }\n",
+			"template refers to other columns, set it under tables[].columns"},
+		// d reads the cycle but is not part of it.
+		{"cycle", "        columns:\n" +
+			"          d: { generator: template, args: { template: \"{a}\" } }\n" +
+			"          a: { generator: template, args: { template: \"{b}\" } }\n" +
+			"          b: { generator: template, args: { template: \"{c} {x}\" } }\n" +
+			"          c: { generator: template, args: { template: \"{a}\" } }\n",
+			"columns a, b, c depend on each other"},
+		{"self", "        columns:\n          a: { generator: template, args: { template: \"{A}\" } }\n", "refers to the column itself"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Repeat because a map-ordered walk passes a single run by chance.
+			for range 20 {
+				_, err := decodeSyn(t, base+tc.body)
+				var ve *ValidationError
+				if !errors.As(err, &ve) {
+					t.Fatalf("want ValidationError, got %v", err)
+				}
+				if ve.Reason != tc.reason {
+					t.Fatalf("reason = %q, want %q", ve.Reason, tc.reason)
+				}
+			}
+		})
+	}
+}
+
+func TestSyntheticTemplateChain(t *testing.T) {
+	t.Parallel()
+	doc := `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crmsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: crm
+    seed: secret://env/SEED
+    tables:
+      - name: crm.customers
+        size: { ratio: 0.2 }
+        columns:
+          a: { generator: template, args: { template: "{b}" } }
+          b: { generator: template, args: { template: "{c}" } }
+          c: { generator: fake, args: { kind: first_name } }
+`
+	if _, err := decodeSyn(t, doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+func TestParseTemplate(t *testing.T) {
+	t.Parallel()
+	lits, refs, err := ParseTemplate("{{id}} {First}.{last}@x}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(lits, "|") != "{id} |.|@x}" || strings.Join(refs, "|") != "First|last" {
+		t.Errorf("lits = %q, refs = %q", lits, refs)
+	}
+	for _, bad := range []string{"", "x", "{a", "{}", "{ }", "{a{b}}", "a}", "{{a}}"} {
+		if _, _, err := ParseTemplate(bad); err == nil {
+			t.Errorf("%q: want error", bad)
+		}
+	}
+}
+
+func TestSyntheticColumnRefs(t *testing.T) {
+	t.Parallel()
+	c := SyntheticColumn{Generator: GenTemplate, Args: map[string]any{"template": "{Zed}{a}-{A}{b}"}}
+	if got := strings.Join(c.Refs(), ","); got != "a,b,zed" {
+		t.Errorf("refs = %s", got)
+	}
+	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}"}}).Refs(); refs != nil {
+		t.Errorf("fake refs = %v", refs)
 	}
 }

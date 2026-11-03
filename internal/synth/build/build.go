@@ -337,6 +337,11 @@ type column struct {
 	stage    generate.Stage
 	snapType string
 	warnings []string
+	// sibs are the columns of the table by lower-case name, shared by all
+	// columns of the table.
+	sibs map[string]generate.Sibling
+	// refs are the lower-case names of the columns this one reads.
+	refs []string
 }
 
 func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable) error {
@@ -376,18 +381,26 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	}
 	tr := TableReport{Name: t.Name, SourceRows: srcRows, SyntheticRows: rows, Ratio: ratio, Columns: []ColumnReport{}}
 
+	sibs := make(map[string]generate.Sibling, len(infos))
+	for i, info := range infos {
+		sibs[strings.ToLower(info.Name)] = generate.Sibling{Index: i, Name: info.Name, Type: info.Type}
+	}
 	cols := make([]*column, len(infos))
 	for i, info := range infos {
-		cols[i] = &column{info: info, counts: counts[i], tags: []string{}, snapType: snapshotType(info.Type, "")}
+		cols[i] = &column{info: info, counts: counts[i], tags: []string{}, snapType: snapshotType(info.Type, ""), sibs: sibs}
 	}
+	var order []int
 	if rows > 0 {
 		if err := b.resolve(ctx, conn, runner, t, pt, resolver, cols, rows); err != nil {
+			return fail(err)
+		}
+		if order, err = evalOrder(cols); err != nil {
 			return fail(err)
 		}
 	}
 	b.hashTable(t.Name, cols)
 	if rows > 0 {
-		if err := b.stage(ctx, conn, cols, rows); err != nil {
+		if err := b.stage(ctx, conn, cols, order, rows); err != nil {
 			return fail(err)
 		}
 	}
@@ -491,9 +504,10 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 func (b *builder) genColumn(ctx context.Context, conn *sql.Conn, c *column, rows int64) generate.Column {
 	typ := c.info.Type
 	return generate.Column{
-		Name: c.info.Name,
-		Type: typ,
-		Rows: rows,
+		Name:     c.info.Name,
+		Type:     typ,
+		Rows:     rows,
+		Siblings: c.sibs,
 		Cast: func(v string) (any, error) {
 			var out any
 			if err := conn.QueryRowContext(ctx, "SELECT CAST(? AS "+typ+")", v).Scan(&out); err != nil {
@@ -521,7 +535,16 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			return fmt.Errorf("column %s: unknown generator %q", c.info.Name, choice.Generator)
 		}
 		settings := profile.Effective(choice.Privacy, t.Privacy, b.spec.Privacy)
-		prof, err := runner.Column(ctx, pt, c.info, c.counts, g.Needs(gcol, choice.Args), settings, stream(rng.PurposeJitter))
+		// A template has no profile: without one its null rate defaults to
+		// 0, so its NULLs come from NULL refs only.
+		var prof, genProf *profile.Column
+		var err error
+		if choice.Generator == apitypes.GenTemplate {
+			prof = &profile.Column{}
+		} else {
+			prof, err = runner.Column(ctx, pt, c.info, c.counts, g.Needs(gcol, choice.Args), settings, stream(rng.PurposeJitter))
+			genProf = prof
+		}
 		// The VARCHAR and integer default categorical is for columns
 		// without rare values; with them the column falls back.
 		kind := profile.KindOf(c.info.Type)
@@ -531,7 +554,7 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		}
 		var gen generate.ColumnGen
 		if err == nil {
-			gen, err = generate.New(choice.Generator, gcol, prof, choice.Args, generate.Streams{
+			gen, err = generate.New(choice.Generator, gcol, genProf, choice.Args, generate.Streams{
 				Values:  stream(rng.PurposeValues),
 				Nulls:   stream(rng.PurposeNulls),
 				Shuffle: stream(rng.PurposeShuffle),
@@ -564,9 +587,24 @@ func (b *builder) hashTable(name string, cols []*column) {
 	}
 }
 
+// evalOrder sets the refs of every column and returns the order in
+// which a row's columns are drawn.
+func evalOrder(cols []*column) ([]int, error) {
+	gcols := make([]generate.Column, len(cols))
+	refs := make([][]string, len(cols))
+	for i, c := range cols {
+		gcols[i] = generate.Column{Name: c.info.Name}
+		c.refs = apitypes.SyntheticColumn{Generator: c.choice.Generator, Args: c.choice.Args}.Refs()
+		refs[i] = c.refs
+	}
+	return generate.Order(gcols, refs)
+}
+
 // stage creates the staging table and fills it row by row from one
-// goroutine, so the rows and the content hash have a fixed order.
-func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, rows int64) error {
+// goroutine, so the rows and the content hash have a fixed order. The
+// columns are drawn in order, then hashed in ordinal order, so the hash
+// does not depend on the column graph.
+func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, order []int, rows int64) error {
 	defs := make([]string, len(cols))
 	for i, c := range cols {
 		defs[i] = stageName(i) + " " + c.stage.SQL()
@@ -575,15 +613,17 @@ func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, row
 		return b.duckErr("create the staging table", err)
 	}
 	return appendRows(ctx, conn, rows, len(cols), func(row *generate.RowCtx) error {
-		for j, c := range cols {
-			v, err := c.gen.Next(*row)
+		for _, j := range order {
+			v, err := cols[j].gen.Next(*row)
 			if err != nil {
 				return err
 			}
-			if err := hashValue(b.hash, v); err != nil {
-				return fmt.Errorf("column %s: %w", c.info.Name, err)
-			}
 			row.Values[j] = v
+		}
+		for j, v := range row.Values {
+			if err := hashValue(b.hash, v); err != nil {
+				return fmt.Errorf("column %s: %w", cols[j].info.Name, err)
+			}
 		}
 		return nil
 	}, b.duckErr)

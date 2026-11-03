@@ -29,14 +29,27 @@ type Column struct {
 	// Cast converts a value from the spec (constant, weighted keys) to
 	// the column type. The builder runs CAST(? AS <type>) in DuckDB.
 	Cast func(value string) (any, error)
+	// Siblings are the columns of the same table by lower-case name.
+	Siblings map[string]Sibling
+}
+
+// Sibling is a column of the same table, for generators that read other
+// columns of the row.
+type Sibling struct {
+	// Index is the ordinal position, the index into RowCtx.Values.
+	Index int
+	// Name is the name as in the source.
+	Name string
+	// Type is the information_schema data_type.
+	Type string
 }
 
 // Kind returns the profile kind of the column type.
 func (c Column) Kind() profile.Kind { return profile.KindOf(c.Type) }
 
-// RowCtx is the row being generated. Phase 2 generators read only
-// Index; Values (the values already drawn for this row) is there for
-// generators that depend on other columns.
+// RowCtx is the row being generated. Values holds the values drawn for
+// this row by ordinal position. The builder fills the columns a
+// generator reads before it calls the generator (Order).
 type RowCtx struct {
 	Index  int64
 	Values []any
@@ -100,6 +113,7 @@ var registry = map[apitypes.SyntheticGenerator]Generator{
 	apitypes.GenDateDistribution: dateDistribution{},
 	apitypes.GenDateRange:        dateRange{},
 	apitypes.GenNull:             null{},
+	apitypes.GenTemplate:         template{},
 }
 
 // Lookup returns the generator of a name.

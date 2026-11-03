@@ -615,7 +615,10 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	for _, c := range cases() {
 		names[c.gen] = true
 	}
-	if len(registry) != 26 || len(names) != 26 {
-		t.Errorf("registry has %d generators, cases cover %d, want 26", len(registry), len(names))
+	// Generators that read other columns of the row need RowCtx.Values,
+	// which cases() does not give. relations_test.go covers them.
+	names[apitypes.GenTemplate] = true
+	if len(registry) != 27 || len(names) != 27 {
+		t.Errorf("registry has %d generators, cases cover %d, want 27", len(registry), len(names))
 	}
 }
