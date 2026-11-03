@@ -106,9 +106,12 @@ func gridValue(q []float64, u float64, smooth bool) float64 {
 
 type distribution struct{}
 
-func (distribution) Check(col Column, _ Args) error {
+func (distribution) Check(col Column, args Args) error {
 	k := col.Kind()
-	return fits(col, apitypes.GenDistribution, isNumber(k) || k == profile.KindTime)
+	if err := fits(col, apitypes.GenDistribution, isNumber(k) || k == profile.KindTime); err != nil {
+		return err
+	}
+	return checkBy(col, args)
 }
 
 func (distribution) Needs(col Column, args Args) profile.Needs {

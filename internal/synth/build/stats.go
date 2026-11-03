@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/parser"
+	"github.com/bino-bi/sluice/internal/synth/generate"
 	"github.com/bino-bi/sluice/internal/synth/profile"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -44,9 +45,15 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 	if rows == 0 {
 		return cr, nil
 	}
-	for _, w := range c.warnings {
+	warn := func(w string) {
 		cr.Warnings = append(cr.Warnings, w)
 		b.rep.Warnings = append(b.rep.Warnings, t.Name+"."+c.info.Name+": "+w)
+	}
+	for _, w := range c.warnings {
+		warn(w)
+	}
+	if c.by != nil {
+		cr.By = b.byReport(t, c, warn)
 	}
 	p := c.prof
 	cr.SuppressedValues, cr.MergedBins = p.Suppressed, p.MergedBins
@@ -86,6 +93,30 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 		return cr, fmt.Errorf("column %s: %w", c.info.Name, err)
 	}
 	return cr, nil
+}
+
+// byReport collects the by counts of a column and warns when most draws
+// used the global profile or a group has a spike.
+func (b *builder) byReport(t *apitypes.SyntheticTable, c *column, warn func(string)) *ByReport {
+	br := &ByReport{Groups: c.by.Kept, DroppedGroups: c.by.Dropped, SpikeGroups: c.by.SpikeGroups}
+	by, _ := generate.BySiblings(generate.Column{Siblings: c.sibs}, c.choice.Args)
+	for _, s := range by {
+		br.Columns = append(br.Columns, s.Name)
+	}
+	sort.Strings(br.Columns)
+	if bc, ok := c.gen.(generate.ByCounter); ok {
+		fallback, total := bc.ByRows()
+		br.FallbackRows = fallback
+		if fallback*2 > total {
+			warn("most rows use the global profile, the by columns do not match the source groups")
+		}
+	}
+	if br.SpikeGroups > 0 {
+		warn(fmt.Sprintf("%d by-groups have a spike at a bound", br.SpikeGroups))
+		b.log.Warn("synthetic build: by-groups with a spike at a range end, consider clipOutliers",
+			slog.String("name", b.name), slog.String("table", t.Name), slog.String("column", c.info.Name), slog.Int("groups", br.SpikeGroups))
+	}
+	return br
 }
 
 // nullRate is the filtered null rate of plan 4.2 step 2.

@@ -342,6 +342,8 @@ type column struct {
 	sibs map[string]generate.Sibling
 	// refs are the lower-case names of the columns this one reads.
 	refs []string
+	// by holds the group counts of a column with by, nil otherwise.
+	by *profile.GroupStats
 }
 
 func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable) error {
@@ -490,6 +492,7 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 		}
 		c.choice = choice
 	}
+	errs = append(errs, checkByBucket(cols)...)
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
@@ -519,6 +522,24 @@ func (b *builder) genColumn(ctx context.Context, conn *sql.Conn, c *column, rows
 	}
 }
 
+// checkByBucket refuses a by column whose generator is bucket: its
+// labels are ranges, the source groups are values, so no row would match.
+func checkByBucket(cols []*column) []error {
+	var errs []error
+	for _, c := range cols {
+		by, err := generate.BySiblings(generate.Column{Siblings: c.sibs}, c.choice.Args)
+		if err != nil {
+			continue
+		}
+		for _, s := range by {
+			if cols[s.Index].choice.Generator == apitypes.GenBucket {
+				errs = append(errs, fmt.Errorf("column %s: by column %s uses bucket, its labels do not match the source values", c.info.Name, s.Name))
+			}
+		}
+	}
+	return errs
+}
+
 // prepare reads the profile of one column and builds its value source.
 // A default choice falls back along its chain when the profile or the
 // generator fails (plan, step C notes).
@@ -539,11 +560,27 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		// 0, so its NULLs come from NULL refs only.
 		var prof, genProf *profile.Column
 		var err error
+		needs := g.Needs(gcol, choice.Args)
 		if choice.Generator == apitypes.GenTemplate {
 			prof = &profile.Column{}
 		} else {
-			prof, err = runner.Column(ctx, pt, c.info, c.counts, g.Needs(gcol, choice.Args), settings, stream(rng.PurposeJitter))
+			prof, err = runner.Column(ctx, pt, c.info, c.counts, needs, settings, stream(rng.PurposeJitter))
 			genProf = prof
+		}
+		var by []generate.Sibling
+		if err == nil {
+			by, err = generate.BySiblings(gcol, choice.Args)
+		}
+		var groups []profile.Group
+		var stats profile.GroupStats
+		if err == nil && len(by) > 0 {
+			infos := make([]profile.ColumnInfo, len(by))
+			for i, s := range by {
+				infos[i] = profile.ColumnInfo{Name: s.Name, Type: s.Type}
+			}
+			groups, stats, err = runner.Groups(ctx, pt, c.info, infos, needs, settings, func(key string) *rng.Stream {
+				return stream(rng.JitterBy(key))
+			})
 		}
 		// The VARCHAR and integer default categorical is for columns
 		// without rare values; with them the column falls back.
@@ -554,14 +591,22 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		}
 		var gen generate.ColumnGen
 		if err == nil {
-			gen, err = generate.New(choice.Generator, gcol, genProf, choice.Args, generate.Streams{
+			streams := generate.Streams{
 				Values:  stream(rng.PurposeValues),
 				Nulls:   stream(rng.PurposeNulls),
 				Shuffle: stream(rng.PurposeShuffle),
-			})
+			}
+			if len(by) > 0 {
+				gen, err = generate.NewBy(choice.Generator, gcol, genProf, groups, choice.Args, streams)
+			} else {
+				gen, err = generate.New(choice.Generator, gcol, genProf, choice.Args, streams)
+			}
 		}
 		if err == nil {
 			c.choice, c.settings, c.prof, c.gen = choice, settings, prof, gen
+			if len(by) > 0 {
+				c.by = &stats
+			}
 			c.stage = generate.StageOf(gcol, choice.Generator)
 			c.snapType = snapshotType(c.info.Type, choice.Generator)
 			if choice.Warning != "" {

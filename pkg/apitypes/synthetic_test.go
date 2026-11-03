@@ -42,37 +42,40 @@ func decodeSyn(t *testing.T, doc string) (*DataSource, error) {
 func TestSyntheticValidArgs(t *testing.T) {
 	t.Parallel()
 	cols := map[string]string{
-		"distribution":     `{ generator: distribution, args: { decimals: 2, integer: false, smooth: true, nullRate: source, unique: true } }`,
-		"uniform":          `{ generator: uniform, args: { min: 1, max: 5.5 } }`,
-		"normal":           `{ generator: normal, args: { truncate: false, decimals: 0, integer: true } }`,
-		"lognormal":        `{ generator: lognormal, args: { truncate: true } }`,
-		"histogram":        `{ generator: histogram, args: { bins: 20 } }`,
-		"bucket edges":     `{ generator: bucket, args: { edges: [0, 10, 20.5] } }`,
-		"bucket n":         `{ generator: bucket, args: { buckets: 5 } }`,
-		"constant":         `{ generator: constant, args: { value: "x", nullRate: 0.1 } }`,
-		"sequence":         `{ generator: sequence, args: { start: 100, step: -2 } }`,
-		"range":            `{ generator: range, args: { min: 0, max: 10, decimals: 1 } }`,
-		"categorical":      `{ generator: categorical, args: { otherLabel: other, maxValues: 10 } }`,
-		"uniformCategory":  `{ generator: uniformCategory }`,
-		"weighted":         `{ generator: weighted, args: { values: { a: 1, "Y": 2.5 } } }`,
-		"boolean":          `{ generator: boolean, args: { trueRate: 0.3 } }`,
-		"shuffleLabels":    `{ generator: shuffleLabels, args: { maxValues: 50 } }`,
-		"randomString":     `{ generator: randomString, args: { length: { min: 3, max: 9 }, initial: "Q", charset: alnum, case: title } }`,
-		"pattern":          `{ generator: pattern, args: { maxPatterns: 5 } }`,
-		"regex":            `{ generator: regex, args: { pattern: "[A-Z]{2}-[0-9]{4}" } }`,
-		"fake":             `{ generator: fake, args: { kind: city, locale: en, keepInitial: true } }`,
-		"uuid":             `{ generator: uuid, args: { version: 7 } }`,
-		"prefixKeep":       `{ generator: prefixKeep, args: { prefixLength: 3 } }`,
-		"loremText":        `{ generator: loremText, args: { words: 12, vocabulary: de } }`,
-		"randomText":       `{ generator: randomText, args: { length: source, vocabulary: lorem } }`,
-		"redact":           `{ generator: redact, args: { value: "***" } }`,
-		"dateDistribution": `{ generator: dateDistribution, args: { granularity: month, keepWeekday: true, keepSeasonality: true } }`,
-		"dateRange":        `{ generator: dateRange, args: { min: "2020-01-01", max: "2024-06-30T12:00:00Z", granularity: day } }`,
-		"null":             `{ generator: "null" }`,
-		"template":         `{ generator: template, args: { template: "{First_Name}.{last_name}@example.org {{x}}", lower: true, nullRate: 0.1 } }`,
-		"dateOffset":       `{ generator: dateOffset, args: { from: Ordered_At } }`,
-		"dateOffset-span":  `{ generator: dateOffset, args: { from: ordered_at, offset: { min: -36500, max: 0.5 }, nullRate: source, unique: true } }`,
-		"dateOffset-src":   `{ generator: dateOffset, args: { from: ordered_at, offset: source } }`,
+		"distribution":        `{ generator: distribution, args: { decimals: 2, integer: false, smooth: true, nullRate: source, unique: true } }`,
+		"uniform":             `{ generator: uniform, args: { min: 1, max: 5.5 } }`,
+		"normal":              `{ generator: normal, args: { truncate: false, decimals: 0, integer: true } }`,
+		"lognormal":           `{ generator: lognormal, args: { truncate: true } }`,
+		"histogram":           `{ generator: histogram, args: { bins: 20 } }`,
+		"bucket edges":        `{ generator: bucket, args: { edges: [0, 10, 20.5] } }`,
+		"bucket n":            `{ generator: bucket, args: { buckets: 5 } }`,
+		"constant":            `{ generator: constant, args: { value: "x", nullRate: 0.1 } }`,
+		"sequence":            `{ generator: sequence, args: { start: 100, step: -2 } }`,
+		"range":               `{ generator: range, args: { min: 0, max: 10, decimals: 1 } }`,
+		"categorical":         `{ generator: categorical, args: { otherLabel: other, maxValues: 10 } }`,
+		"uniformCategory":     `{ generator: uniformCategory }`,
+		"weighted":            `{ generator: weighted, args: { values: { a: 1, "Y": 2.5 } } }`,
+		"boolean":             `{ generator: boolean, args: { trueRate: 0.3 } }`,
+		"shuffleLabels":       `{ generator: shuffleLabels, args: { maxValues: 50 } }`,
+		"randomString":        `{ generator: randomString, args: { length: { min: 3, max: 9 }, initial: "Q", charset: alnum, case: title } }`,
+		"pattern":             `{ generator: pattern, args: { maxPatterns: 5 } }`,
+		"regex":               `{ generator: regex, args: { pattern: "[A-Z]{2}-[0-9]{4}" } }`,
+		"fake":                `{ generator: fake, args: { kind: city, locale: en, keepInitial: true } }`,
+		"uuid":                `{ generator: uuid, args: { version: 7 } }`,
+		"prefixKeep":          `{ generator: prefixKeep, args: { prefixLength: 3 } }`,
+		"loremText":           `{ generator: loremText, args: { words: 12, vocabulary: de } }`,
+		"randomText":          `{ generator: randomText, args: { length: source, vocabulary: lorem } }`,
+		"redact":              `{ generator: redact, args: { value: "***" } }`,
+		"dateDistribution":    `{ generator: dateDistribution, args: { granularity: month, keepWeekday: true, keepSeasonality: true } }`,
+		"dateRange":           `{ generator: dateRange, args: { min: "2020-01-01", max: "2024-06-30T12:00:00Z", granularity: day } }`,
+		"null":                `{ generator: "null" }`,
+		"template":            `{ generator: template, args: { template: "{First_Name}.{last_name}@example.org {{x}}", lower: true, nullRate: 0.1 } }`,
+		"dateOffset":          `{ generator: dateOffset, args: { from: Ordered_At } }`,
+		"dateOffset-span":     `{ generator: dateOffset, args: { from: ordered_at, offset: { min: -36500, max: 0.5 }, nullRate: source, unique: true } }`,
+		"dateOffset-src":      `{ generator: dateOffset, args: { from: ordered_at, offset: source } }`,
+		"distribution-by":     `{ generator: distribution, args: { by: [status, Region, day] } }`,
+		"categorical-by":      `{ generator: categorical, args: { by: [status] } }`,
+		"dateDistribution-by": `{ generator: dateDistribution, args: { by: [status], keepWeekday: true } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -229,6 +232,14 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"dateOffset offset too large", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: 0, max: 36501 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
 		{"dateOffset offset too small", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, offset: { min: -36501, max: 0 } } }`), "spec.synthetic.tables[0].columns.c.args.offset"},
 		{"dateOffset unknown arg", synDoc("crmsynth", `{ generator: dateOffset, args: { from: a, days: 3 } }`), "spec.synthetic.tables[0].columns.c.args.days"},
+		{"by on uniform", synDoc("crmsynth", `{ generator: uniform, args: { by: [a] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by empty", synDoc("crmsynth", `{ generator: distribution, args: { by: [] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by four", synDoc("crmsynth", `{ generator: distribution, args: { by: [a, b, d, e] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by twice", synDoc("crmsynth", `{ generator: categorical, args: { by: [a, A] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by not a list", synDoc("crmsynth", `{ generator: categorical, args: { by: a } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by empty name", synDoc("crmsynth", `{ generator: categorical, args: { by: [" "] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by number", synDoc("crmsynth", `{ generator: categorical, args: { by: [3] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"by self ref", synDoc("crmsynth", `{ generator: dateDistribution, args: { by: [a, C] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
 		{"leading digit", synDoc("1crm", `{ generator: "null" }`), "metadata.name"},
@@ -293,6 +304,9 @@ spec:
 		{"dateOffset in table rule", table + "        rules:\n          - match: { types: [DATE] }\n            generator: dateOffset\n            args: { from: a }\n", "spec.synthetic.tables[0].rules[0].generator"},
 		{"dateOffset cycle", table + "        columns:\n          a: { generator: dateOffset, args: { from: b } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 		{"template cycle", table + "        columns:\n          a: { generator: template, args: { template: \"{b}\" } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
+		{"by in source rule", "    rules:\n      - match: { columns: [amount] }\n        generator: distribution\n        args: { by: [status] }\n" + table, "spec.synthetic.rules[0].args.by"},
+		{"by in table rule", table + "        rules:\n          - match: { types: [VARCHAR] }\n            generator: categorical\n            args: { by: [status] }\n", "spec.synthetic.tables[0].rules[0].args.by"},
+		{"by cycle", table + "        columns:\n          a: { generator: categorical, args: { by: [b] } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -382,6 +396,14 @@ spec:
 			"          shipped: { generator: dateOffset, args: { from: Ordered } }\n" +
 			"          ordered: { generator: dateOffset, args: { from: shipped } }\n",
 			"columns ordered, shipped depend on each other"},
+		{"by rule", "        rules:\n          - match: { columns: [amount] }\n            generator: distribution\n            args: { by: [status] }\n",
+			"by refers to other columns, set it under tables[].columns"},
+		{"by cycle", "        columns:\n" +
+			"          status: { generator: categorical, args: { by: [Dept] } }\n" +
+			"          dept: { generator: categorical, args: { by: [region, status] } }\n",
+			"columns dept, status depend on each other"},
+		{"by self", "        columns:\n          a: { generator: distribution, args: { by: [b, A] } }\n", "refers to the column itself"},
+		{"by twice", "        columns:\n          a: { generator: distribution, args: { by: [b, B] } }\n", "names column B twice"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -451,7 +473,11 @@ func TestSyntheticColumnRefs(t *testing.T) {
 	if got := strings.Join(c.Refs(), ","); got != "ordered_at" {
 		t.Errorf("dateOffset refs = %s", got)
 	}
-	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}", "from": "b"}}).Refs(); refs != nil {
+	c = SyntheticColumn{Generator: GenCategorical, Args: map[string]any{"by": []any{"Status", "dept"}}}
+	if got := strings.Join(c.Refs(), ","); got != "dept,status" {
+		t.Errorf("by refs = %s", got)
+	}
+	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}", "from": "b", "by": []any{"c"}}}).Refs(); refs != nil {
 		t.Errorf("fake refs = %v", refs)
 	}
 }

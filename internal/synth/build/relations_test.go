@@ -25,7 +25,8 @@ import (
 
 // relationsSQL is the relations fixture (plan section 9), fixed formulas
 // only. p is a permutation of 0 to 4999, so status has exact counts:
-// vip 3, closed 497, paused 1500, active 3000. Names are not in the fake
+// vip 3, closed 497, paused 1500, active 3000. dept is board for the vip
+// rows and 2 paused rows. salary has one closed row far above the rest. Names are not in the fake
 // lists, except the pairs of ids 11, 12 and 13. email is NULL for 10 %.
 // orders has 15 400 rows: customer i has i % 7 orders, customer 42 has
 // 400, and 3 orders have a customer that does not exist. shipped_at is
@@ -37,10 +38,10 @@ WITH b AS (SELECT i, (i * 7919) % 5000 AS p FROM range(5000) r(i))
 SELECT
   CAST(i + 1 AS BIGINT) AS id,
   CASE WHEN p < 3 THEN 'vip' WHEN p < 500 THEN 'closed' WHEN p < 2000 THEN 'paused' ELSE 'active' END AS status,
-  CASE WHEN p < 3 THEN 'board' WHEN p < 500 THEN 'ops'
+  CASE WHEN p < 3 OR p IN (600, 601) THEN 'board' WHEN p < 500 THEN 'ops'
        WHEN p < 2000 THEN ['sales', 'hr'][i % 2 + 1] ELSE ['sales', 'ops', 'it'][i % 3 + 1] END AS dept,
-  CAST(CASE WHEN p < 3 THEN 90000 WHEN p < 500 THEN 20000 WHEN p < 2000 THEN 30000 ELSE 50000 END
-       + ((i * 31) % 1000) * 10 AS DOUBLE) AS salary,
+  CAST(CASE WHEN p = 100 THEN 39000 WHEN p < 3 THEN 90000 WHEN p < 500 THEN 20000 WHEN p < 2000 THEN 30000 ELSE 50000 END
+       + CASE WHEN p = 100 THEN 0 ELSE ((i * 31) % 1000) * 10 END AS DOUBLE) AS salary,
   CASE i + 1 WHEN 11 THEN 'Alex' WHEN 12 THEN 'Blair' WHEN 13 THEN 'Casey'
        ELSE ['Anna', 'Bernd', 'Clara', 'Dieter', 'Erika', 'Frieda', 'Gustav', 'Heinz'][i % 8 + 1] END AS first_name,
   CASE i + 1 WHEN 11 THEN 'Adams' WHEN 12 THEN 'Brooks' WHEN 13 THEN 'Carter'

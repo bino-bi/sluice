@@ -146,7 +146,12 @@ func New(name apitypes.SyntheticGenerator, col Column, p *profile.Column, args A
 	if err != nil {
 		return nil, fmt.Errorf("column %s: %w", col.Name, err)
 	}
-	rate := p.NullRate
+	return wrap(inner, col, p.NullRate, args, s)
+}
+
+// wrap applies the shared args nullRate and unique to inner. rate is the
+// profile null rate, used unless args set nullRate.
+func wrap(inner ColumnGen, col Column, rate float64, args Args, s Streams) (ColumnGen, error) {
 	if v, ok := args["nullRate"].(float64); ok {
 		rate = v
 	}
@@ -196,6 +201,14 @@ func (w *wrapped) Fallbacks() int64 {
 		return f.Fallbacks()
 	}
 	return 0
+}
+
+// ByRows passes the inner count through.
+func (w *wrapped) ByRows() (int64, int64) {
+	if b, ok := w.inner.(ByCounter); ok {
+		return b.ByRows()
+	}
+	return 0, 0
 }
 
 // pickCum draws an index from cumulative weights cum (ascending, last is

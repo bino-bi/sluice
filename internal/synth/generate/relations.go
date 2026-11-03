@@ -148,6 +148,10 @@ func formatValue(v any, typ string) string {
 		return strconv.FormatBool(x)
 	case time.Time:
 		if profile.KindOf(typ) == profile.KindDate {
+			// DuckDB has no year 0: Go year -5 is 0006 (BC).
+			if y := x.UTC().Year(); y <= 0 {
+				return fmt.Sprintf("%04d-%s (BC)", 1-y, x.UTC().Format("01-02"))
+			}
 			return x.UTC().Format("2006-01-02")
 		}
 		return x.UTC().Format("2006-01-02 15:04:05.999999")

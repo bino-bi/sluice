@@ -188,7 +188,7 @@ type genSchema struct {
 }
 
 var syntheticGenerators = map[SyntheticGenerator]genSchema{
-	GenDistribution: {args: map[string]argCheck{"decimals": decimalsArg, "integer": boolArg, "smooth": boolArg}},
+	GenDistribution: {args: map[string]argCheck{"decimals": decimalsArg, "integer": boolArg, "smooth": boolArg, "by": byArg}},
 	GenUniform:      {args: map[string]argCheck{"min": numberArg, "max": numberArg}, cross: minBelowMax},
 	GenNormal:       {args: map[string]argCheck{"truncate": boolArg, "decimals": decimalsArg, "integer": boolArg}},
 	GenLognormal:    {args: map[string]argCheck{"truncate": boolArg, "decimals": decimalsArg, "integer": boolArg}},
@@ -204,7 +204,7 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenConstant:        {args: map[string]argCheck{"value": scalarArg}, required: []string{"value"}},
 	GenSequence:        {args: map[string]argCheck{"start": intArg(-1<<53, 1<<53), "step": stepArg}},
 	GenRange:           {args: map[string]argCheck{"min": numberArg, "max": numberArg, "decimals": decimalsArg}, required: []string{"min", "max"}, cross: minBelowMax},
-	GenCategorical:     {args: map[string]argCheck{"otherLabel": stringArg, "maxValues": intArg(1, 10000)}},
+	GenCategorical:     {args: map[string]argCheck{"otherLabel": stringArg, "maxValues": intArg(1, 10000), "by": byArg}},
 	GenUniformCategory: {args: map[string]argCheck{}},
 	GenWeighted:        {args: map[string]argCheck{"values": weightsArg}, required: []string{"values"}},
 	GenBoolean:         {args: map[string]argCheck{"trueRate": rateArg}},
@@ -236,7 +236,7 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenLoremText:        {args: map[string]argCheck{"words": lengthArg(1, 10000), "vocabulary": enumArg("lorem", "en", "de")}},
 	GenRandomText:       {args: map[string]argCheck{"length": lengthArg(1, 100000), "vocabulary": enumArg("lorem")}},
 	GenRedact:           {args: map[string]argCheck{"value": stringArg}},
-	GenDateDistribution: {args: map[string]argCheck{"granularity": granularityArg, "keepWeekday": boolArg, "keepSeasonality": boolArg}},
+	GenDateDistribution: {args: map[string]argCheck{"granularity": granularityArg, "keepWeekday": boolArg, "keepSeasonality": boolArg, "by": byArg}},
 	GenDateRange:        {args: map[string]argCheck{"min": dateArg, "max": dateArg, "granularity": granularityArg}, cross: dateMinBelowMax},
 	GenNull:             {args: map[string]argCheck{}},
 	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
@@ -425,6 +425,9 @@ func checkRule(r SyntheticRule, path string) (string, string) {
 	}
 	if relationGenerators[r.Generator] {
 		return path + ".generator", fmt.Sprintf("%s refers to other columns, set it under tables[].columns", r.Generator)
+	}
+	if _, ok := r.Args["by"]; ok {
+		return path + ".args.by", "by refers to other columns, set it under tables[].columns"
 	}
 	return checkGenerator(r.Generator, r.Args, path)
 }

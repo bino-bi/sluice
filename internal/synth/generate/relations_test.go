@@ -164,6 +164,25 @@ func TestTemplateFormatCast(t *testing.T) {
 	}
 }
 
+// A DATE renders as CAST(d AS VARCHAR) does in DuckDB, BC years too.
+func TestFormatDate(t *testing.T) {
+	for _, tc := range []struct {
+		y    int
+		want string
+	}{
+		{2024, "2024-01-05"},
+		{999, "0999-01-05"},
+		{12000, "12000-01-05"},
+		{0, "0001-01-05 (BC)"},
+		{-5, "0006-01-05 (BC)"},
+	} {
+		d := time.Date(tc.y, 1, 5, 0, 0, 0, 0, time.UTC)
+		if got := formatValue(d, "DATE"); got != tc.want {
+			t.Errorf("year %d = %s, want %s", tc.y, got, tc.want)
+		}
+	}
+}
+
 // offsetCol is a column of type typ whose from column ordered has type
 // fromType at index 0.
 func offsetCol(typ, fromType string) Column {

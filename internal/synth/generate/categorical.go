@@ -53,7 +53,10 @@ func (categorical) Check(col Column, args Args) error {
 	if _, ok := args["otherLabel"]; ok && col.Kind() != profile.KindText {
 		return errors.New("otherLabel needs a text column")
 	}
-	return scalar(col, apitypes.GenCategorical)
+	if err := scalar(col, apitypes.GenCategorical); err != nil {
+		return err
+	}
+	return checkBy(col, args)
 }
 
 func (categorical) Needs(_ Column, args Args) profile.Needs {

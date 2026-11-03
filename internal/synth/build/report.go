@@ -72,7 +72,21 @@ type ColumnReport struct {
 	// DependsOn lists the columns of the same table this column reads,
 	// sorted.
 	DependsOn []string `json:"depends_on,omitempty"`
-	Warnings  []string `json:"warnings"`
+	// By is set for a column with by.
+	By       *ByReport `json:"by,omitempty"`
+	Warnings []string  `json:"warnings"`
+}
+
+// ByReport is the by-group part of a ColumnReport. It holds counts only,
+// never a group key.
+type ByReport struct {
+	Columns       []string `json:"columns"`
+	Groups        int      `json:"groups"`
+	DroppedGroups int      `json:"dropped_groups"`
+	// FallbackRows counts the draws that used the global profile.
+	FallbackRows int64 `json:"fallback_rows"`
+	// SpikeGroups counts groups with a spike, never their keys.
+	SpikeGroups int `json:"spike_groups"`
 }
 
 // Stats are the aggregates of one column. Number fields are on the number

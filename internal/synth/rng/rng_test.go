@@ -152,3 +152,13 @@ func TestStreamHidesState(t *testing.T) {
 		}
 	}
 }
+
+func TestJitterBy(t *testing.T) {
+	if got := JitterBy("1:a"); got != "jitter-by:1:a" {
+		t.Errorf("JitterBy = %q", got)
+	}
+	plain := Key(testSeed, "n", "t", "c", PurposeJitter)
+	if Key(testSeed, "n", "t", "c", JitterBy("1:a")) == plain || Key(testSeed, "n", "t", "c", JitterBy("1:a")) == Key(testSeed, "n", "t", "c", JitterBy("1:b")) {
+		t.Error("group jitter keys are not independent")
+	}
+}

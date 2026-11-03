@@ -41,6 +41,30 @@ func columnArg(v any) error {
 	return nil
 }
 
+// maxByColumns caps the by arg; every column multiplies the groups.
+const maxByColumns = 3
+
+// byArg is a list of 1 to 3 column names, unique ignoring case.
+func byArg(v any) error {
+	bad := fmt.Errorf("must be a list of 1 to %d column names", maxByColumns)
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 || len(list) > maxByColumns {
+		return bad
+	}
+	seen := map[string]bool{}
+	for _, e := range list {
+		s, ok := e.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return bad
+		}
+		if seen[strings.ToLower(s)] {
+			return fmt.Errorf("names column %s twice", s)
+		}
+		seen[strings.ToLower(s)] = true
+	}
+	return nil
+}
+
 // maxOffsetDays bounds dateOffset.offset, about 100 years.
 const maxOffsetDays = 36500
 
@@ -133,12 +157,19 @@ func (c SyntheticColumn) argRefs() map[string][]string {
 		if s, ok := c.Args["from"].(string); ok && strings.TrimSpace(s) != "" {
 			out["from"] = []string{strings.ToLower(s)}
 		}
+	case GenDistribution, GenCategorical, GenDateDistribution:
+		list, _ := c.Args["by"].([]any)
+		for _, e := range list {
+			if s, ok := e.(string); ok && strings.TrimSpace(s) != "" {
+				out["by"] = append(out["by"], strings.ToLower(s))
+			}
+		}
 	}
 	return out
 }
 
 // Refs returns the columns of the same table that c reads: template
-// placeholders and dateOffset.from, lower-cased, sorted, unique.
+// placeholders, dateOffset.from and by, lower-cased, sorted, unique.
 func (c SyntheticColumn) Refs() []string {
 	seen := map[string]bool{}
 	var out []string

@@ -28,6 +28,10 @@ const (
 	PurposeShuffle = "shuffle"
 )
 
+// JitterBy is the jitter purpose of one by-group. key is the group key
+// (profile.GroupKey); it goes into the HMAC input only.
+func JitterBy(key string) string { return "jitter-by:" + key }
+
 // Key derives the key of one stream from the seed.
 func Key(seed []byte, name, table, column, purpose string) [32]byte {
 	m := hmac.New(sha256.New, seed)

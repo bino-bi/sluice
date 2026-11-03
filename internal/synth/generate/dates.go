@@ -75,7 +75,10 @@ func truncate(t time.Time, gran string) time.Time {
 type dateDistribution struct{}
 
 func (dateDistribution) Check(col Column, args Args) error {
-	return checkDate(col, apitypes.GenDateDistribution, args)
+	if err := checkDate(col, apitypes.GenDateDistribution, args); err != nil {
+		return err
+	}
+	return checkBy(col, args)
 }
 
 func (dateDistribution) Needs(col Column, args Args) profile.Needs {
