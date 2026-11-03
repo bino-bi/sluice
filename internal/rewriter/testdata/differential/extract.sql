@@ -42,18 +42,18 @@ same SELECT id, strftime(d, '%Y/%m'), strftime(ts, '%H:%M') FROM t ORDER BY id
 same SELECT id, last_day(d), dayname(d), monthname(d) FROM t ORDER BY id
 same SELECT id, make_date(2024, a + 1, 1) FROM t WHERE a IS NOT NULL ORDER BY id
 
-# Plural units: DuckDB folds them only in the keyword form, so the trees
-# differ (a pinned false refusal). Hint: the singular unit.
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(days FROM d) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(hours FROM ts) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(years FROM d) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(seconds FROM ts) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(milliseconds FROM ts) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(microseconds FROM ts) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(minutes FROM ts) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, EXTRACT(months FROM d) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE EXTRACT(years FROM d) = 2025 ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, CASE WHEN EXTRACT(days FROM d) > 15 THEN 1 END FROM t ORDER BY id
+# Plural units: DuckDB writes a keyword unit as the singular, and so does
+# the normalizer.
+same SELECT id, EXTRACT(days FROM d) FROM t ORDER BY id
+same SELECT id, EXTRACT(hours FROM ts) FROM t ORDER BY id
+same SELECT id, EXTRACT(years FROM d) FROM t ORDER BY id
+same SELECT id, EXTRACT(seconds FROM ts) FROM t ORDER BY id
+same SELECT id, EXTRACT(milliseconds FROM ts) FROM t ORDER BY id
+same SELECT id, EXTRACT(microseconds FROM ts) FROM t ORDER BY id
+same SELECT id, EXTRACT(minutes FROM ts) FROM t ORDER BY id
+same SELECT id, EXTRACT(months FROM d) FROM t ORDER BY id
+same SELECT id FROM t WHERE EXTRACT(years FROM d) = 2025 ORDER BY id
+same SELECT id, CASE WHEN EXTRACT(days FROM d) > 15 THEN 1 END FROM t ORDER BY id
 
 # SUBSTRING, TRIM, POSITION, OVERLAY.
 same SELECT id, SUBSTRING(s FROM 2 FOR 2), SUBSTRING(s FROM 2), SUBSTRING(s, 2, 1) FROM t ORDER BY id

@@ -153,7 +153,7 @@ func (b *builder) checkExpression(ctx context.Context, conn *sql.Conn, text stri
 	if !ok {
 		return nil, errors.New("is not a single expression")
 	}
-	w := exprWalk{cols: cols, exprCols: exprCols, refs: map[string]bool{}, funcs: map[string]bool{}}
+	w := exprWalk{cols: cols, exprCols: exprCols, refs: map[string]bool{}, funcs: map[string]bool{}, types: map[string]bool{}}
 	if err := w.walk(item); err != nil {
 		return nil, err
 	}
@@ -173,6 +173,17 @@ func (b *builder) checkExpression(ctx context.Context, conn *sql.Conn, text stri
 		}
 		if rows == 0 || (w.funcs[n] && bad > 0) {
 			return nil, fmt.Errorf("calls function %s, which is not allowed", n)
+		}
+	}
+	for n := range w.types {
+		var rows int64
+		err := conn.QueryRowContext(ctx, `SELECT count(*) FROM duckdb_types()
+  WHERE database_name = 'system' AND schema_name = 'main' AND lower(type_name) = ?`, n).Scan(&rows)
+		if err != nil {
+			return nil, b.duckErr("check an expression", err)
+		}
+		if rows == 0 {
+			return nil, errNamedType
 		}
 	}
 	refs := make([]string, 0, len(w.refs))
@@ -232,7 +243,11 @@ type exprWalk struct {
 	// names called, true when the name needs the scalar check.
 	refs  map[string]bool
 	funcs map[string]bool
+	// types are the lower-case type names cast to.
+	types map[string]bool
 }
+
+var errNamedType = errors.New("casts to a named type, which is not allowed")
 
 // walk visits maps in sorted key order, so the first error is stable.
 func (w *exprWalk) walk(v any) error {
@@ -297,11 +312,14 @@ func (w *exprWalk) node(class string, x map[string]any) error {
 			return fmt.Errorf("calls function %s, which is not allowed", name)
 		}
 		w.funcs[low] = w.funcs[low] || !op
-	case "CAST":
-		// A named type is looked up in a catalog, the source's included.
-		if hasNamedType(x["cast_type"]) {
-			return errors.New("casts to a named type, which is not allowed")
+	case "TYPE":
+		// A type that is not built in is looked up in a catalog, the
+		// source's included. checkExpression checks the names.
+		name, _ := x["type_name"].(string)
+		if x["schema"] != "" || x["catalog"] != "" || name == "" {
+			return errNamedType
 		}
+		w.types[strings.ToLower(name)] = true
 	default:
 		if exprClasses[class] {
 			return nil
@@ -312,29 +330,6 @@ func (w *exprWalk) node(class string, x map[string]any) error {
 		return fmt.Errorf("uses an expression of class %s, which is not allowed", class)
 	}
 	return nil
-}
-
-// hasNamedType reports whether a parsed type holds a type DuckDB looks up
-// by name.
-func hasNamedType(v any) bool {
-	switch x := v.(type) {
-	case []any:
-		for _, e := range x {
-			if hasNamedType(e) {
-				return true
-			}
-		}
-	case map[string]any:
-		if id, _ := x["id"].(string); id == "UNBOUND" || id == "USER" {
-			return true
-		}
-		for _, e := range x {
-			if hasNamedType(e) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // exprValue is the snapshot value of expression column i: NULL where the

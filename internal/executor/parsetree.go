@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
@@ -47,8 +48,11 @@ const parseTreesSQL = "SELECT json_serialize_sql($1::VARCHAR)::VARCHAR, json_ser
 // JSON. A statement DuckDB cannot parse yields a tree that starts with
 // {"error":true. Both texts are bound as values and never run. An
 // out-of-memory error carries its client code and message, so callers map
-// it like any other APIError.
+// it like any other APIError. Each text is cut at its first NUL byte:
+// execution hands the query over as a C string, json_serialize_sql reads
+// the whole value.
 func (e *Executor) ParseTrees(ctx context.Context, a, b string) (string, string, error) {
+	a, b = cutAtNUL(a), cutAtNUL(b)
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -69,4 +73,11 @@ func (e *Executor) ParseTrees(ctx context.Context, a, b string) (string, string,
 		return "", "", wrapRunErr(err)
 	}
 	return treeA, treeB, nil
+}
+
+func cutAtNUL(s string) string {
+	if i := strings.IndexByte(s, 0); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

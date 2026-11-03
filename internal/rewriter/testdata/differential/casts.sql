@@ -11,8 +11,8 @@ same SELECT id FROM t WHERE j::json = '{"a":1}'::json ORDER BY id
 same SELECT id, CASE WHEN j IS NULL THEN '{}'::json ELSE j END FROM t ORDER BY id
 same SELECT CAST(1 AS bit), '101'::bit FROM t WHERE id = 1
 same SELECT id, a::bit FROM t ORDER BY id
-# DuckDB has no varbit type, but parses bit varying as varbit.
-rawfails SELECT id, CAST(a AS bit varying) FROM t
+# DuckDB reads bit varying as BIT, and has no varbit type.
+same SELECT id, CAST(a AS bit varying) FROM t
 rawfails SELECT '1010'::varbit FROM t
 same SELECT id FROM t WHERE a::bit = 1::bit ORDER BY id
 same SELECT count(*) FILTER (WHERE '{"x":1}'::json IS NOT NULL) FROM t
@@ -37,10 +37,10 @@ same SELECT id, f::real, f::float4 FROM t ORDER BY id
 rawfails SELECT id, a::floaty FROM t
 same SELECT id, a::float /* x */ + 1 FROM t ORDER BY id
 
-# pg_catalog qualified types: the serializer drops the qualifier, raw fails
-# at bind.
-rawfails SELECT '12'::pg_catalog.int4 FROM t WHERE id = 1
-rawfails SELECT id, a::pg_catalog.int8 FROM t
+# pg_catalog qualified types: DuckDB keeps the qualifier, which fails at
+# bind, and the deparse drops it, so the trees differ.
+ERR_UNSUPPORTED_SYNTAX SELECT '12'::pg_catalog.int4 FROM t WHERE id = 1
+ERR_UNSUPPORTED_SYNTAX SELECT id, a::pg_catalog.int8 FROM t
 
 # Other types.
 same SELECT id, n::numeric(12, 3), n::decimal(5, 1), a::numeric FROM t ORDER BY id

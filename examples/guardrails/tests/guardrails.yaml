@@ -149,5 +149,5 @@ cases:
     expect:
       outcome: allow
       rewrittenSql: >-
-        SELECT extract ('month' FROM '2026-03-01'::date) AS month, id
+        SELECT extract ('MONTH' FROM '2026-03-01'::date) AS month, id
         FROM shop.main.orders LIMIT 3

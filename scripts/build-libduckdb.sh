@@ -7,8 +7,9 @@
 #   httpfs excel sqlite_scanner
 #
 # plus the defaults the prebuilt go-duckdb bindings ship (json, icu,
-# autocomplete; parquet and core_functions are always in-tree), so the
-# static build loses no built-in functionality.
+# autocomplete, parquet, core_functions and the httplib and
+# loadable_extensions capabilities). Only the tpch and tpcds benchmark
+# extensions of the prebuilt libraries are left out.
 #
 # The database-scanner extensions cannot be bundled — their drivers fall
 # back to INSTALL/LOAD at first attach:
@@ -26,14 +27,18 @@
 #
 # Extension third-party dependencies (OpenSSL for httpfs, minizip-ng
 # for excel, ...) come from vcpkg — DuckDB's own `make setup-vcpkg`
-# pins the matching vcpkg revision, and the `bundle-library` target
-# merges every vcpkg static archive into the bundle, so the output is
-# a single self-contained .a linked with just `-lduckdb_bundle` plus
-# the platform C++ runtime.
+# pins the matching vcpkg revision. DuckDB 2.0 dropped the
+# `bundle-library` target and registers static extensions through a
+# generated loader (duckdb_register_static_extensions, which the Go
+# bindings call). This script compiles that loader and merges it with
+# the DuckDB, extension and vcpkg archives, so the output is still a
+# single self-contained .a linked with just `-lduckdb_bundle` plus the
+# platform C++ runtime.
 #
 # Output: third_party/libduckdb/<goos>_<goarch>/libduckdb_bundle.a
 #
-# The build is idempotent: an existing libduckdb_bundle.a is reused.
+# The build is idempotent: an existing libduckdb_bundle.a of the same
+# DuckDB version (the VERSION file next to it) is reused.
 # Set LIBDUCKDB_FORCE=1 to rebuild, LIBDUCKDB_WORKDIR to relocate the
 # DuckDB source checkout (CI puts it outside the cache path).
 #
@@ -64,7 +69,8 @@ goarch="$(go env GOARCH)"
 out_dir="$repo_root/third_party/libduckdb/${goos}_${goarch}"
 workdir="${LIBDUCKDB_WORKDIR:-$repo_root/third_party/libduckdb/src}"
 
-if [[ -f "$out_dir/libduckdb_bundle.a" && "${LIBDUCKDB_FORCE:-0}" != "1" ]]; then
+if [[ -f "$out_dir/libduckdb_bundle.a" && "$(cat "$out_dir/VERSION" 2>/dev/null)" == "$duckdb_version" &&
+  "${LIBDUCKDB_FORCE:-0}" != "1" ]]; then
   echo "build-libduckdb: $out_dir/libduckdb_bundle.a exists, nothing to do (LIBDUCKDB_FORCE=1 to rebuild)"
   exit 0
 fi
@@ -106,16 +112,45 @@ fi
   cd "$workdir"
   # Clones + bootstraps the vcpkg revision this DuckDB release pins.
   make setup-vcpkg
+  # DuckDB 2.0 takes the release version from the environment, not from
+  # git; without it the build is a dev build and looks for extensions
+  # under the commit hash instead of the version.
+  DUCKDB_VERSION="$duckdb_version" \
   CORE_EXTENSIONS='json;icu;autocomplete;httpfs;excel;sqlite_scanner' \
   EXTENSION_STATIC_BUILD=1 \
+  DUCKDB_CAPABILITIES='httplib;loadable_extensions' \
   USE_MERGED_VCPKG_MANIFEST=1 \
   VCPKG_TOOLCHAIN_PATH="$workdir/vcpkg/scripts/buildsystems/vcpkg.cmake" \
   DISABLE_SHELL=1 \
   GEN=ninja \
-  make bundle-library
+  make release
+  # Registers every capability and extension archive the build left.
+  make static_extension_loader
+
+  cd build/release
+  rm -rf bundle libduckdb_bundle.a
+  mkdir -p bundle/loader
+  "${CC:-cc}" -O2 -fPIC -I "$workdir/src/include" -c static_extension_loader.c -o bundle/loader/static_extension_loader.o
+  # One directory per archive, so members of the same name do not
+  # overwrite each other. vcpkg's debug builds are left out.
+  {
+    ls src/libduckdb_static.a src/main/http/libduckdb_httplib.a \
+      src/main/extension/libduckdb_loadable_extensions.a
+    ls third_party/*/libduckdb_*.a extension/*/lib*_extension.a 2>/dev/null || true
+    find vcpkg_installed -name '*.a' -not -path '*/debug/*' 2>/dev/null || true
+  } | while read -r lib; do
+    dir="bundle/$(echo "$lib" | tr '/' '_')"
+    mkdir -p "$dir"
+    (cd "$dir" && "${AR:-ar}" -x "../../$lib")
+  done
+  # q appends: xargs may split the list, and r would replace a member of
+  # the same name from an earlier call.
+  find bundle -name '*.o' -print0 | xargs -0 "${AR:-ar}" qc libduckdb_bundle.a
+  "${RANLIB:-ranlib}" libduckdb_bundle.a
 )
 
 mkdir -p "$out_dir"
 cp "$workdir/build/release/libduckdb_bundle.a" "$out_dir/"
+echo "$duckdb_version" > "$out_dir/VERSION"
 
 echo "build-libduckdb: done -> $out_dir/libduckdb_bundle.a"

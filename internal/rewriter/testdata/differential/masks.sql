@@ -62,7 +62,8 @@ same SELECT t FROM t ORDER BY t.id
 same SELECT unnest(t) FROM t
 same SELECT to_json(t) FROM t ORDER BY t.id
 same SELECT struct_extract(t, 'secret'), (t).secret, t['secret'] FROM t ORDER BY t.id
-same SELECT list_transform(ARRAY[t], x -> x.secret) FROM t ORDER BY t.id
+# DuckDB refuses the -> lambda.
+rawfails SELECT list_transform(ARRAY[t], x -> x.secret) FROM t ORDER BY t.id
 same SELECT max(t) FROM t
 same SELECT secret FROM t secret
 same SELECT secret.id, secret.secret FROM t secret ORDER BY 1
@@ -228,11 +229,12 @@ ERR_UNSUPPORTED_SYNTAX SELECT id, (SELECT u.* FROM u d LIMIT 1) FROM u
 same SELECT u.id, x.id, x.a FROM u, LATERAL (SELECT * FROM v WHERE v.id = u.id) x ORDER BY u.id
 rawfails SELECT x.secret FROM u, LATERAL (SELECT * FROM v WHERE v.id = u.id) x
 # As the whole select list of EXISTS both stars become the constant 1.
-rawfails SELECT id FROM u WHERE EXISTS (SELECT u.*) ORDER BY id
+# DuckDB expands a star that names an outer table, but not a bare one.
+same SELECT id FROM u WHERE EXISTS (SELECT u.*) ORDER BY id
 rawfails SELECT id FROM u WHERE EXISTS (SELECT *) ORDER BY id
-# Over a table with a SQL mask these stars would read the wrapper. DuckDB
-# refuses them today.
-rawfails SELECT x.secret FROM v, t, LATERAL (SELECT t.*) x
+# Over a table with a SQL mask these stars read the wrapper. DuckDB refuses
+# all but the first one.
+same SELECT x.secret FROM v, t, LATERAL (SELECT t.*) x
 rawfails SELECT x.secret FROM t, LATERAL (SELECT *) x
 rawfails SELECT to_json(t.*) FROM t
 rawfails SELECT row(t.*) FROM t

@@ -110,4 +110,5 @@ rawfails SELECT main.t.id FROM main.t x
 same SELECT id AS "日本", a AS "ünï" FROM t ORDER BY 1
 same SELECT id AS "a b", a AS "x""y" FROM t ORDER BY 1
 same SELECT "a b" FROM (SELECT id AS "a b" FROM t) q ORDER BY 1
-ERR_SYNTAX SELECT U&"d\0061t" FROM t
+# DuckDB reads U& as the operator & on a column U.
+ERR_UNSUPPORTED_SYNTAX SELECT U&"d\0061t" FROM t
