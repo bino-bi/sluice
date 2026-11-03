@@ -68,6 +68,7 @@ DROPPED = {"duration_ms", "latency_ms"}
 ID_RULE = (re.compile(r"\b[0-7][0-9A-HJKMNP-TV-Z]{25}\b"), "<id>")
 # Applied to plain text lines only. JSON is handled by key, so sample data stays as it is.
 TEXT_RULES = [
+    (re.compile(r"\b\d{8}T\d{6}Z-[0-9a-f]{6}\b"), "<build-id>"),
     (re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})"), "<time>"),
     (re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), "<date>"),
     (re.compile(r"\b[0-9a-f]{64}\b"), "<hash>"),

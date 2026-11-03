@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: shopsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: shop
+    seed: secret://env/SHOP_SYNTH_SEED
+    privacy:
+      minGroupSize: 5
+    rules:
+      - match: { tags: [pii] }
+        generator: fake
+        args: { kind: email }
+    tables:
+      - name: main.orders
+        size: { ratio: 0.2 }
+        columns:
+          id: { generator: sequence }
+          product: { generator: categorical }

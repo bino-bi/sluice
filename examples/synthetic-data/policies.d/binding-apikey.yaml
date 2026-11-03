@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC-BY-4.0
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SubjectBinding
+metadata:
+  name: developers
+spec:
+  claims:
+    subjectId: "dana"
+  # The client sends "X-Api-Key: sl_demo_dana.world": key id, a dot, then the secret.
+  apiKeys:
+    - id: "sl_demo_dana"
+      hashRef: "secret://env/SLUICE_APIKEY_DANA_HASH"
+      groups: ["developers"]

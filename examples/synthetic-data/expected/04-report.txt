@@ -1,0 +1,8 @@
+build <build-id> succeeded, origin cli, finished <time>
+TABLE        COLUMN     GENERATOR         SOURCE MEDIAN  SYNTHETIC MEDIAN  DISTANCE   WARNINGS
+main.orders  id         sequence          1000.5         200.5             -          0
+main.orders  region     categorical       -              -                 tv 0.02    0
+main.orders  product    categorical       -              -                 tv 0.05    0
+main.orders  amount     distribution      67.375         66.6484           ks 0.031   0
+main.orders  placed_on  dateDistribution  20602.5        20608.5           ks 0.0229  0
+main.orders  email      fake              -              -                 -          0

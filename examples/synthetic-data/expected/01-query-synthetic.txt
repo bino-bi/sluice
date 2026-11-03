@@ -1,0 +1,11 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["product", "orders"],
+  "rows": [
+    ["coffee", 180],
+    ["mug", 63],
+    ["tea", 157]
+  ],
+  "row_count": 3,
+  "truncated": false
+}

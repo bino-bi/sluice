@@ -117,6 +117,7 @@ nav:
       - Deployment: operations/deployment.md
       - Server config & secrets: operations/server-config.md
       - Data sources: operations/data-sources.md
+      - Synthetic data: operations/synthetic-data.md
       - Configuration reload: operations/hot-reload.md
       - Observability: operations/observability.md
   - Security:

@@ -41,7 +41,9 @@ The docs use one term for each concept.
 | [Secret reference](../operations/server-config.md) | A value such as `secret://env/NAME`. Sluice reads the secret from there. |
 | [Selector](../policies/matching.md) | The subjects and tables a policy covers: `match` and `exclude`. |
 | [Server config](../operations/server-config.md) | The YAML file that you pass to `sluice serve --config`. |
+| [Snapshot](../operations/synthetic-data.md) | The file of generated rows that a synthetic data source serves. |
 | Subject | The identity of a client, from its JWT or API key. |
 | [Subject binding](../policies/subjects.md) | A `SubjectBinding` object. It maps credentials to subjects. |
 | [Suite](../policies/testing.md) | A YAML file with cases for `sluice policy test`. |
+| [Synthetic data source](../operations/synthetic-data.md) | A data source of type `synthetic`. It serves generated rows that look like the rows of another data source. |
 | [Tag](../policies/classification.md) | A label on tables or columns, set by a `DataClassification` object. |

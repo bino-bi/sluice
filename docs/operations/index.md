@@ -20,6 +20,7 @@ As an operator, you handle these parts of Sluice:
 - [Deployment](deployment.md): image, ports, health endpoints, TLS, signals.
 - [Server config & secrets](server-config.md): how Sluice loads the config and reads secrets.
 - [Data sources](data-sources.md): the `DataSource` types.
+- [Synthetic data](synthetic-data.md): generated rows in place of real ones.
 - [Configuration reload](hot-reload.md): change policies without a restart.
 - [Observability](observability.md): logs, metrics and tracing.
 

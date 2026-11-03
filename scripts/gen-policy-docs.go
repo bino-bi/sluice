@@ -174,7 +174,7 @@ var docs = map[string]doc{
 	"DataSource.database":       {"for `motherduck`", "Database name."},
 	"DataSource.tokenRef":       {"for `motherduck`", "Secret reference to the token."},
 
-	"DataSource.synthetic":                     {"for `synthetic`", "Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits."},
+	"DataSource.synthetic":                     {"for `synthetic`", "Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits. See [Synthetic data](../operations/synthetic-data.md)."},
 	"DataSource.synthetic.source":              {"yes", "Name of the data source to profile. Not a `synthetic` one."},
 	"DataSource.synthetic.seed":                {"yes", "Secret reference to the seed. At least 16 bytes. The same seed and data give the same rows."},
 	"DataSource.synthetic.build.onStart":       {"", "{values}. Default `never`. `ifMissing` builds at server start when no snapshot exists."},
@@ -185,7 +185,7 @@ var docs = map[string]doc{
 	"DataSource.synthetic.tables[].size.ratio": {"one of two", "Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails."},
 	"DataSource.synthetic.tables[].size.rows":  {"one of two", "Fixed row count. 0 copies only the columns."},
 	"DataSource.synthetic.tables[].privacy":    {"", "Privacy settings for this table. Not `strictTags`."},
-	"DataSource.synthetic.tables[].columns":    {"", "Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`."},
+	"DataSource.synthetic.tables[].columns":    {"", "Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. See [Generators](../operations/synthetic-data.md#generators)."},
 	"DataSource.synthetic.tables[].rules":      {"", "Generator rules for this table. A column entry comes first."},
 
 	"SyntheticPrivacy.minGroupSize":       {"", "Smallest group of source rows a value, bin or bound may come from. 2 or more. Default 5."},
@@ -200,7 +200,7 @@ var docs = map[string]doc{
 	"SyntheticRule.match.columns": {"", "Column name patterns. `*` is a wildcard. Case does not matter."},
 	"SyntheticRule.match.types":   {"", "Column type patterns, for example `DECIMAL*`. Case does not matter."},
 	"SyntheticRule.match.tags":    {"", "Tags of a `DataClassification`."},
-	"SyntheticRule.generator":     {"yes", "Generator name, for example `distribution`, `categorical` or `randomString`."},
+	"SyntheticRule.generator":     {"yes", "Generator name, for example `distribution`, `categorical` or `randomString`. See [Generators](../operations/synthetic-data.md#generators)."},
 	"SyntheticRule.args":          {"", "Arguments of the generator."},
 
 	"SubjectBinding.issuer":                  {"", "Issuer (`iss`) of the JWTs."},

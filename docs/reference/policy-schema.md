@@ -115,7 +115,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `match.columns` | []string |  | Column name patterns. `*` is a wildcard. Case does not matter. |
 | `match.types` | []string |  | Column type patterns, for example `DECIMAL*`. Case does not matter. |
 | `match.tags` | []string |  | Tags of a `DataClassification`. |
-| `generator` | string | yes | Generator name, for example `distribution`, `categorical` or `randomString`. |
+| `generator` | string | yes | Generator name, for example `distribution`, `categorical` or `randomString`. See [Generators](../operations/synthetic-data.md#generators). |
 | `args` | map |  | Arguments of the generator. |
 
 ## SqlAccessPolicy
@@ -204,7 +204,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `format` | string |  | `s3`, `http`: `parquet`, `csv`, `json`, `xlsx`. Default: the file extension. |
 | `database` | string | for `motherduck` | Database name. |
 | `tokenRef` | string | for `motherduck` | Secret reference to the token. |
-| `synthetic` | object | for `synthetic` | Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits. |
+| `synthetic` | object | for `synthetic` | Builds a snapshot of generated rows from the profile of another data source. The name has only lower-case letters and digits. See [Synthetic data](../operations/synthetic-data.md). |
 | `synthetic.source` | string | yes | Name of the data source to profile. Not a `synthetic` one. |
 | `synthetic.seed` | string | yes | Secret reference to the seed. At least 16 bytes. The same seed and data give the same rows. |
 | `synthetic.build.onStart` | string |  | `never`, `ifMissing`. Default `never`. `ifMissing` builds at server start when no snapshot exists. |
@@ -215,7 +215,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `synthetic.tables[].size.ratio` | float | one of two | Share of the source rows. Above 0, at most 1. A build over `synthetic.maxRatio` of the server config fails. |
 | `synthetic.tables[].size.rows` | int | one of two | Fixed row count. 0 copies only the columns. |
 | `synthetic.tables[].privacy` | [SyntheticPrivacy](#syntheticprivacy) |  | Privacy settings for this table. Not `strictTags`. |
-| `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. |
+| `synthetic.tables[].columns` | map |  | Generator per column name. Each entry has `generator`, `args` and `privacy`, as in a rule. `privacy` has no `strictTags`. See [Generators](../operations/synthetic-data.md#generators). |
 | `synthetic.tables[].rules` | [SyntheticRule](#syntheticrule) list |  | Generator rules for this table. A column entry comes first. |
 
 ## SubjectBinding

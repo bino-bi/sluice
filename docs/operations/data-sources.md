@@ -39,6 +39,7 @@ What happened: `metadata.name` became the catalog name, so the tables are `shop.
 | `s3` | Files in an S3 bucket | `bucket`, `region`, `allowedPaths`, `endpoint`, `format` | `credentialsRef`: JSON with `key_id`, `secret`, `session_token` |
 | `http` | Files behind HTTP URLs | `urls`, `format` | `headersRef`: JSON object of headers |
 | `motherduck` | A MotherDuck database | `database` | `tokenRef`: the token |
+| `synthetic` | Generated rows from the profile of another data source | `synthetic` | `synthetic.seed`: the seed. See [Synthetic data](synthetic-data.md) |
 
 Fields that end in `Ref` take a [secret reference](server-config.md). The files below are validated, but not tested against a real service.
 
@@ -112,5 +113,6 @@ A running server tests every source at start and then every 30 seconds. `GET /v1
 ## See also
 
 - [Server config & secrets](server-config.md)
+- [Synthetic data](synthetic-data.md)
 - [Configuration reload](hot-reload.md)
 - [Policy schema](../reference/policy-schema.md)

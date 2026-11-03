@@ -57,6 +57,7 @@ REST, MCP over HTTP and admin serve plain HTTP until you set `tls`.
 | Traffic read on the network | TLS and client certificates on the REST, MCP and admin listeners, TLS 1.2 or newer | Set `rest.tls`, `mcp.tls` and `admin.tls`, or use a TLS proxy |
 | A secret file open to other users | Refuses a file that group or others can write. Warns when others can read it | `chmod 0600` |
 | DuckDB reads local files or other URLs | Turns off external access and extension install, locks the settings. Only the configured S3 bucket and HTTP URLs stay readable | List only the URLs you need |
+| A build reads raw data and bypasses policies | Only `sluice synth build`, the admin API and `build.onStart` start a build. Server builds write an audit record. The query pool reads only the snapshot folder | Protect the admin token and the CI job that runs `sluice synth build`. Keep reports private |
 | A user with database credentials | Nothing. This user does not pass through Sluice | Give database credentials only to Sluice |
 | A person who controls the host | Nothing. This person can read every secret and change policies | Protect the host |
 | The holder of the admin token | Nothing. The admin API shows policies and audit records | Give the token to operators only |

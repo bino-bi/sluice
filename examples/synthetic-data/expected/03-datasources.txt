@@ -1,0 +1,19 @@
+{
+  "datasources": [
+    {
+      "name": "shop",
+      "type": "sqlite",
+      "healthy": true,
+      "last_check": "<time>",
+      "schema_pulled_at": "<time>"
+    },
+    {
+      "name": "shopsynth",
+      "type": "synthetic",
+      "healthy": true,
+      "last_check": "<time>",
+      "schema_pulled_at": "<time>",
+      "status": "ready"
+    }
+  ]
+}
