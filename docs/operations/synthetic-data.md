@@ -152,14 +152,7 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 
 ## Ages
 
-`age` keeps the age mix of a birth date column. Sluice counts the source rows per age in whole years at the date `asOf`. For each row it draws an age with these shares and writes a date in that year of life before `asOf`.
-
-```yaml
-birth_date:
-  generator: age
-  args:
-    asOf: "2024-06-30"
-```
+`age` keeps the age mix of a birth date column. Sluice counts the source rows per age in whole years at the date `asOf`. For each row it draws an age with these shares and writes a date in that year of life before `asOf`. For example: `birth_date: { generator: age, args: { asOf: "2024-06-30" } }`.
 
 - `asOf` is an ISO date or timestamp. Without it, `asOf` is the upper bound of the column after `clipOutliers` and `extremeJitter`. Set it to the date of the source data, so the ages mean something.
 - An age with fewer than `minGroupSize` rows never appears. Its rows are left out of the shares.
@@ -270,7 +263,7 @@ What happened: the build made 22 noisy measurements, so each got an `epsilon` of
 ### Counts
 
 - Each count is the true count plus noise, rounded, and at least 0.
-- A histogram cell, such as a bin, a weekday, an age or a time slot, is kept when it reaches `minGroupSize` and a floor that grows with the noise.
+- A histogram cell is kept when it reaches `minGroupSize` and a floor that grows with the noise. A cell is a bin, a weekday, an age or a time slot.
 - A value, initial, pattern or prefix is kept when its noisy count reaches `minGroupSize`.
 - Quantiles, mean and deviation come from a noisy histogram of 200 bins, or of `bins` for `histogram`.
 - The same data, seed, spec and DuckDB version give the same rows. Any change in the source changes the noise of every count.
