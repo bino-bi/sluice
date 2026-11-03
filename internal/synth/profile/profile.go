@@ -49,6 +49,10 @@ const (
 	// The null rate is then the NULL share of x among the rows where
 	// from is not NULL.
 	PartOffset
+	// PartFanOut reads the number of rows per key of the parent column
+	// Needs.Parent, as an ordinal histogram over the parent keys, and the
+	// share of rows whose key has no parent.
+	PartFanOut
 )
 
 const (
@@ -75,6 +79,13 @@ type Needs struct {
 	// KeepSign keeps lo' at or above 0 when the source lo is, so a
 	// jitter cannot turn "always after" into "sometimes before".
 	KeepSign bool
+	// Parent is the parent key column of PartFanOut, in the same catalog.
+	Parent *Ref
+}
+
+// Ref names a column of another table of the same catalog.
+type Ref struct {
+	Schema, Table, Column string
 }
 
 // Default privacy settings (concept 5.8).
@@ -184,6 +195,12 @@ type Column struct {
 	// CaseStyles holds the row counts of upper, lower, title and mixed
 	// case. A style with fewer than k rows is 0.
 	CaseStyles [4]int64
+
+	// FanOut has one bin per number of rows per parent key (Lo == Hi);
+	// Count is the number of parent keys. OrphanRate is the share of
+	// non-null rows whose key has no parent, 0 below k such rows.
+	FanOut     []Bin
+	OrphanRate float64
 
 	// Suppressed counts the nominal groups removed for having fewer than
 	// k rows. MergedBins counts the ordinal merges.

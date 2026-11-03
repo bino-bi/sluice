@@ -171,6 +171,7 @@ const (
 	GenTemplate         SyntheticGenerator = "template"
 	GenDateOffset       SyntheticGenerator = "dateOffset"
 	GenExpression       SyntheticGenerator = "expression"
+	GenForeignKey       SyntheticGenerator = "foreignKey"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -243,6 +244,8 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
 	GenDateOffset:       {args: map[string]argCheck{"from": columnArg, "offset": offsetArg}, required: []string{"from"}},
 	GenExpression:       {args: map[string]argCheck{"sql": sqlArg}, required: []string{"sql"}, noUnique: true},
+	GenForeignKey: {args: map[string]argCheck{"table": tableRefArg, "column": columnArg, "fanOut": fanOutArg, "orphanRate": rateArg},
+		required: []string{"table", "column"}, noUnique: true},
 }
 
 // sharedArgs are valid on every generator.
@@ -319,6 +322,11 @@ func validateSynthetic(d *DataSource) error {
 	if len(syn.Tables) == 0 {
 		return fail(base+".tables", "at least one table is required")
 	}
+	// tables are the lower-case table names, for foreignKey.args.table.
+	tables := map[string]bool{}
+	for _, t := range syn.Tables {
+		tables[strings.ToLower(t.Name)] = true
+	}
 	names := map[string]bool{}
 	for i, t := range syn.Tables {
 		path := fmt.Sprintf("%s.tables[%d]", base, i)
@@ -360,7 +368,7 @@ func validateSynthetic(d *DataSource) error {
 				return fail(field, reason)
 			}
 		}
-		if field, reason := checkTableRelations(t, path, cols); field != "" {
+		if field, reason := checkTableRelations(t, path, cols, tables); field != "" {
 			return fail(field, reason)
 		}
 		for j, r := range t.Rules {
@@ -368,6 +376,9 @@ func validateSynthetic(d *DataSource) error {
 				return fail(field, reason)
 			}
 		}
+	}
+	if _, err := SyntheticTableOrder(syn); err != nil {
+		return fail(base+".tables", err.Error())
 	}
 	return nil
 }

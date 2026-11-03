@@ -50,6 +50,8 @@ type TableReport struct {
 	SyntheticRows int64          `json:"synthetic_rows"`
 	Ratio         float64        `json:"ratio"`
 	Columns       []ColumnReport `json:"columns"`
+	// DependsOn lists the parent tables (foreignKey), sorted.
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 // ColumnReport is one column of a TableReport.
@@ -73,8 +75,20 @@ type ColumnReport struct {
 	// sorted.
 	DependsOn []string `json:"depends_on,omitempty"`
 	// By is set for a column with by.
-	By       *ByReport `json:"by,omitempty"`
-	Warnings []string  `json:"warnings"`
+	By *ByReport `json:"by,omitempty"`
+	// FanOut is set for a foreignKey column.
+	FanOut   *FanOutReport `json:"fan_out,omitempty"`
+	Warnings []string      `json:"warnings"`
+}
+
+// FanOutReport is the foreignKey part of a ColumnReport.
+type FanOutReport struct {
+	// Parent is schema.table.column of the parent key.
+	Parent  string `json:"parent"`
+	Parents int64  `json:"parents"`
+	// Scale is the child rows over the sum of the drawn fan-outs.
+	Scale      float64 `json:"scale"`
+	OrphanRows int64   `json:"orphan_rows"`
 }
 
 // ByReport is the by-group part of a ColumnReport. It holds counts only,

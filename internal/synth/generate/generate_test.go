@@ -621,7 +621,9 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	names[apitypes.GenDateOffset] = true
 	// expression draws only a marker; relations_test.go covers it.
 	names[apitypes.GenExpression] = true
-	if len(registry) != 29 || len(names) != 29 {
-		t.Errorf("registry has %d generators, cases cover %d, want 29", len(registry), len(names))
+	// foreignKey needs the parent keys; foreignkey_test.go covers it.
+	names[apitypes.GenForeignKey] = true
+	if len(registry) != 30 || len(names) != 30 {
+		t.Errorf("registry has %d generators, cases cover %d, want 30", len(registry), len(names))
 	}
 }

@@ -3,8 +3,10 @@
 package generate
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"sort"
 	"strconv"
 	"strings"
@@ -323,3 +325,179 @@ type exprMarker struct{}
 
 func (exprMarker) Next(RowCtx) (any, error) { return true, nil }
 func (exprMarker) Pool() int64              { return -1 }
+
+// FanOutStats are the counts of a foreignKey column for the report.
+type FanOutStats struct {
+	// Parents is the number of parent keys.
+	Parents int64
+	// Scale is the child rows over the sum of the drawn fan-outs.
+	Scale float64
+	// Orphans is the number of drawn keys with no parent.
+	Orphans int64
+}
+
+// FanOuter is a ColumnGen of a foreignKey column. FanOutStats is nil for
+// any other column.
+type FanOuter interface {
+	FanOutStats() *FanOutStats
+}
+
+var errNoFanOut = errors.New("profile has no fan-out histogram")
+
+type foreignKey struct{}
+
+func (foreignKey) Check(col Column, _ Args) error {
+	k := col.Kind()
+	return fits(col, apitypes.GenForeignKey, k == profile.KindInteger || k == profile.KindText || k == profile.KindUUID)
+}
+
+func (foreignKey) Needs(_ Column, args Args) profile.Needs {
+	if !args.isSource("fanOut", true) && !args.isSource("orphanRate", false) {
+		return profile.Needs{}
+	}
+	schema, table, _ := strings.Cut(args.strOr("table", ""), ".")
+	return profile.Needs{Parts: profile.PartFanOut, Parent: &profile.Ref{Schema: schema, Table: table, Column: args.strOr("column", "")}}
+}
+
+// New draws a fan-out per parent key, scales the fan-outs to the row
+// count and shuffles the slots (plan 1.8 step 5). Row i gets the key of
+// slot i, or an orphan key.
+func (foreignKey) New(col Column, p *profile.Column, args Args, s Streams) (ColumnGen, error) {
+	if col.Keys == nil || len(col.Keys.Values) == 0 {
+		return nil, errors.New("foreignKey parent has no keys")
+	}
+	keys := col.Keys.Values
+	f := make([]int64, len(keys))
+	if args.isSource("fanOut", true) {
+		if len(p.FanOut) == 0 {
+			return nil, errNoFanOut
+		}
+		weights := make([]float64, len(p.FanOut))
+		for i, b := range p.FanOut {
+			weights[i] = float64(b.Count)
+		}
+		cum := cumulative(weights)
+		for i := range f {
+			f[i] = int64(p.FanOut[pickCum(cum, s.FanOut)].Lo)
+		}
+	} else {
+		sp := args.span("fanOut")
+		for i := range f {
+			f[i] = int64(sp.min + s.FanOut.IntN(sp.max-sp.min+1))
+		}
+	}
+	slots, scale := fanOutSlots(f, col.Rows)
+	for i := len(slots) - 1; i > 0; i-- {
+		j := s.Shuffle.IntN(i + 1)
+		slots[i], slots[j] = slots[j], slots[i]
+	}
+	g := &fkGen{keys: keys, slots: slots, stats: FanOutStats{Parents: int64(len(keys)), Scale: scale}, orphans: s.Orphans, values: s.Values}
+	if v, ok := args["orphanRate"].(float64); ok {
+		g.rate = v
+	} else if args.isSource("orphanRate", false) {
+		g.rate = p.OrphanRate
+	}
+	if g.rate == 0 {
+		return g, nil
+	}
+	switch col.Keys.Stage {
+	case StageBigint:
+		for _, k := range keys {
+			g.next = max(g.next, k.(int64))
+		}
+	case StageVarchar:
+		g.parents = make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			g.parents[k.(string)] = struct{}{}
+		}
+	default:
+		return nil, errors.New("foreignKey orphanRate needs an integer, text or UUID key")
+	}
+	return g, nil
+}
+
+// fanOutSlots scales the fan-outs f to n slots with the largest
+// remainder method and returns parent i g_i times, in parent order, and
+// the scale n / sum f. Ties go to the lower index. A zero sum counts as
+// a fan-out of 1 for every parent.
+func fanOutSlots(f []int64, n int64) ([]int, float64) {
+	var total uint64
+	for _, x := range f {
+		total += uint64(x)
+	}
+	if total == 0 {
+		for i := range f {
+			f[i] = 1
+		}
+		total = uint64(len(f))
+	}
+	g := make([]int64, len(f))
+	rem := make([]uint64, len(f))
+	var sum int64
+	for i, x := range f {
+		// 128-bit product: f_i <= total, so the quotient fits and Div64
+		// does not panic.
+		hi, lo := bits.Mul64(uint64(x), uint64(n))
+		q, r := bits.Div64(hi, lo, total)
+		g[i], rem[i] = int64(q), r
+		sum += int64(q)
+	}
+	idx := make([]int, len(f))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return rem[idx[a]] > rem[idx[b]] })
+	for _, i := range idx[:n-sum] {
+		g[i]++
+	}
+	slots := make([]int, 0, n)
+	for i, x := range g {
+		for range x {
+			slots = append(slots, i)
+		}
+	}
+	return slots, float64(n) / float64(total)
+}
+
+// fkGen hands out the parent keys of the slots and draws orphans.
+type fkGen struct {
+	keys    []any
+	slots   []int
+	stats   FanOutStats
+	rate    float64
+	orphans *rng.Stream
+	values  *rng.Stream
+	// next is the last integer orphan key, parents the text keys.
+	next    int64
+	parents map[string]struct{}
+}
+
+func (g *fkGen) Pool() int64 { return int64(len(g.keys)) }
+
+func (g *fkGen) FanOutStats() *FanOutStats {
+	s := g.stats
+	return &s
+}
+
+func (g *fkGen) Next(row RowCtx) (any, error) {
+	if g.rate > 0 && g.orphans.Float64() < g.rate {
+		g.stats.Orphans++
+		if g.parents == nil {
+			if g.next == math.MaxInt64 {
+				return nil, errors.New("foreignKey has no integer left for an orphan key")
+			}
+			g.next++
+			return g.next, nil
+		}
+		for {
+			k := uuidV4(g.values)
+			if _, hit := g.parents[k]; !hit {
+				return k, nil
+			}
+		}
+	}
+	if row.Index < 0 || row.Index >= int64(len(g.slots)) {
+		return nil, fmt.Errorf("foreignKey has no slot for row %d", row.Index)
+	}
+	return g.keys[g.slots[row.Index]], nil
+}

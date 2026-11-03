@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -17,6 +18,7 @@ var relationGenerators = map[SyntheticGenerator]bool{
 	GenTemplate:   true,
 	GenDateOffset: true,
 	GenExpression: true,
+	GenForeignKey: true,
 }
 
 // maxTemplateBytes caps the template arg.
@@ -65,6 +67,27 @@ func columnArg(v any) error {
 		return errors.New("must be a column name")
 	}
 	return nil
+}
+
+// tableRefArg is a table name of the shape schema.table.
+func tableRefArg(v any) error {
+	s, _ := v.(string)
+	schema, table, ok := strings.Cut(s, ".")
+	if !ok || strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" || strings.Contains(table, ".") {
+		return errors.New("must be schema.table")
+	}
+	return nil
+}
+
+// maxFanOut bounds foreignKey.fanOut, so the slot math stays small.
+const maxFanOut = 100000
+
+// fanOutArg is "source" or {min, max}, integers from 0 to maxFanOut.
+func fanOutArg(v any) error {
+	if _, ok := v.(float64); ok {
+		return fmt.Errorf("must be source or {min, max} with integers from 0 to %d", maxFanOut)
+	}
+	return lengthArg(0, maxFanOut)(v)
 }
 
 // maxByColumns caps the by arg; every column multiplies the groups.
@@ -211,12 +234,24 @@ func (c SyntheticColumn) Refs() []string {
 	return out
 }
 
+// ForeignKey returns the parent table and column of a foreignKey column,
+// lower-cased. ok is false for other generators.
+func (c SyntheticColumn) ForeignKey() (table, column string, ok bool) {
+	if c.Generator != GenForeignKey {
+		return "", "", false
+	}
+	table, _ = c.Args["table"].(string)
+	column, _ = c.Args["column"].(string)
+	return strings.ToLower(table), strings.ToLower(column), true
+}
+
 // checkTableRelations checks the refs between the columns entries of one
 // table: no column reads itself or an expression column, and the graph
 // has no cycle. A ref to a
 // column without an entry is a leaf; the build checks that it exists.
-// names are the columns keys, sorted.
-func checkTableRelations(t SyntheticTable, path string, names []string) (string, string) {
+// names are the columns keys, sorted. tables are the lower-case names of
+// every table of the spec, for foreignKey.
+func checkTableRelations(t SyntheticTable, path string, names []string, tables map[string]bool) (string, string) {
 	byLower := map[string]string{}
 	for _, n := range names {
 		byLower[strings.ToLower(n)] = n
@@ -224,6 +259,14 @@ func checkTableRelations(t SyntheticTable, path string, names []string) (string,
 	deps := map[string][]string{}
 	for _, name := range names {
 		low := strings.ToLower(name)
+		if parent, _, ok := t.Columns[name].ForeignKey(); ok {
+			switch {
+			case parent == strings.ToLower(t.Name):
+				return path + ".columns." + name + ".args.table", "names its own table, a foreignKey must point to another table"
+			case !tables[parent]:
+				return path + ".columns." + name + ".args.table", fmt.Sprintf("names table %s, which is not in spec.synthetic.tables", t.Columns[name].Args["table"])
+			}
+		}
 		args := t.Columns[name].argRefs()
 		argNames := make([]string, 0, len(args))
 		for a := range args {
@@ -255,6 +298,67 @@ func checkTableRelations(t SyntheticTable, path string, names []string) (string,
 		return path + ".columns", fmt.Sprintf("columns %s depend on each other", strings.Join(show, ", "))
 	}
 	return "", ""
+}
+
+// SyntheticTableOrder returns the table indexes, parents before children,
+// list order as tie-break. It fails on an unknown table, a table that
+// names itself, or a cycle.
+func SyntheticTableOrder(spec *SyntheticSpec) ([]int, error) {
+	idx := make(map[string]int, len(spec.Tables))
+	for i, t := range spec.Tables {
+		idx[strings.ToLower(t.Name)] = i
+	}
+	parents := make([][]int, len(spec.Tables))
+	deps := map[string][]string{}
+	for i, t := range spec.Tables {
+		cols := make([]string, 0, len(t.Columns))
+		for name := range t.Columns {
+			cols = append(cols, name)
+		}
+		sort.Strings(cols)
+		for _, name := range cols {
+			parent, _, ok := t.Columns[name].ForeignKey()
+			if !ok {
+				continue
+			}
+			p, found := idx[parent]
+			switch {
+			case !found:
+				return nil, fmt.Errorf("table %s: column %s names table %s, which is not in spec.synthetic.tables", t.Name, name, t.Columns[name].Args["table"])
+			case p == i:
+				return nil, fmt.Errorf("table %s: column %s names its own table", t.Name, name)
+			}
+			if !slices.Contains(parents[i], p) {
+				parents[i] = append(parents[i], p)
+				low := strings.ToLower(t.Name)
+				deps[low] = append(deps[low], parent)
+			}
+		}
+	}
+	for _, ds := range deps {
+		sort.Strings(ds)
+	}
+	if cycle := findCycle(deps); len(cycle) > 0 {
+		show := make([]string, len(cycle))
+		for i, c := range cycle {
+			show[i] = spec.Tables[idx[c]].Name
+		}
+		sort.Strings(show)
+		return nil, fmt.Errorf("foreignKey cycle between tables %s", strings.Join(show, ", "))
+	}
+	order := make([]int, 0, len(spec.Tables))
+	placed := make([]bool, len(spec.Tables))
+	for len(order) < len(spec.Tables) {
+		for i := range spec.Tables {
+			if placed[i] || slices.ContainsFunc(parents[i], func(p int) bool { return !placed[p] }) {
+				continue
+			}
+			placed[i] = true
+			order = append(order, i)
+			break
+		}
+	}
+	return order, nil
 }
 
 // findCycle returns the nodes of one cycle of the graph (node -> the

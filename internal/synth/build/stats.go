@@ -58,6 +58,14 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 	if c.by != nil {
 		cr.By = b.byReport(t, c, warn)
 	}
+	if f, ok := c.gen.(generate.FanOuter); ok && f.FanOutStats() != nil {
+		st := f.FanOutStats()
+		e, _, _ := b.parentTarget(c)
+		cr.FanOut = &FanOutReport{Parent: e.table + "." + e.column, Parents: st.Parents, Scale: st.Scale, OrphanRows: st.Orphans}
+		if st.Scale < 0.5 || st.Scale > 2 {
+			warn(fmt.Sprintf("the fan-outs are scaled by %.2f to fit the row count, the parent and child sizes do not fit the source fan-out", st.Scale))
+		}
+	}
 	p := c.prof
 	cr.SuppressedValues, cr.MergedBins = p.Suppressed, p.MergedBins
 	if f, ok := c.gen.(interface{ Fallbacks() int64 }); ok {
@@ -239,6 +247,10 @@ func (b *builder) distance(ctx context.Context, conn *sql.Conn, target, x string
 			return b.totalVariation(ctx, conn, target, x, p)
 		}
 	case apitypes.GenBucket:
+	case apitypes.GenForeignKey:
+		if len(p.FanOut) > 0 {
+			return b.fanOutTV(ctx, conn, target, c)
+		}
 	case apitypes.GenDateOffset:
 		// The profile is on the offset axis, so the distance is too.
 		if len(c.refs) == 1 && len(p.Quantiles) >= 2 {

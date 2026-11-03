@@ -31,6 +31,15 @@ type Column struct {
 	Cast func(value string) (any, error)
 	// Siblings are the columns of the same table by lower-case name.
 	Siblings map[string]Sibling
+	// Keys are the parent keys of a foreignKey column. Nil otherwise.
+	Keys *KeySet
+}
+
+// KeySet holds the staged values of a parent key column in row order,
+// without NULLs.
+type KeySet struct {
+	Values []any
+	Stage  Stage
 }
 
 // Sibling is a column of the same table, for generators that read other
@@ -58,6 +67,8 @@ type RowCtx struct {
 // Streams are the random streams of one column (rng purposes).
 type Streams struct {
 	Values, Nulls, Shuffle *rng.Stream
+	// FanOut and Orphans are read by foreignKey only.
+	FanOut, Orphans *rng.Stream
 }
 
 // Generator is one generator type.
@@ -116,6 +127,7 @@ var registry = map[apitypes.SyntheticGenerator]Generator{
 	apitypes.GenTemplate:         template{},
 	apitypes.GenDateOffset:       dateOffset{},
 	apitypes.GenExpression:       expression{},
+	apitypes.GenForeignKey:       foreignKey{},
 }
 
 // Lookup returns the generator of a name.
@@ -210,6 +222,14 @@ func (w *wrapped) ByRows() (int64, int64) {
 		return b.ByRows()
 	}
 	return 0, 0
+}
+
+// FanOutStats passes the inner counts through, nil for other generators.
+func (w *wrapped) FanOutStats() *FanOutStats {
+	if f, ok := w.inner.(FanOuter); ok {
+		return f.FanOutStats()
+	}
+	return nil
 }
 
 // pickCum draws an index from cumulative weights cum (ascending, last is

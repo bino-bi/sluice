@@ -131,6 +131,7 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 				"len(regexp_split_to_array(trim("+p.x+"), '\\s+'))", "trim("+p.x+") <> ''")
 		}},
 		{PartCharClasses, func() error { return p.charClasses(&out.CharClasses) }},
+		{PartFanOut, func() error { return p.fanOut(t, *needs.Parent, out) }},
 		{PartCaseStyles, func() error { return p.caseStyles(&out.CaseStyles) }},
 	}
 	for _, st := range steps {
@@ -197,7 +198,8 @@ func (p *colRun) check(needs Needs) error {
 		parts&PartOffset != 0 && (p.kind != KindDate && p.kind != KindTimestamp || needs.From == "") ||
 		parts&textParts != 0 && p.kind != KindText ||
 		parts&dateParts != 0 && p.kind != KindDate && p.kind != KindTimestamp ||
-		parts&PartTopValues != 0 && p.kind == KindOther
+		parts&PartTopValues != 0 && p.kind == KindOther ||
+		parts&PartFanOut != 0 && (needs.Parent == nil || p.kind != KindInteger && p.kind != KindText && p.kind != KindUUID)
 	if bad {
 		return p.fail(ErrKind)
 	}
@@ -429,6 +431,48 @@ func (p *colRun) ordinal(dst *[]Bin, merged *int, expr, where string) error {
 	var n int
 	*dst, n = mergeOrdinal(bins, p.k)
 	*merged += n
+	return nil
+}
+
+// fanOut reads the fan-out histogram and the orphan rate of a key column
+// against its parent (plan 1.8 steps 3 and 4). Bins with fewer than k
+// parents are merged, so no single parent's fan-out shows.
+func (p *colRun) fanOut(t Table, ref Ref, out *Column) error {
+	parent := Table{Catalog: t.Catalog, Schema: ref.Schema, Name: ref.Table}.sql()
+	pk := parser.QuoteIdent(ref.Column)
+	keys := "SELECT DISTINCT " + pk + " AS p FROM " + parent + " WHERE " + pk + " IS NOT NULL"
+	q := "WITH k AS (" + keys + "), " +
+		"c AS (SELECT " + p.x + " AS fk, count(*) AS n FROM " + p.from + " WHERE " + p.x + " IS NOT NULL GROUP BY 1) " +
+		"SELECT coalesce(c.n, 0) AS f, count(*) FROM k LEFT JOIN c ON c.fk = k.p GROUP BY f ORDER BY f"
+	var bins []Bin
+	var parents int64
+	err := p.query(q, nil, func(rows *sql.Rows) error {
+		var f, c int64
+		if err := rows.Scan(&f, &c); err != nil {
+			return err
+		}
+		bins = append(bins, Bin{Lo: float64(f), Hi: float64(f), Count: c})
+		parents += c
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if parents < p.k {
+		return p.fail(ErrTooFewRows)
+	}
+	var n int
+	out.FanOut, n = mergeOrdinal(bins, p.k)
+	out.MergedBins += n
+	var orphans, total int64
+	q = "SELECT count(*) FILTER (WHERE k.p IS NULL), count(*) FROM (SELECT " + p.x + " AS fk FROM " + p.from +
+		" WHERE " + p.x + " IS NOT NULL) AS c LEFT JOIN (" + keys + ") AS k ON k.p = c.fk"
+	if err := p.query(q, nil, func(rows *sql.Rows) error { return rows.Scan(&orphans, &total) }); err != nil {
+		return err
+	}
+	if orphans >= p.k {
+		out.OrphanRate = float64(orphans) / float64(total)
+	}
 	return nil
 }
 

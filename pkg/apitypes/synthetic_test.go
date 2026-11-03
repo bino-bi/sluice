@@ -5,13 +5,14 @@ package apitypes
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 // synDoc returns a synthetic DataSource whose first table has one column
 // "c" with the given generator line and args block (YAML, indented for
-// the column).
+// the column). A second table crm.orders has no columns entries.
 func synDoc(name, column string) string {
 	return `apiVersion: sluice.bino.bi/v1alpha1
 kind: DataSource
@@ -27,6 +28,8 @@ spec:
         size: { ratio: 0.2 }
         columns:
           c: ` + column + `
+      - name: crm.orders
+        size: { ratio: 0.2 }
 `
 }
 
@@ -77,6 +80,9 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"categorical-by":      `{ generator: categorical, args: { by: [status] } }`,
 		"dateDistribution-by": `{ generator: dateDistribution, args: { by: [status], keepWeekday: true } }`,
 		"expression":          `{ generator: expression, args: { sql: "quantity * unit_price - 1", nullRate: 0.1 } }`,
+		"foreignKey":          `{ generator: foreignKey, args: { table: CRM.Orders, column: id } }`,
+		"foreignKey-args":     `{ generator: foreignKey, args: { table: crm.orders, column: Id, fanOut: { min: 0, max: 100000 }, orphanRate: 0.05, nullRate: source } }`,
+		"foreignKey-source":   `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: source, orphanRate: source } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -253,6 +259,18 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"expression unique", synDoc("crmsynth", `{ generator: expression, args: { sql: "a", unique: true } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
 		{"expression unique false", synDoc("crmsynth", `{ generator: expression, args: { sql: "a", unique: false } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
 		{"by self ref", synDoc("crmsynth", `{ generator: dateDistribution, args: { by: [a, C] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"foreignKey no table", synDoc("crmsynth", `{ generator: foreignKey, args: { column: id } }`), "spec.synthetic.tables[0].columns.c.args.table"},
+		{"foreignKey no column", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders } }`), "spec.synthetic.tables[0].columns.c.args.column"},
+		{"foreignKey table shape", synDoc("crmsynth", `{ generator: foreignKey, args: { table: orders, column: id } }`), "spec.synthetic.tables[0].columns.c.args.table"},
+		{"foreignKey table three parts", synDoc("crmsynth", `{ generator: foreignKey, args: { table: a.b.c, column: id } }`), "spec.synthetic.tables[0].columns.c.args.table"},
+		{"foreignKey unknown table", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.nope, column: id } }`), "spec.synthetic.tables[0].columns.c.args.table"},
+		{"foreignKey own table", synDoc("crmsynth", `{ generator: foreignKey, args: { table: CRM.customers, column: id } }`), "spec.synthetic.tables[0].columns.c.args.table"},
+		{"foreignKey unique", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, unique: true } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
+		{"foreignKey fanOut number", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: 3 } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
+		{"foreignKey fanOut too large", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: { min: 0, max: 100001 } } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
+		{"foreignKey fanOut negative", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: { min: -1, max: 2 } } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
+		{"foreignKey fanOut min above max", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: { min: 3, max: 2 } } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
+		{"foreignKey orphanRate", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, orphanRate: 1.5 } }`), "spec.synthetic.tables[0].columns.c.args.orphanRate"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
 		{"leading digit", synDoc("1crm", `{ generator: "null" }`), "metadata.name"},
@@ -325,6 +343,12 @@ spec:
 		{"by in source rule", "    rules:\n      - match: { columns: [amount] }\n        generator: distribution\n        args: { by: [status] }\n" + table, "spec.synthetic.rules[0].args.by"},
 		{"by in table rule", table + "        rules:\n          - match: { types: [VARCHAR] }\n            generator: categorical\n            args: { by: [status] }\n", "spec.synthetic.tables[0].rules[0].args.by"},
 		{"by cycle", table + "        columns:\n          a: { generator: categorical, args: { by: [b] } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
+		{"foreignKey in source rule", "    rules:\n      - match: { columns: [\"*_id\"] }\n        generator: foreignKey\n        args: { table: crm.customers, column: id }\n" + table, "spec.synthetic.rules[0].generator"},
+		{"foreignKey in table rule", table + "        rules:\n          - match: { columns: [\"*_id\"] }\n            generator: foreignKey\n            args: { table: crm.customers, column: id }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"foreignKey cycle", "    tables:\n" +
+			"      - name: crm.a\n        size: { ratio: 0.2 }\n        columns:\n          b_id: { generator: foreignKey, args: { table: crm.b, column: id } }\n" +
+			"      - name: crm.b\n        size: { ratio: 0.2 }\n        columns:\n          a_id: { generator: foreignKey, args: { table: CRM.A, column: id } }\n",
+			"spec.synthetic.tables"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -503,5 +527,102 @@ func TestSyntheticColumnRefs(t *testing.T) {
 	}
 	if refs := (SyntheticColumn{Generator: GenFake, Args: map[string]any{"template": "{a}", "from": "b", "by": []any{"c"}}}).Refs(); refs != nil {
 		t.Errorf("fake refs = %v", refs)
+	}
+}
+
+func TestSyntheticTableOrder(t *testing.T) {
+	t.Parallel()
+	fk := func(table string) map[string]SyntheticColumn {
+		return map[string]SyntheticColumn{"p_id": {Generator: GenForeignKey, Args: map[string]any{"table": table, "column": "id"}}}
+	}
+	// orders and items come before their parents in the list.
+	spec := &SyntheticSpec{Tables: []SyntheticTable{
+		{Name: "crm.items", Columns: fk("crm.orders")},
+		{Name: "crm.orders", Columns: fk("CRM.Customers")},
+		{Name: "crm.other"},
+		{Name: "crm.customers"},
+	}}
+	order, err := SyntheticTableOrder(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(order); got != "[2 3 1 0]" {
+		t.Errorf("order = %s, want [2 3 1 0]", got)
+	}
+	// No foreignKey: list order.
+	plain := &SyntheticSpec{Tables: []SyntheticTable{{Name: "s.b"}, {Name: "s.a"}}}
+	if order, err := SyntheticTableOrder(plain); err != nil || fmt.Sprint(order) != "[0 1]" {
+		t.Errorf("order = %v, %v", order, err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		tables []SyntheticTable
+		want   string
+	}{
+		{"cycle", []SyntheticTable{
+			{Name: "crm.x", Columns: fk("crm.c")},
+			{Name: "crm.c", Columns: fk("crm.b")},
+			{Name: "crm.b", Columns: fk("crm.a")},
+			{Name: "crm.a", Columns: fk("crm.c")},
+		}, "foreignKey cycle between tables crm.a, crm.b, crm.c"},
+		{"self", []SyntheticTable{{Name: "crm.a", Columns: fk("crm.A")}}, "table crm.a: column p_id names its own table"},
+		{"unknown", []SyntheticTable{{Name: "crm.a", Columns: fk("crm.z")}}, "table crm.a: column p_id names table crm.z, which is not in spec.synthetic.tables"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for range 20 {
+				_, err := SyntheticTableOrder(&SyntheticSpec{Tables: tc.tables})
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("err = %v, want %q", err, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyntheticForeignKeyReasons(t *testing.T) {
+	t.Parallel()
+	doc := func(cols string) string {
+		return strings.Replace(synDoc("crmsynth", `{ generator: "null" }`), "          c: { generator: \"null\" }\n", cols, 1)
+	}
+	for _, tc := range []struct{ name, doc, reason string }{
+		{"own table", doc("          c: { generator: foreignKey, args: { table: crm.customers, column: id } }\n"),
+			"names its own table, a foreignKey must point to another table"},
+		{"unknown table", doc("          c: { generator: foreignKey, args: { table: crm.nope, column: id } }\n"),
+			"names table crm.nope, which is not in spec.synthetic.tables"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := decodeSyn(t, tc.doc)
+			var ve *ValidationError
+			if !errors.As(err, &ve) || ve.Reason != tc.reason {
+				t.Fatalf("err = %v, want reason %q", err, tc.reason)
+			}
+		})
+	}
+	cycle := `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crmsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: crm
+    seed: secret://env/SEED
+    tables:
+      - name: public.b
+        size: { ratio: 0.2 }
+        columns:
+          a_id: { generator: foreignKey, args: { table: public.a, column: id } }
+      - name: public.a
+        size: { ratio: 0.2 }
+        columns:
+          b_id: { generator: foreignKey, args: { table: public.b, column: id } }
+`
+	_, err := decodeSyn(t, cycle)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || ve.Field != "spec.synthetic.tables" || ve.Reason != "foreignKey cycle between tables public.a, public.b" {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -246,3 +246,19 @@ func TestPrintBuildWarningsOnce(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+
+func TestPrintBuildSummaryForeignKey(t *testing.T) {
+	r := &build.Report{BuildID: "b1", Result: build.ResultSucceeded, Tables: []build.TableReport{
+		{Name: "crm.customers", SourceRows: 5000, SyntheticRows: 1000},
+		{Name: "crm.orders", SourceRows: 15400, SyntheticRows: 3080, Columns: []build.ColumnReport{
+			{Name: "status"},
+			{Name: "customer_id", FanOut: &build.FanOutReport{Parent: "crm.customers.id", Parents: 1000, Scale: 1.0267, OrphanRows: 4}},
+		}},
+	}}
+	var buf bytes.Buffer
+	printBuildSummary(&buf, r)
+	want := "foreign key: crm.orders.customer_id -> crm.customers.id, scale 1.03, 4 orphan rows\n"
+	if !strings.Contains(buf.String(), want) || strings.Count(buf.String(), "foreign key:") != 1 {
+		t.Errorf("summary:\n%s\nwant line %q", buf.String(), want)
+	}
+}

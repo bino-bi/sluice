@@ -26,6 +26,8 @@ const (
 	PurposeJitter  = "jitter"
 	PurposeUnique  = "unique"
 	PurposeShuffle = "shuffle"
+	PurposeFanOut  = "fanout"
+	PurposeOrphans = "orphans"
 )
 
 // JitterBy is the jitter purpose of one by-group. key is the group key

@@ -175,6 +175,8 @@ type builder struct {
 	// exprs are the checked expression columns by lower-case table and
 	// column name.
 	exprs map[string]map[string]exprColumn
+	// keys holds the parent keys of the foreignKey columns.
+	keys *keyCache
 }
 
 func (b *builder) finish(result string, err error) {
@@ -233,8 +235,14 @@ func (b *builder) run(ctx context.Context) error {
 	if err := b.checkExpressions(ctx, conn); err != nil {
 		return err
 	}
+	// Parents first, so a child reads the final parent keys.
+	order, err := apitypes.SyntheticTableOrder(b.spec)
+	if err != nil {
+		return err
+	}
+	b.keys = newKeyCache(b.spec)
 	runner := &profile.Runner{Conn: conn, Log: b.log}
-	for i := range b.spec.Tables {
+	for _, i := range order {
 		if err := b.table(ctx, conn, runner, &b.spec.Tables[i]); err != nil {
 			return err
 		}
@@ -352,6 +360,9 @@ type column struct {
 	by *profile.GroupStats
 	// expr is set for an expression column.
 	expr *exprColumn
+	// keys are the parent keys of a foreignKey column. keyOut collects the
+	// staged values of a column that a foreignKey reads.
+	keys, keyOut *generate.KeySet
 }
 
 func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable) error {
@@ -389,7 +400,8 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	if err != nil {
 		return fail(err)
 	}
-	tr := TableReport{Name: t.Name, SourceRows: srcRows, SyntheticRows: rows, Ratio: ratio, Columns: []ColumnReport{}}
+	tr := TableReport{Name: t.Name, SourceRows: srcRows, SyntheticRows: rows, Ratio: ratio, Columns: []ColumnReport{},
+		DependsOn: tableDeps(b.spec, t)}
 
 	sibs := make(map[string]generate.Sibling, len(infos))
 	for i, info := range infos {
@@ -398,6 +410,9 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	cols := make([]*column, len(infos))
 	for i, info := range infos {
 		cols[i] = &column{info: info, counts: counts[i], tags: []string{}, snapType: snapshotType(info.Type, ""), sibs: sibs}
+		if b.keys.wanted(t.Name, info.Name) {
+			cols[i].keyOut = &generate.KeySet{}
+		}
 	}
 	var order []int
 	if rows > 0 {
@@ -423,8 +438,19 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 			return fail(err)
 		}
 	}
+	for _, c := range cols {
+		if c.keyOut != nil {
+			b.keys.put(t.Name, c)
+		}
+	}
 	if err := b.write(ctx, conn, schema, name, cols, rows > 0); err != nil {
 		return fail(err)
+	}
+	if rows > 0 {
+		target := outCatalog + "." + parser.QuoteIdent(schema) + "." + parser.QuoteIdent(name)
+		if err := b.verifyForeignKeys(ctx, conn, target, cols); err != nil {
+			return fail(err)
+		}
 	}
 	for _, c := range cols {
 		cr, err := b.columnReport(ctx, conn, pt, t, c, rows)
@@ -510,6 +536,7 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 		c.choice = choice
 	}
 	errs = append(errs, checkByBucket(cols)...)
+	errs = append(errs, b.checkForeignKeys(cols)...)
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
@@ -528,6 +555,7 @@ func (b *builder) genColumn(ctx context.Context, conn *sql.Conn, c *column, rows
 		Type:     typ,
 		Rows:     rows,
 		Siblings: c.sibs,
+		Keys:     c.keys,
 		Cast: func(v string) (any, error) {
 			var out any
 			if err := conn.QueryRowContext(ctx, "SELECT CAST(? AS "+typ+")", v).Scan(&out); err != nil {
@@ -612,6 +640,8 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 				Values:  stream(rng.PurposeValues),
 				Nulls:   stream(rng.PurposeNulls),
 				Shuffle: stream(rng.PurposeShuffle),
+				FanOut:  stream(rng.PurposeFanOut),
+				Orphans: stream(rng.PurposeOrphans),
 			}
 			if len(by) > 0 {
 				gen, err = generate.NewBy(choice.Generator, gcol, genProf, groups, choice.Args, streams)
@@ -685,6 +715,9 @@ func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, ord
 		for j, v := range row.Values {
 			if err := hashValue(b.hash, v); err != nil {
 				return fmt.Errorf("column %s: %w", cols[j].info.Name, err)
+			}
+			if k := cols[j].keyOut; k != nil && v != nil {
+				k.Values = append(k.Values, v)
 			}
 		}
 		return nil

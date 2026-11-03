@@ -259,6 +259,14 @@ func printBuildSummary(w io.Writer, r *build.Report) {
 		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\n", t.Name, t.SourceRows, t.SyntheticRows)
 	}
 	_ = tw.Flush()
+	for _, t := range r.Tables {
+		for _, c := range t.Columns {
+			if f := c.FanOut; f != nil {
+				_, _ = fmt.Fprintf(w, "foreign key: %s.%s -> %s, scale %s, %d orphan rows\n",
+					t.Name, c.Name, f.Parent, strconv.FormatFloat(f.Scale, 'f', 2, 64), f.OrphanRows)
+			}
+		}
+	}
 	printBuildWarnings(w, r)
 }
 
