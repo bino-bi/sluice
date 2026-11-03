@@ -22,6 +22,7 @@ The docs use one term for each concept.
 | Default deny | Sluice denies a query unless a policy allows every table it reads. |
 | Deny | Sluice refuses a query because of access control: `ACL_DENIED`. |
 | [Engine](../architecture/policy-engines.md) | The part of Sluice that decides on a query. |
+| [Fan-out](../operations/synthetic-data.md#foreign-keys) | The number of child rows that point to one parent row. |
 | Genesis | The secret that starts the hash chain. |
 | Grant | The right to run an approved query once. |
 | Hash chain | Each audit record holds the hash of the record before it. |

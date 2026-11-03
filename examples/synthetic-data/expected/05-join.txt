@@ -1,0 +1,12 @@
+{
+  "query_id": "<query-id>",
+  "columns": ["city", "orders"],
+  "rows": [
+    ["Bremen", 97],
+    ["Essen", 72],
+    ["Hamburg", 105],
+    ["Kiel", 126]
+  ],
+  "row_count": 4,
+  "truncated": false
+}

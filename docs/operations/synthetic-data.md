@@ -8,15 +8,21 @@ Sluice reads the source once, builds a profile of each column, and writes genera
 
 ## Example
 
-Goal: let developers query orders without access to the real orders.
+Goal: let developers query customers and orders without access to the real rows.
 
-The `shop` data source holds 2000 orders. `shopsynth` builds 20% of that from the profile of `shop`:
+The `shop` data source holds 400 customers and 2000 orders. `shopsynth` builds 20% of each table from the profile of `shop`:
 
 ```yaml
 --8<-- "examples/synthetic-data/policies.d/datasource-shopsynth.yaml:2"
 ```
 
-The seed is a [secret reference](server-config.md) to at least 16 bytes. A `DataClassification` tags `email` as `pii`, so the rule replaces it with fake addresses:
+- `customer_id` takes the keys of the synthetic customers. Each customer gets about as many orders as in the source.
+- `amount` follows the amounts of the same product in the source.
+- `shipped_on` is `placed_on` plus a gap like the source gaps.
+- `email` is built from the synthetic names of the same row.
+- No synthetic customer has the first and last name of a source customer.
+
+The seed is a [secret reference](server-config.md) to at least 16 bytes. A `DataClassification` tags `email` as `pii`. A tagged column needs a column entry or a rule, so the `template` entry is required:
 
 ```yaml
 --8<-- "examples/synthetic-data/policies.d/classification.yaml:2"
@@ -54,7 +60,7 @@ The same query on `shop` is denied:
 --8<-- "examples/synthetic-data/expected/02-query-source-denied.txt"
 ```
 
-What happened: the build profiled `shop.main.orders` and wrote 400 generated rows. The product `gift card` has 2 source rows, below `minGroupSize`, so it never appears. The shares of the other products stay close to the source.
+What happened: the build profiled `shop.main.customers` and `shop.main.orders` and wrote 80 customers and 400 orders. The product `gift card` has 2 source rows, below `minGroupSize`, so it never appears. The shares of the other products stay close to the source.
 
 ## Fields
 
@@ -87,8 +93,8 @@ A default column with fewer than `minGroupSize` non-null rows is written as `NUL
 
 `source` means "from the profile of the source column". Every generator also takes `nullRate` and `unique`:
 
-- `nullRate`: `source` (default) or a share from 0 to 1.
-- `unique: true`: no value repeats in the column. The build fails when the generator runs out of values.
+- `nullRate`: `source` (default) or a share from 0 to 1. For `template` and `expression` the default is 0.
+- `unique: true`: no value repeats in the column. The build fails when the generator runs out of values. `template`, `expression` and `foreignKey` do not take it.
 
 Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VARCHAR`.
 
@@ -120,8 +126,21 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 | `dateDistribution` | `DATE`, `TIMESTAMP` types | `granularity`, `keepWeekday`, `keepSeasonality` | Follows the dates of the source. |
 | `dateRange` | `DATE`, `TIMESTAMP` types | `min`, `max` (source bounds), `granularity` | Even spread between the bounds. |
 | `null` | Any | None | Always `NULL`. |
+| `foreignKey` | Integers, text, `UUID` | `table` and `column`, both required, `fanOut` (`source`), `orphanRate` (0) | Keys of a parent table. See [Foreign keys](#foreign-keys). |
+| `dateOffset` | `DATE`, `TIMESTAMP` types | `from`, required, `offset` (`source`) | The value of `from` plus a gap like the source gaps. |
+| `template` | Text | `template`, required, `lower` (`false`) | Text from other columns of the row, such as `{first_name}.{last_name}`. |
+| `expression` | Any except `BLOB`, `INTERVAL`, lists and structs | `sql`, required | A SQL expression over other columns of the row. See [Expressions](#expressions). |
+| `sourceVocabulary` | Text | `minWordCount` (20), `words` (`source`), `maxWords` (1000) | Frequent source words with their shares. |
+| `sentenceShape` | Text | `vocabulary` (`lorem`), `minWordCount`, `maxWords` | Sentences with the source counts, lengths and end marks. |
 
+- `distribution`, `categorical` and `dateDistribution` also take `by`. See [Groups with by](#groups-with-by).
 - `length` and `words` take `source`, a number, or `{min, max}`.
+- `fanOut` takes `source` or `{min, max}`: the number of child rows per parent, from 0 to 100000.
+- `orphanRate` takes `source` or a share from 0 to 1. It is the share of child rows with a key that has no parent.
+- `offset` takes `source` or `{min, max}` in days, from -36500 to 36500.
+- In a `template`, `{name}` inserts a column of the row. Write `{{` and `}}` for a brace. `lower: true` writes the result in lower case.
+- `sourceVocabulary` keeps a word only when it occurs `minWordCount` times and in `minGroupSize` rows. A word is a run of letters, so digits never appear. `maxWords` is the size of the word list.
+- `sentenceShape.vocabulary` is one of `lorem`, `en`, `de`, `source`. `minWordCount` and `maxWords` work only with `source`.
 - `fake.kind` is one of `name`, `first_name`, `last_name`, `email`, `phone`, `company`, `city`, `country`, `street`, `iban`, `uuid`.
 - `granularity` is one of `second`, `minute`, `hour`, `day`, `month`, `year`.
 - Quote the keys `"Y"` and `"N"` in `weighted.values`. YAML reads them as booleans otherwise.
@@ -138,10 +157,73 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 | `extremeJitter` | `{min: 0.01, max: 0.02}` | Moves the lowest and highest value by a random share of the range. `off` turns it off. |
 | `spikeWarning` | `true` | Warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
 | `strictTags` | `[pii]` | A column with one of these tags needs a column entry or a rule. The default generator is not enough. |
+| `rejectExactMatches` | Off | Columns that together must not equal a source row. Sluice draws matching rows again. |
 
 - Columns with fewer than `minGroupSize` non-null rows fail the build, unless the generator needs no profile. Examples: `constant`, `sequence`, `range`, `weighted`, `regex`, `uuid`, `redact`, `null`.
 - A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Set `clipOutliers` to remove it.
 - `strictTags` is set only on the data source. Tags come from `DataClassification` objects on the source catalog.
+- `rejectExactMatches` is set only on a table. It takes 1 to 32 column names.
+
+`rejectExactMatches` compares the listed columns of each synthetic row with every source row:
+
+- Values compare in the snapshot types. `NULL` equals `NULL`.
+- The build fails when more than 1% of the rows match. Then the columns are too predictable together.
+- Otherwise Sluice draws the listed columns of the matching rows again, and the columns that read them. It checks again, up to 10 rounds. Rows that still match fail the build.
+- Source rows stay inside DuckDB. Errors and the report hold only counts and column names.
+
+## Relations
+
+`foreignKey`, `dateOffset`, `template`, `expression` and `by` read other columns. Set them only under `tables[].columns`. A rule matches columns in many tables, so a column name in its args could point to a different column in each.
+
+Every synthetic order of the example points to a synthetic customer. Count the orders per city through a join:
+
+```bash
+--8<-- "examples/synthetic-data/steps/05-join.sh"
+```
+
+```json
+--8<-- "examples/synthetic-data/expected/05-join.txt"
+```
+
+What happened: all 400 orders find their customer, so no row has the city `NULL`.
+
+### Order
+
+- Sluice builds a parent table before the tables that point to it. Other tables keep the list order. The report lists the tables in build order.
+- Inside a row, Sluice draws a column after the columns it reads.
+- A `foreignKey` to its own table is refused. Tables or columns that depend on each other in a cycle are refused.
+- `sluice config validate` finds these errors. A column name that the source table does not have fails the build.
+
+### Foreign keys
+
+- The parent column needs unique values: the generator `sequence` or `uuid`, or `unique: true`.
+- Parent and child column hold the same kind of key: both integers, or both text or `UUID`.
+- `fanOut: source` keeps the fan-out of the source: the number of child rows per parent. A fan-out that fewer than `minGroupSize` parents share is merged into a near one.
+- When the table sizes do not fit the source fan-out, Sluice scales it. The report warns when the scale is below 0.5 or above 2.
+- Orphan keys are new values, not source keys.
+- After the write, Sluice checks that every key except the orphans finds its parent. The snapshot has no `FOREIGN KEY` constraint.
+- Sluice keeps the parent keys in memory during the build, about 50 bytes per parent row.
+
+### Groups with by
+
+`by` names 1 to 3 columns. The generator then uses the profile of the rows that have the same values in these columns. The example uses the amounts of the same product.
+
+- A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
+- Values compare as text. The `by` column needs a generator that keeps source values, such as `categorical`. The report warns when most rows find no group. `bucket` on a `by` column is refused.
+- A group needs `minGroupSize` rows. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
+- `NULL` is a group value of its own.
+- The spike check runs per group. The report counts groups with a spike, but names none.
+
+### Expressions
+
+`expression` computes a column with a DuckDB SQL expression over other columns of the same row, for example `quantity * unit_price`. DuckDB computes it when Sluice writes the snapshot, in the snapshot types.
+
+- Allowed: constants, columns, operators, `CASE`, `CAST` and scalar functions that give the same result each time.
+- Refused: subqueries, table names, aggregates, window functions, table functions, settings, and functions such as `random()` or `now()`.
+- An expression cannot read another `expression` column. `template`, `dateOffset`, `by` and `rejectExactMatches` cannot name one either.
+- `sql` holds at most 1024 bytes, without `;`, comments or line breaks. `sluice config validate` checks only this. The full check runs at build start, before Sluice reads the source.
+
+A `template` is `NULL` when a column it reads is `NULL`. A `dateOffset` is `NULL` when `from` is `NULL`. With `offset: source`, the gap keeps its sign: when no source gap is negative, no synthetic gap is either.
 
 ## Build and publish
 
@@ -196,18 +278,32 @@ The same spec, seed and source data give the same rows on the same CPU architect
 ```
 
 - `DISTANCE` compares source and synthetic data. `ks` is the largest gap between the two distributions. `tv` is the share of rows that would need another value.
+- For `foreignKey`, `tv` compares the fan-outs. For `dateOffset`, `ks` compares the gaps to `from`.
 - Medians of dates are in days since 1970-01-01. Medians of timestamps are in seconds.
+- A spike in a `by` group gives one warning line with the number of such groups.
 - The source `min` and `max` in the JSON are not the real extremes. They hold the `minGroupSize`-th value from each end, or the `clipOutliers` bounds.
 - The report holds no source rows, but it holds counts and statistics of the source. Keep it private.
 
+The JSON has these fields for relations. Each one is left out when it does not apply.
+
+| Field | Meaning |
+|---|---|
+| `tables[].depends_on` | The parent tables of the `foreignKey` columns. |
+| `tables[].exact_matches` | `columns`, `matched_rows` in the first round, `redrawn_rows` in all rounds, and `rounds`. |
+| `columns[].depends_on` | The columns that this column reads. |
+| `columns[].by` | `columns`, `groups`, `dropped_groups`, `fallback_rows` that used the profile of the whole column, and `spike_groups`. |
+| `columns[].fan_out` | The `parent` column, the number of `parents`, the `scale` and the `orphan_rows`. |
+| `columns[].words` | The number of kept words of `sourceVocabulary` or `sentenceShape`. |
+
+`sluice synth build` also prints one line for each `rejectExactMatches` table and each `foreignKey` column.
+
 ## Limits
 
-- The privacy settings make rare values and extremes hard to find. They are no formal privacy guarantee.
+- The privacy settings make rare values and extremes hard to find. They are no formal privacy guarantee. `rejectExactMatches` stops exact copies, not near copies. `sourceVocabulary` keeps a name that many rows hold.
+- `by` uses at most 100 groups. Rows of other groups use the profile of the whole column.
 - `sluice synth build` writes no record to the audit log. It prints the record on stderr and stores it in the report.
-- A running server picks up a snapshot from `sluice synth build` only after a restart. Use the admin API to build in the server.
-- Each build keeps only the current and the previous snapshot. Two CLI builds against a running server delete the file it serves. Restart the server after CLI builds into its folder.
-- Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec.
-- The seed value is not part of the `stale` check. Build again after you change the seed value.
+- A running server picks up a snapshot from `sluice synth build` only after a restart. Each build keeps only the current and the previous snapshot, so two CLI builds delete the file a running server serves. Use the admin API to build in the server.
+- Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec. The seed value is not part of the `stale` check, so build again after you change it.
 
 ## See also
 

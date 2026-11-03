@@ -7,6 +7,6 @@ spec:
   rules:
     - resources:
         catalogs: ["shop"]
-        tables: ["orders"]
+        tables: ["customers"]
         columns: ["email"]
       tags: ["pii"]

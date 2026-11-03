@@ -10,13 +10,33 @@ spec:
     seed: secret://env/SHOP_SYNTH_SEED
     privacy:
       minGroupSize: 5
-    rules:
-      - match: { tags: [pii] }
-        generator: fake
-        args: { kind: email }
     tables:
       - name: main.orders
         size: { ratio: 0.2 }
         columns:
           id: { generator: sequence }
+          customer_id:
+            generator: foreignKey
+            args: { table: main.customers, column: id }
           product: { generator: categorical }
+          amount:
+            generator: distribution
+            args: { by: [product] }
+          shipped_on:
+            generator: dateOffset
+            args: { from: placed_on }
+      - name: main.customers
+        size: { ratio: 0.2 }
+        privacy:
+          rejectExactMatches: [first_name, last_name]
+        columns:
+          id: { generator: sequence }
+          first_name:
+            generator: fake
+            args: { kind: first_name, keepInitial: true }
+          last_name:
+            generator: fake
+            args: { kind: last_name, keepInitial: true }
+          email:
+            generator: template
+            args: { template: "{first_name}.{last_name}@example.org", lower: true }
