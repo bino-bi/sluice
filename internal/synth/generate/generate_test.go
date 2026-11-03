@@ -631,7 +631,9 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	names[apitypes.GenExpression] = true
 	// foreignKey needs the parent keys; foreignkey_test.go covers it.
 	names[apitypes.GenForeignKey] = true
-	if len(registry) != 32 || len(names) != 32 {
-		t.Errorf("registry has %d generators, cases cover %d, want 32", len(registry), len(names))
+	// correlated needs a group; copula_test.go covers it.
+	names[apitypes.GenCorrelated] = true
+	if len(registry) != 33 || len(names) != 33 {
+		t.Errorf("registry has %d generators, cases cover %d, want 33", len(registry), len(names))
 	}
 }

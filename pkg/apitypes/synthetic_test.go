@@ -87,6 +87,9 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"sourceVocabulary-0":  `{ generator: sourceVocabulary }`,
 		"sentenceShape":       `{ generator: sentenceShape, args: { vocabulary: de } }`,
 		"sentenceShape-src":   `{ generator: sentenceShape, args: { vocabulary: source, minWordCount: 1000000, maxWords: 1 } }`,
+		// A lone correlated column fails, so these add a second column b.
+		"correlated":      "{ generator: correlated, args: { with: [B], decimals: 2 } }\n          b: { generator: correlated }",
+		"correlated-both": "{ generator: correlated, args: { with: [b], integer: true, smooth: false, nullRate: 0.1 } }\n          b: { generator: correlated, args: { with: [c] } }",
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -427,6 +430,8 @@ spec:
 		{"duplicate rejectExactMatches", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, A] }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
 		{"rejectExactMatches names expression", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, Total] }\n" +
 			"        columns:\n          total: { generator: expression, args: { sql: \"a\" } }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
+		{"rejectExactMatches names correlated", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, B] }\n" +
+			"        columns:\n          a: { generator: distribution }\n          b: { generator: correlated, args: { with: [c] } }\n          c: { generator: correlated }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
 		{"table noise", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { noise: { epsilon: 1 } }\n", "spec.synthetic.tables[0].privacy.noise"},
 		{"column noise", table + "        columns:\n          a: { generator: distribution, privacy: { noise: { epsilon: 1 } } }\n", "spec.synthetic.tables[0].columns.a.privacy.noise"},
 		{"epsilon 0", "    privacy: { noise: { epsilon: 0 } }\n" + table, "spec.synthetic.privacy.noise.epsilon"},
@@ -727,5 +732,65 @@ spec:
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Field != "spec.synthetic.tables" || ve.Reason != "foreignKey cycle between tables public.a, public.b" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSyntheticCorrelatedErrors(t *testing.T) {
+	t.Parallel()
+	base := `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: crmsynth
+spec:
+  type: synthetic
+  synthetic:
+    source: crm
+    seed: secret://env/SEED
+    tables:
+      - name: crm.customers
+        size: { ratio: 0.2 }
+`
+	const cols = "spec.synthetic.tables[0].columns."
+	nine := "        columns:\n          c1: { generator: correlated, args: { with: [c2, c3, c4, c5, c6, c7, c8] } }\n"
+	for i := 2; i <= 8; i++ {
+		nine += fmt.Sprintf("          c%d: { generator: correlated }\n", i)
+	}
+	nine += "          c9: { generator: correlated, args: { with: [C1] } }\n"
+	cases := []struct {
+		name, body, field, reason string
+	}{
+		{"rule", "        rules:\n          - match: { columns: [age] }\n            generator: correlated\n",
+			"spec.synthetic.tables[0].rules[0].generator", "correlated is only allowed under tables[].columns"},
+		{"unknown", "        columns:\n          a: { generator: correlated, args: { with: [b, Zz] } }\n          b: { generator: correlated }\n",
+			cols + "a.args.with", `column "Zz" is not listed under columns`},
+		{"not correlated", "        columns:\n          a: { generator: correlated, args: { with: [B] } }\n          b: { generator: distribution }\n",
+			cols + "a.args.with", `column "B" does not use correlated`},
+		{"itself", "        columns:\n          a: { generator: correlated, args: { with: [A] } }\n",
+			cols + "a.args.with", "names the column itself"},
+		{"twice", "        columns:\n          a: { generator: correlated, args: { with: [b, B] } }\n          b: { generator: correlated }\n",
+			cols + "a.args.with", "names column B twice"},
+		{"not a list", "        columns:\n          a: { generator: correlated, args: { with: b } }\n",
+			cols + "a.args.with", "must be a list of 1 to 7 column names"},
+		{"lone", "        columns:\n          a: { generator: correlated }\n          b: { generator: correlated, args: { with: [c] } }\n          c: { generator: correlated }\n",
+			cols + "a", "correlated needs at least one other column"},
+		{"nine", nine, cols + "c1", "a correlated group has at most 8 columns"},
+		{"unique", "        columns:\n          a: { generator: correlated, args: { with: [b], unique: true } }\n          b: { generator: correlated }\n",
+			cols + "a.args.unique", "not allowed for correlated"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Repeat because a map-ordered walk passes a single run by chance.
+			for range 20 {
+				_, err := decodeSyn(t, base+tc.body)
+				var ve *ValidationError
+				if !errors.As(err, &ve) {
+					t.Fatalf("want ValidationError, got %v", err)
+				}
+				if ve.Field != tc.field || ve.Reason != tc.reason {
+					t.Fatalf("got %q: %q, want %q: %q", ve.Field, ve.Reason, tc.field, tc.reason)
+				}
+			}
+		})
 	}
 }

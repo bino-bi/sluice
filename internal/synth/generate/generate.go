@@ -69,6 +69,8 @@ type Streams struct {
 	Values, Nulls, Shuffle *rng.Stream
 	// FanOut and Orphans are read by foreignKey only.
 	FanOut, Orphans *rng.Stream
+	// Copula is the joint draw of a correlated column, nil for others.
+	Copula *CopulaSlot
 }
 
 // Generator is one generator type.
@@ -130,6 +132,7 @@ var registry = map[apitypes.SyntheticGenerator]Generator{
 	apitypes.GenForeignKey:       foreignKey{},
 	apitypes.GenSourceVocabulary: sourceVocabulary{},
 	apitypes.GenSentenceShape:    sentenceShape{},
+	apitypes.GenCorrelated:       correlated{},
 }
 
 // Lookup returns the generator of a name.

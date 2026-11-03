@@ -247,7 +247,8 @@ func (c SyntheticColumn) ForeignKey() (table, column string, ok bool) {
 
 // checkTableRelations checks the refs between the columns entries of one
 // table: no column reads itself or an expression column, the graph has no
-// cycle, and privacy.rejectExactMatches names no expression column. A ref
+// cycle, and privacy.rejectExactMatches names no expression or correlated
+// column. A ref
 // to a column without an entry is a leaf; the build checks that it exists.
 // names are the columns keys, sorted. tables are the lower-case names of
 // every table of the spec, for foreignKey.
@@ -293,6 +294,11 @@ func checkTableRelations(t SyntheticTable, path string, names []string, tables m
 		for _, c := range t.Privacy.RejectExactMatches {
 			if n, ok := byLower[strings.ToLower(c)]; ok && t.Columns[n].Generator == GenExpression {
 				return path + ".privacy.rejectExactMatches", fmt.Sprintf("names expression column %s, which is computed after the check", n)
+			}
+			// A redraw asks for an earlier row again, and the copula only
+			// moves forward.
+			if n, ok := byLower[strings.ToLower(c)]; ok && t.Columns[n].Generator == GenCorrelated {
+				return path + ".privacy.rejectExactMatches", fmt.Sprintf("names correlated column %s, which cannot be drawn again", n)
 			}
 		}
 	}
@@ -423,4 +429,85 @@ func findCycle(deps map[string][]string) []string {
 			}
 		}
 	}
+}
+
+// maxCorrelated caps the columns of one correlated group.
+const maxCorrelated = 8
+
+// withArg is correlated.with: a list of 1 to maxCorrelated-1 column
+// names, unique ignoring case.
+func withArg(v any) error {
+	bad := fmt.Errorf("must be a list of 1 to %d column names", maxCorrelated-1)
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 || len(list) > maxCorrelated-1 {
+		return bad
+	}
+	seen := map[string]bool{}
+	for _, e := range list {
+		s, ok := e.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return bad
+		}
+		if seen[strings.ToLower(s)] {
+			return fmt.Errorf("names column %s twice", s)
+		}
+		seen[strings.ToLower(s)] = true
+	}
+	return nil
+}
+
+// checkCorrelated checks the correlated columns of one table: with names
+// other correlated columns of the same columns map, and every group (a
+// connected component of the undirected with edges) has 2 to
+// maxCorrelated columns. names are the columns keys, sorted.
+func checkCorrelated(t SyntheticTable, path string, names []string) (string, string) {
+	byLower := map[string]string{}
+	for _, n := range names {
+		byLower[strings.ToLower(n)] = n
+	}
+	parent := map[string]string{}
+	var find func(string) string
+	find = func(x string) string {
+		if p := parent[x]; p != x {
+			parent[x] = find(p)
+		}
+		return parent[x]
+	}
+	var members []string
+	for _, name := range names {
+		if t.Columns[name].Generator == GenCorrelated {
+			members = append(members, name)
+			parent[name] = name
+		}
+	}
+	for _, name := range members {
+		list, _ := t.Columns[name].Args["with"].([]any)
+		for _, e := range list {
+			w, _ := e.(string)
+			field := path + ".columns." + name + ".args.with"
+			other, ok := byLower[strings.ToLower(w)]
+			switch {
+			case strings.EqualFold(w, name):
+				return field, "names the column itself"
+			case !ok:
+				return field, fmt.Sprintf("column %q is not listed under columns", w)
+			case t.Columns[other].Generator != GenCorrelated:
+				return field, fmt.Sprintf("column %q does not use correlated", w)
+			}
+			parent[find(name)] = find(other)
+		}
+	}
+	size := map[string]int{}
+	for _, name := range members {
+		size[find(name)]++
+	}
+	for _, name := range members {
+		switch n := size[find(name)]; {
+		case n < 2:
+			return path + ".columns." + name, "correlated needs at least one other column"
+		case n > maxCorrelated:
+			return path + ".columns." + name, fmt.Sprintf("a correlated group has at most %d columns", maxCorrelated)
+		}
+	}
+	return "", ""
 }

@@ -545,6 +545,10 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 			errs = append(errs, err)
 			continue
 		}
+		if choice.Generator == apitypes.GenCorrelated {
+			errs = append(errs, fmt.Errorf("column %s: correlated is not supported yet", c.info.Name))
+			continue
+		}
 		c.choice = choice
 	}
 	errs = append(errs, checkByBucket(cols)...)

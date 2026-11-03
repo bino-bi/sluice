@@ -162,3 +162,38 @@ func TestJitterBy(t *testing.T) {
 		t.Error("group jitter keys are not independent")
 	}
 }
+
+func TestLaplace(t *testing.T) {
+	s := For(testSeed, "n", "t", "c", PurposeNoise)
+	const n, b = 200000, 3.0
+	sum, abs := 0.0, 0.0
+	for range n {
+		x := s.Laplace(b)
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			t.Fatalf("Laplace = %v", x)
+		}
+		sum += x
+		abs += math.Abs(x)
+	}
+	if mean := sum / n; math.Abs(mean) > 0.05 {
+		t.Errorf("mean = %v, want about 0", mean)
+	}
+	if mabs := abs / n; math.Abs(mabs-b) > 0.05 {
+		t.Errorf("mean of |x| = %v, want about %v", mabs, b)
+	}
+}
+
+func TestLaplaceGolden(t *testing.T) {
+	if runtime.GOARCH != "amd64" {
+		t.Skip("golden values are pinned on amd64; math.Log may differ in the last bit elsewhere")
+	}
+	s := For(testSeed, "n", "t", "c", PurposeNoise)
+	var got []string
+	for range 3 {
+		got = append(got, fmt.Sprintf("%b", s.Laplace(2)))
+	}
+	want := []string{"5401326786968670p-51", "-7654007596795950p-53", "8770192379963669p-53"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("values:\n got %q\nwant %q", got, want)
+	}
+}

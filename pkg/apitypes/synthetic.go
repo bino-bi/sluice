@@ -194,6 +194,7 @@ const (
 	GenForeignKey       SyntheticGenerator = "foreignKey"
 	GenSourceVocabulary SyntheticGenerator = "sourceVocabulary"
 	GenSentenceShape    SyntheticGenerator = "sentenceShape"
+	GenCorrelated       SyntheticGenerator = "correlated"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -284,6 +285,9 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 		}
 		return "", nil
 	}},
+	// A redraw for unique asks the copula for the same row again, which
+	// gives the same value.
+	GenCorrelated: {args: map[string]argCheck{"with": withArg, "decimals": decimalsArg, "integer": boolArg, "smooth": boolArg}, noUnique: true},
 }
 
 // minWordCountArg and maxWordsArg are the source vocabulary args.
@@ -414,6 +418,9 @@ func validateSynthetic(d *DataSource) error {
 			}
 		}
 		if field, reason := checkTableRelations(t, path, cols, tables); field != "" {
+			return fail(field, reason)
+		}
+		if field, reason := checkCorrelated(t, path, cols); field != "" {
 			return fail(field, reason)
 		}
 		for j, r := range t.Rules {
@@ -565,6 +572,9 @@ func checkRule(r SyntheticRule, path string) (string, string) {
 				return path + ".match." + f.name, fmt.Sprintf("pattern %q is not valid", g)
 			}
 		}
+	}
+	if r.Generator == GenCorrelated {
+		return path + ".generator", "correlated is only allowed under tables[].columns"
 	}
 	if relationGenerators[r.Generator] {
 		return path + ".generator", fmt.Sprintf("%s refers to other columns, set it under tables[].columns", r.Generator)

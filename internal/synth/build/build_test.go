@@ -905,6 +905,16 @@ func TestNoiseNotSupportedYet(t *testing.T) {
 	}
 }
 
+func TestCorrelatedNotSupportedYet(t *testing.T) {
+	spec := baseSpec()
+	spec.Tables[0].Columns["score"] = apitypes.SyntheticColumn{Generator: apitypes.GenCorrelated, Args: map[string]any{"with": []any{"revenue"}}}
+	spec.Tables[0].Columns["revenue"] = apitypes.SyntheticColumn{Generator: apitypes.GenCorrelated}
+	_, err := run(t, opts{spec: spec})
+	if err == nil || !strings.Contains(err.Error(), "column score: correlated is not supported yet") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // smallFixture writes a source with a nested ENUM and small integer
 // ranges. rare has one row with 17, the rest is 0 to 9.
 func smallFixture(t *testing.T) string {

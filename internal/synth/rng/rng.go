@@ -28,6 +28,8 @@ const (
 	PurposeShuffle = "shuffle"
 	PurposeFanOut  = "fanout"
 	PurposeOrphans = "orphans"
+	PurposeCopula  = "copula"
+	PurposeNoise   = "noise"
 )
 
 // JitterBy is the jitter purpose of one by-group. key is the group key
@@ -104,4 +106,12 @@ func (s *Stream) Norm() float64 {
 	// into FMA instructions, which would change the last bit on arm64.
 	r := math.Sqrt(float64(-2 * math.Log(u1)))
 	return float64(r * math.Cos(float64(2*math.Pi*u2)))
+}
+
+// Laplace returns a Laplace(0, b) number: the difference of two
+// exponential draws. 1 - Float64() is in (0, 1], so the logs are finite.
+func (s *Stream) Laplace(b float64) float64 {
+	u1 := 1 - s.Float64()
+	u2 := 1 - s.Float64()
+	return float64(b * (math.Log(u2) - math.Log(u1)))
 }
