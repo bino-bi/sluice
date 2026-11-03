@@ -54,6 +54,24 @@ type TableReport struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 	// ExactMatches is set for a table with privacy.rejectExactMatches.
 	ExactMatches *ExactMatchReport `json:"exact_matches,omitempty"`
+	// Correlations has one entry per correlated group.
+	Correlations []CorrelationReport `json:"correlations,omitempty"`
+}
+
+// CorrelationReport is one correlated group of a TableReport. The
+// matrices are Spearman rank correlations in Columns order.
+type CorrelationReport struct {
+	Columns []string `json:"columns"`
+	// Cells is B_i per member; pair (a, b) uses a B_a x B_b table.
+	Cells []int `json:"cells"`
+	// Shrinkage is the share of the identity mixed in so that the
+	// Gaussian correlation has a Cholesky factor.
+	Shrinkage float64 `json:"shrinkage"`
+	// Source is the rho the generator used.
+	Source [][]float64 `json:"source"`
+	// Synthetic is the rho of the snapshot, nil when not measured.
+	Synthetic [][]float64 `json:"synthetic"`
+	MaxDiff   float64     `json:"max_diff"`
 }
 
 // ExactMatchReport is the rejectExactMatches part of a TableReport. It

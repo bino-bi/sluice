@@ -230,6 +230,45 @@ type Column struct {
 	// k rows. MergedBins counts the ordinal merges.
 	Suppressed int64
 	MergedBins int
+
+	// axisQ is the quantile grid on the source axis before jitter, kept
+	// for CellEdges. It never leaves the package.
+	axisQ []float64
+}
+
+// maxCells caps the correlation cells per axis.
+const maxCells = 20
+
+// Cells is the number of correlation cells per axis: min(20, S), with S
+// the steps of the quantile grid. It is 0 without a grid.
+func (c *Column) Cells() int {
+	if len(c.axisQ) < 2 {
+		return 0
+	}
+	return min(maxCells, len(c.axisQ)-1)
+}
+
+// CellEdges returns the n-1 inner edges at j/n on the source axis,
+// interpolated on the quantile grid. With n <= S a cell spans at least one
+// grid step, so it holds about k rows or more. Ties break this: a tied
+// value on an edge can leave a cell with fewer than k rows. Only rho leaves
+// the package. The edges are source aggregates: the builder passes them
+// back to Correlation, and they must not reach a log, an error or the
+// report.
+func (c *Column) CellEdges(n int) []float64 {
+	q := c.axisQ
+	s := len(q) - 1
+	if s < 1 || n < 1 {
+		return nil
+	}
+	edges := make([]float64, n-1)
+	for j := range edges {
+		x := float64(float64(j+1) / float64(n) * float64(s))
+		i := min(int(x), s-1)
+		t := x - float64(i)
+		edges[j] = q[i] + float64(t*(q[i+1]-q[i]))
+	}
+	return edges
 }
 
 // Case style indexes into Column.CaseStyles.

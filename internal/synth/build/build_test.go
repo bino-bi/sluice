@@ -34,7 +34,8 @@ const (
 // fixtureSQL builds crm.customers with fixed formulas (plan 14). gender:
 // X 3 rows (rare), D 397, W 10 000, M 9 600. revenue has two values far
 // above the rest (a spike). score is a permutation of 0 to 1999.9.
-// extraCol adds one more column at the end.
+// extraCol adds one more column at the end. crm.people is the table of
+// the correlation tests (plan 11).
 func fixtureSQL(extraCol bool) string {
 	extra := ""
 	if extraCol {
@@ -60,6 +61,15 @@ SELECT
   ['alpha beta', 'gamma delta epsilon', 'zeta'][i % 3 + 1] AS notes,
   CAST((i * 7919) % 20000 AS DOUBLE) / 10 AS score,
   [i % 5] AS attrs` + extra + `
+FROM range(20000) r(i);
+CREATE TABLE crm.people AS SELECT
+  CAST(20 + (i * 7919) % 50 AS INTEGER) AS age,
+  CAST(1000 * (20 + (i * 7919) % 50) + (i * 104729) % 20000 AS DOUBLE) AS income,
+  CAST(100 - (20 + (i * 7919) % 50) + (i * 31) % 10 AS DOUBLE) AS risk,
+  CAST((i * 48271) % 10007 AS DOUBLE) AS noise_col,
+  DATE '2000-01-01' + CAST((20 + (i * 7919) % 50) * 30 + i % 30 AS INTEGER) AS joined,
+  CASE WHEN i < 2 THEN 'gold' WHEN i < 4002 THEN 'silver' ELSE 'bronze' END AS tier,
+  CAST(CASE WHEN i = 0 THEN 990000 ELSE (i * 7919) % 5000 END AS DOUBLE) AS bonus
 FROM range(20000) r(i);
 `
 }
@@ -673,9 +683,9 @@ func TestEmptyTable(t *testing.T) {
 		t.Errorf("rows = %d", n)
 	}
 	src := scalar[string](t, db, "SELECT string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) "+
-		"FROM information_schema.columns WHERE table_catalog = 'src' AND column_name <> 'gender'")
+		"FROM information_schema.columns WHERE table_catalog = 'src' AND table_name = 'customers' AND column_name <> 'gender'")
 	syn := scalar[string](t, db, "SELECT string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) "+
-		"FROM information_schema.columns WHERE table_catalog = 'syn' AND column_name <> 'gender'")
+		"FROM information_schema.columns WHERE table_catalog = 'syn' AND table_name = 'customers' AND column_name <> 'gender'")
 	if src != syn {
 		t.Errorf("types differ:\n%s\n%s", src, syn)
 	}
@@ -901,16 +911,6 @@ func TestNoiseNotSupportedYet(t *testing.T) {
 	spec.Privacy.Noise = &apitypes.SyntheticNoise{Epsilon: 1}
 	_, err := run(t, opts{spec: spec})
 	if err == nil || !strings.Contains(err.Error(), "privacy.noise is not supported yet") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestCorrelatedNotSupportedYet(t *testing.T) {
-	spec := baseSpec()
-	spec.Tables[0].Columns["score"] = apitypes.SyntheticColumn{Generator: apitypes.GenCorrelated, Args: map[string]any{"with": []any{"revenue"}}}
-	spec.Tables[0].Columns["revenue"] = apitypes.SyntheticColumn{Generator: apitypes.GenCorrelated}
-	_, err := run(t, opts{spec: spec})
-	if err == nil || !strings.Contains(err.Error(), "column score: correlated is not supported yet") {
 		t.Fatalf("err = %v", err)
 	}
 }

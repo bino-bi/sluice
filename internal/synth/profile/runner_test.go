@@ -48,8 +48,22 @@ SELECT
   CAST(1 + (i % 41) / 10 AS DECIMAL(2,1)) AS rating,
   CASE WHEN i = 0 THEN DATE 'infinity' ELSE DATE '2020-01-01' + CAST(i % 365 AS INTEGER) END AS valid_to
 FROM range(2000) r(i);
+CREATE TABLE src.crm.people AS ` + peopleSelect + `;
 SET TimeZone = 'UTC';
 `
+
+// peopleSelect is crm.people of plan 11: income rises with age, risk
+// falls with it, noise_col is independent. tier gold has 2 rows, bonus
+// one far value.
+const peopleSelect = `SELECT
+  CAST(20 + (i * 7919) % 50 AS INTEGER) AS age,
+  CAST(1000 * (20 + (i * 7919) % 50) + (i * 104729) % 20000 AS DOUBLE) AS income,
+  CAST(100 - (20 + (i * 7919) % 50) + (i * 31) % 10 AS DOUBLE) AS risk,
+  CAST((i * 48271) % 10007 AS DOUBLE) AS noise_col,
+  DATE '2000-01-01' + CAST((20 + (i * 7919) % 50) * 30 + i % 30 AS INTEGER) AS joined,
+  CASE WHEN i < 2 THEN 'gold' WHEN i < 4002 THEN 'silver' ELSE 'bronze' END AS tier,
+  CAST(CASE WHEN i = 0 THEN 990000 ELSE (i * 7919) % 5000 END AS DOUBLE) AS bonus
+FROM range(20000) r(i)`
 
 func newRunner(t *testing.T) (*Runner, *bytes.Buffer) {
 	t.Helper()

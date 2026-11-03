@@ -299,6 +299,12 @@ func printReport(w io.Writer, r *build.Report) {
 		}
 	}
 	_ = tw.Flush()
+	for _, t := range r.Tables {
+		for _, g := range t.Correlations {
+			_, _ = fmt.Fprintf(w, "correlated %s: %s max_diff %s shrinkage %s\n", t.Name, strings.Join(g.Columns, ", "),
+				strconv.FormatFloat(g.MaxDiff, 'f', 3, 64), strconv.FormatFloat(g.Shrinkage, 'f', 2, 64))
+		}
+	}
 	printBuildWarnings(w, r)
 }
 

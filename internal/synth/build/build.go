@@ -422,8 +422,9 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 		}
 	}
 	var order []int
+	var groups []*corrGroup
 	if rows > 0 {
-		if err := b.resolve(ctx, conn, runner, t, pt, resolver, cols, rows); err != nil {
+		if groups, err = b.resolve(ctx, conn, runner, t, pt, resolver, cols, rows); err != nil {
 			return fail(err)
 		}
 		for _, c := range cols {
@@ -463,6 +464,11 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 		if err := b.verifyForeignKeys(ctx, conn, target, cols); err != nil {
 			return fail(err)
 		}
+		for _, g := range groups {
+			if err := b.syntheticCorrelation(ctx, conn, runner, t, schema, name, cols, g); err != nil {
+				return fail(err)
+			}
+		}
 	}
 	for _, c := range cols {
 		cr, err := b.columnReport(ctx, conn, pt, t, c, rows)
@@ -470,6 +476,9 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 			return fail(err)
 		}
 		tr.Columns = append(tr.Columns, cr)
+	}
+	for _, g := range groups {
+		tr.Correlations = append(tr.Correlations, g.rep)
 	}
 	b.rep.Tables = append(b.rep.Tables, tr)
 	return nil
@@ -530,9 +539,10 @@ func snapshotType(dataType string, g apitypes.SyntheticGenerator) string {
 
 // resolve picks the generator of every column, then reads its profile
 // and builds its value source. Choice errors of all columns come back
-// together, so one run shows every missing choice.
+// together, so one run shows every missing choice. It returns the
+// correlated groups.
 func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable,
-	pt profile.Table, resolver *generate.Resolver, cols []*column, rows int64) error {
+	pt profile.Table, resolver *generate.Resolver, cols []*column, rows int64) ([]*corrGroup, error) {
 	var errs []error
 	for _, c := range cols {
 		if b.in.Tagger != nil {
@@ -545,23 +555,31 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 			errs = append(errs, err)
 			continue
 		}
-		if choice.Generator == apitypes.GenCorrelated {
-			errs = append(errs, fmt.Errorf("column %s: correlated is not supported yet", c.info.Name))
-			continue
-		}
 		c.choice = choice
 	}
 	errs = append(errs, checkByBucket(cols)...)
 	errs = append(errs, b.checkForeignKeys(cols)...)
 	if len(errs) > 0 {
-		return errors.Join(errs...)
+		return nil, errors.Join(errs...)
 	}
 	for _, c := range cols {
+		// A correlated column is prepared with its group.
+		if c.choice.Generator == apitypes.GenCorrelated {
+			continue
+		}
 		if err := b.prepare(ctx, conn, runner, t, pt, c, rows); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	var groups []*corrGroup
+	for _, members := range correlatedGroups(cols) {
+		g, err := b.prepareGroup(ctx, conn, runner, t, pt, cols, members, rows)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, nil
 }
 
 func (b *builder) genColumn(ctx context.Context, conn *sql.Conn, c *column, rows int64) generate.Column {

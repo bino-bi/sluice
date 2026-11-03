@@ -322,6 +322,7 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 		out.Lo = max(out.Lo, 0)
 		out.Hi = max(out.Hi, out.Lo)
 	}
+	out.axisQ = append([]float64(nil), quantiles...)
 	for i, q := range quantiles {
 		quantiles[i] = mapLinear(q, lo, hi, out.Lo, out.Hi)
 	}

@@ -276,3 +276,17 @@ func TestPrintBuildSummaryExactMatches(t *testing.T) {
 		t.Errorf("summary:\n%s\nwant line %q", buf.String(), want)
 	}
 }
+
+// Test 19, group part.
+func TestPrintReportCorrelated(t *testing.T) {
+	r := &build.Report{BuildID: "b1", Result: build.ResultSucceeded, Tables: []build.TableReport{
+		{Name: "crm.people", Columns: []build.ColumnReport{{Name: "age"}, {Name: "income"}},
+			Correlations: []build.CorrelationReport{{Columns: []string{"age", "income"}, Cells: []int{20, 20}, Shrinkage: 0.01, MaxDiff: 0.0123}}},
+	}}
+	var buf bytes.Buffer
+	printReport(&buf, r)
+	want := "correlated crm.people: age, income max_diff 0.012 shrinkage 0.01\n"
+	if !strings.Contains(buf.String(), want) || strings.Count(buf.String(), "correlated ") != 1 {
+		t.Errorf("report:\n%s\nwant line %q", buf.String(), want)
+	}
+}
