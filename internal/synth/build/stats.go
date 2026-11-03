@@ -68,6 +68,7 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 	}
 	p := c.prof
 	cr.SuppressedValues, cr.MergedBins = p.Suppressed, p.MergedBins
+	cr.Words = len(p.Vocabulary.Values)
 	if f, ok := c.gen.(interface{ Fallbacks() int64 }); ok {
 		cr.Fallbacks = f.Fallbacks()
 	}

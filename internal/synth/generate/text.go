@@ -116,3 +116,136 @@ type nullGen struct{}
 
 func (nullGen) Next(RowCtx) (any, error) { return nil, nil }
 func (nullGen) Pool() int64              { return -1 }
+
+// vocabNeeds is the vocabulary part of sourceVocabulary and of
+// sentenceShape with vocabulary source.
+func vocabNeeds(args Args) profile.Needs {
+	return profile.Needs{
+		Parts:        profile.PartVocabulary,
+		MinWordCount: args.intOr("minWordCount", 20),
+		MaxWords:     args.intOr("maxWords", 1000),
+	}
+}
+
+type sourceVocabulary struct{}
+
+func (sourceVocabulary) Check(col Column, _ Args) error {
+	return text(col, apitypes.GenSourceVocabulary)
+}
+
+func (sourceVocabulary) Needs(_ Column, args Args) profile.Needs {
+	n := vocabNeeds(args)
+	if args.span("words").source {
+		n.Parts |= profile.PartWordCounts
+	}
+	return n
+}
+
+func (sourceVocabulary) New(_ Column, p *profile.Column, args Args, s Streams) (ColumnGen, error) {
+	lp, err := newLengthPicker(args.span("words"), p.WordCounts)
+	if err != nil {
+		return nil, err
+	}
+	words, err := newNominalPicker(p.Vocabulary)
+	if err != nil {
+		return nil, err
+	}
+	return &vocabGen{words: lp, vocab: words, r: s.Values}, nil
+}
+
+// vocabGen draws words by their source weight, so the frequency shape
+// of the words stays.
+type vocabGen struct {
+	words *lengthPicker
+	vocab *nominalPicker
+	r     *rng.Stream
+}
+
+func (g *vocabGen) Pool() int64 { return -1 }
+
+func (g *vocabGen) Next(RowCtx) (any, error) {
+	ws := make([]string, max(g.words.next(g.r), 1))
+	for i := range ws {
+		ws[i] = g.vocab.next(g.r)
+	}
+	return capitalize(strings.Join(ws, " ")) + ".", nil
+}
+
+type sentenceShape struct{}
+
+func (sentenceShape) Check(col Column, _ Args) error { return text(col, apitypes.GenSentenceShape) }
+
+func (sentenceShape) Needs(_ Column, args Args) profile.Needs {
+	n := profile.Needs{}
+	if args.strOr("vocabulary", "lorem") == "source" {
+		n = vocabNeeds(args)
+	}
+	n.Parts |= profile.PartSentences | profile.PartSentenceWords | profile.PartTerminators
+	return n
+}
+
+func (sentenceShape) New(_ Column, p *profile.Column, args Args, s Streams) (ColumnGen, error) {
+	sentences, err := newLengthPicker(span{source: true}, p.Sentences)
+	if err != nil {
+		return nil, err
+	}
+	words, err := newLengthPicker(span{source: true}, p.SentenceWords)
+	if err != nil {
+		return nil, err
+	}
+	g := &sentenceGen{sentences: sentences, words: words, r: s.Values}
+	if name := args.strOr("vocabulary", "lorem"); name == "source" {
+		if g.source, err = newNominalPicker(p.Vocabulary); err != nil {
+			return nil, err
+		}
+	} else {
+		g.list = vocabulary(name)
+	}
+	// No kept terminator ends every sentence with ".", which is no source
+	// value.
+	if len(p.Terminators.Values) > 0 {
+		if g.ends, err = newNominalPicker(p.Terminators); err != nil {
+			return nil, err
+		}
+	}
+	return g, nil
+}
+
+// sentenceGen keeps the sentence count, the words per sentence and the
+// terminators of the source. Words come uniform from a list vocabulary
+// or by weight from the source vocabulary.
+type sentenceGen struct {
+	sentences, words *lengthPicker
+	list             []string
+	source           *nominalPicker
+	ends             *nominalPicker
+	r                *rng.Stream
+}
+
+func (g *sentenceGen) Pool() int64 { return -1 }
+
+func (g *sentenceGen) Next(RowCtx) (any, error) {
+	out := make([]string, max(g.sentences.next(g.r), 1))
+	for i := range out {
+		ws := make([]string, max(g.words.next(g.r), 1))
+		for j := range ws {
+			if g.source != nil {
+				ws[j] = g.source.next(g.r)
+			} else {
+				ws[j] = g.list[g.r.IntN(len(g.list))]
+			}
+		}
+		end := "."
+		if g.ends != nil {
+			end = g.ends.next(g.r)
+		}
+		out[i] = capitalize(strings.Join(ws, " ")) + end
+	}
+	return strings.Join(out, " "), nil
+}
+
+// capitalize upper-cases the first letter of s.
+func capitalize(s string) string {
+	first, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(first)) + s[size:]
+}

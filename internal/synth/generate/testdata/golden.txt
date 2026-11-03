@@ -29,6 +29,10 @@ uuid: 4d1d225a-380d-4588-8565-75e4ab59a026 | cab739bb-b9df-405c-b6d7-8af5ccf3728
 uuid7: 0173aa57-7c2a-7607-8bca-9322778890fe | 0173aa57-7c2b-7c21-b140-3309e2fcfdfa | 0173aa57-7c2c-7ef3-90a7-fe541bdf4340 | 0173aa57-7c2d-7c74-adcc-0f102076cc51 | 0173aa57-7c2e-7e95-b67c-018126469da5 | 0173aa57-7c2f-7c63-bc47-b009375a0927
 prefixKeep: DE35jia6 | DEdWo58U | AT5wgFyJ | DEbabd4N | DET9kvlXXiH1 | DEnrwz
 loremText: Quis ratione tempore. | Beatae eos sunt. | Molestiae error esse. | Cupidatat rem voluptatem. | Aliquid esse porro. | Possimus.
+sourceVocabulary: Delivery invoice delivery. | Delivery delivery delivery. | Delivery. | Invoice. | Delivery. | Paid.
+sourceVocabulary-fixed: Invoice invoice delivery. | Invoice delivery delivery delivery. | Delivery invoice. | Invoice invoice invoice delivery. | Delivery invoice delivery invoice. | Delivery paid.
+sentenceShape: Weg vor. | Des geben? Aus als? Gehen hier. | Klein kommen bringen haus geben kommen. | Geben freund. Nur gut. Meinen kurz kennen hoch dort grund. | Sprechen aus. | Vor freund.
+sentenceShape-source: Delivery invoice? Invoice delivery invoice delivery invoice invoice. Delivery invoice. | Delivery paid? Paid invoice invoice delivery invoice paid. Invoice invoice. | Delivery invoice delivery paid invoice paid. | Invoice invoice. | Invoice delivery invoice invoice invoice invoice. | Invoice invoice invoice invoice delivery invoice. Delivery paid. Delivery delivery.
 randomText: quo ab q | repellen | enim magnam | quaerat | totam | tempor fugit
 redact: [redacted] | [redacted] | [redacted] | [redacted] | [redacted] | [redacted]
 dateDistribution: 2020-12-11T00:00:00Z | 2020-03-23T00:00:00Z | 2020-03-27T00:00:00Z | 2020-03-20T00:00:00Z | 2020-03-09T00:00:00Z | 2020-03-09T00:00:00Z

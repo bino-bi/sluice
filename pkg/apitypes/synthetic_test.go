@@ -83,6 +83,10 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"foreignKey":          `{ generator: foreignKey, args: { table: CRM.Orders, column: id } }`,
 		"foreignKey-args":     `{ generator: foreignKey, args: { table: crm.orders, column: Id, fanOut: { min: 0, max: 100000 }, orphanRate: 0.05, nullRate: source } }`,
 		"foreignKey-source":   `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: source, orphanRate: source } }`,
+		"sourceVocabulary":    `{ generator: sourceVocabulary, args: { minWordCount: 2, words: { min: 3, max: 9 }, maxWords: 10000, nullRate: source } }`,
+		"sourceVocabulary-0":  `{ generator: sourceVocabulary }`,
+		"sentenceShape":       `{ generator: sentenceShape, args: { vocabulary: de } }`,
+		"sentenceShape-src":   `{ generator: sentenceShape, args: { vocabulary: source, minWordCount: 1000000, maxWords: 1 } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -274,6 +278,12 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"foreignKey fanOut negative", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: { min: -1, max: 2 } } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
 		{"foreignKey fanOut min above max", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, fanOut: { min: 3, max: 2 } } }`), "spec.synthetic.tables[0].columns.c.args.fanOut"},
 		{"foreignKey orphanRate", synDoc("crmsynth", `{ generator: foreignKey, args: { table: crm.orders, column: id, orphanRate: 1.5 } }`), "spec.synthetic.tables[0].columns.c.args.orphanRate"},
+		{"sourceVocabulary minWordCount 1", synDoc("crmsynth", `{ generator: sourceVocabulary, args: { minWordCount: 1 } }`), "spec.synthetic.tables[0].columns.c.args.minWordCount"},
+		{"sourceVocabulary maxWords 0", synDoc("crmsynth", `{ generator: sourceVocabulary, args: { maxWords: 0 } }`), "spec.synthetic.tables[0].columns.c.args.maxWords"},
+		{"sourceVocabulary words 0", synDoc("crmsynth", `{ generator: sourceVocabulary, args: { words: 0 } }`), "spec.synthetic.tables[0].columns.c.args.words"},
+		{"sentenceShape vocabulary", synDoc("crmsynth", `{ generator: sentenceShape, args: { vocabulary: fr } }`), "spec.synthetic.tables[0].columns.c.args.vocabulary"},
+		{"sentenceShape minWordCount lorem", synDoc("crmsynth", `{ generator: sentenceShape, args: { vocabulary: lorem, minWordCount: 5 } }`), "spec.synthetic.tables[0].columns.c.args.minWordCount"},
+		{"sentenceShape maxWords default", synDoc("crmsynth", `{ generator: sentenceShape, args: { maxWords: 5 } }`), "spec.synthetic.tables[0].columns.c.args.maxWords"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
 		{"leading digit", synDoc("1crm", `{ generator: "null" }`), "metadata.name"},

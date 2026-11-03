@@ -90,8 +90,11 @@ type ColumnReport struct {
 	// By is set for a column with by.
 	By *ByReport `json:"by,omitempty"`
 	// FanOut is set for a foreignKey column.
-	FanOut   *FanOutReport `json:"fan_out,omitempty"`
-	Warnings []string      `json:"warnings"`
+	FanOut *FanOutReport `json:"fan_out,omitempty"`
+	// Words is the number of kept source vocabulary words, never the
+	// words.
+	Words    int      `json:"words,omitempty"`
+	Warnings []string `json:"warnings"`
 }
 
 // FanOutReport is the foreignKey part of a ColumnReport.

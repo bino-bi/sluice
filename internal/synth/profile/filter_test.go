@@ -103,13 +103,19 @@ func TestMergeOrdinal(t *testing.T) {
 		{"edge", []Bin{pt(1, 2), pt(2, 7)}, []Bin{pt(2, 9)}, 1},
 		{"chain", []Bin{pt(1, 1), pt(2, 1), pt(3, 1), pt(4, 2)}, []Bin{pt(2, 5)}, 3},
 		{"single below k stays", []Bin{pt(1, 2)}, []Bin{pt(1, 2)}, 0},
-		{"empty bins vanish", []Bin{{0, 1, 6}, {1, 2, 0}, {2, 3, 0}, {3, 4, 7}}, []Bin{{0, 1, 6}, {3, 4, 7}}, 2},
+		{"empty bins vanish", []Bin{{0, 1, 6, 0}, {1, 2, 0, 0}, {2, 3, 0, 0}, {3, 4, 7, 0}}, []Bin{{0, 1, 6, 0}, {3, 4, 7, 0}}, 2},
+		// Rows is the unit: 20 sentences from 2 rows are below k.
+		{"rows", []Bin{{1, 1, 20, 2}, {2, 2, 9, 9}, {3, 3, 4, 6}}, []Bin{{2, 2, 29, 11}, {3, 3, 4, 6}}, 1},
 	}
 	for _, c := range cases {
 		got, n := mergeOrdinal(c.in, 5)
 		if !reflect.DeepEqual(got, c.want) || n != c.merges {
 			t.Errorf("%s: got %v (%d merges), want %v (%d)", c.name, got, n, c.want, c.merges)
 		}
+	}
+	_, spans, _ := mergeSpans([]Bin{pt(1, 1), pt(2, 9), pt(3, 1), pt(4, 9)}, 5)
+	if want := [][2]int{{0, 2}, {3, 3}}; !reflect.DeepEqual(spans, want) {
+		t.Errorf("spans = %v, want %v", spans, want)
 	}
 }
 

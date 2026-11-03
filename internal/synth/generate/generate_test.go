@@ -77,15 +77,19 @@ func textProfile() *profile.Column {
 		return out
 	}
 	p := &profile.Column{
-		Counts:      profile.Counts{Rows: 1000, NonNull: 1000, Distinct: 400},
-		TopValues:   nom("M", 500, "W", 400, "D", 97),
-		Initials:    nom("S", 300, "M", 200, "K", 100),
-		Patterns:    nom("AA-9999", 400, "Aa-99a", 100),
-		Prefixes:    nom("DE", 300, "AT", 100),
-		Lengths:     []profile.Bin{{Lo: 6, Hi: 6, Count: 200}, {Lo: 8, Hi: 8, Count: 300}, {Lo: 12, Hi: 12, Count: 100}},
-		WordCounts:  []profile.Bin{{Lo: 1, Hi: 1, Count: 100}, {Lo: 3, Hi: 3, Count: 200}},
-		CharClasses: profile.CharClasses{Upper: true, Lower: true, Digit: true},
-		CaseStyles:  [4]int64{100, 200, 300, 0},
+		Counts:        profile.Counts{Rows: 1000, NonNull: 1000, Distinct: 400},
+		TopValues:     nom("M", 500, "W", 400, "D", 97),
+		Initials:      nom("S", 300, "M", 200, "K", 100),
+		Patterns:      nom("AA-9999", 400, "Aa-99a", 100),
+		Prefixes:      nom("DE", 300, "AT", 100),
+		Lengths:       []profile.Bin{{Lo: 6, Hi: 6, Count: 200}, {Lo: 8, Hi: 8, Count: 300}, {Lo: 12, Hi: 12, Count: 100}},
+		WordCounts:    []profile.Bin{{Lo: 1, Hi: 1, Count: 100}, {Lo: 3, Hi: 3, Count: 200}},
+		CharClasses:   profile.CharClasses{Upper: true, Lower: true, Digit: true},
+		CaseStyles:    [4]int64{100, 200, 300, 0},
+		Vocabulary:    nom("invoice", 90, "delivery", 60, "paid", 20),
+		Sentences:     []profile.Bin{{Lo: 1, Hi: 1, Count: 300}, {Lo: 3, Hi: 3, Count: 100}},
+		SentenceWords: []profile.Bin{{Lo: 2, Hi: 2, Count: 400, Rows: 250}, {Lo: 6, Hi: 6, Count: 200, Rows: 150}},
+		Terminators:   nom(".", 500, "?", 100),
 	}
 	p.TopValues.Rest = 3
 	return p
@@ -159,6 +163,10 @@ func cases() []genCase {
 		{"uuid7", apitypes.GenUUID, col("uid7", "VARCHAR"), Args{"version": 7.0}, nil},
 		{"prefixKeep", apitypes.GenPrefixKeep, col("iban2", "VARCHAR"), Args{"prefixLength": 2.0}, textProfile()},
 		{"loremText", apitypes.GenLoremText, col("notes", "VARCHAR"), nil, textProfile()},
+		{"sourceVocabulary", apitypes.GenSourceVocabulary, col("notes3", "VARCHAR"), nil, textProfile()},
+		{"sourceVocabulary-fixed", apitypes.GenSourceVocabulary, col("notes4", "VARCHAR"), Args{"words": map[string]any{"min": 2.0, "max": 4.0}}, textProfile()},
+		{"sentenceShape", apitypes.GenSentenceShape, col("notes5", "VARCHAR"), Args{"vocabulary": "de"}, textProfile()},
+		{"sentenceShape-source", apitypes.GenSentenceShape, col("notes6", "VARCHAR"), Args{"vocabulary": "source"}, textProfile()},
 		{"randomText", apitypes.GenRandomText, col("notes2", "VARCHAR"), Args{"vocabulary": "lorem"}, textProfile()},
 		{"redact", apitypes.GenRedact, col("x", "VARCHAR"), nil, nil},
 		{"dateDistribution", apitypes.GenDateDistribution, col("birth", "DATE"), Args{"keepWeekday": true, "keepSeasonality": true}, dateProfile()},
@@ -623,7 +631,7 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	names[apitypes.GenExpression] = true
 	// foreignKey needs the parent keys; foreignkey_test.go covers it.
 	names[apitypes.GenForeignKey] = true
-	if len(registry) != 30 || len(names) != 30 {
-		t.Errorf("registry has %d generators, cases cover %d, want 30", len(registry), len(names))
+	if len(registry) != 32 || len(names) != 32 {
+		t.Errorf("registry has %d generators, cases cover %d, want 32", len(registry), len(names))
 	}
 }

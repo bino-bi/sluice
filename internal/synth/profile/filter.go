@@ -32,14 +32,33 @@ func gridSteps(n, k int64) int {
 // its rows to the neighbor with more rows (the lower one on a tie). The
 // neighbor keeps its own value or range, so the rare value never shows.
 // The smallest bin is merged first (the lowest one on a tie). It
-// returns the bins left and the number of merges.
+// returns the bins left and the number of merges. Bins with Rows set
+// are merged on Rows, so the unit is the source row; merged Rows are
+// summed, which can overcount when a row sits in several bins.
 func mergeOrdinal(bins []Bin, k int64) ([]Bin, int) {
+	out, _, merges := mergeSpans(bins, k)
+	return out, merges
+}
+
+// mergeSpans is mergeOrdinal that also returns, for every bin left, the
+// index range [first, last] of the input bins merged into it.
+func mergeSpans(bins []Bin, k int64) ([]Bin, [][2]int, int) {
 	out := append([]Bin(nil), bins...)
+	spans := make([][2]int, len(out))
+	for i := range spans {
+		spans[i] = [2]int{i, i}
+	}
+	weight := func(b Bin) int64 {
+		if b.Rows > 0 {
+			return b.Rows
+		}
+		return b.Count
+	}
 	merges := 0
 	for len(out) > 1 {
 		i := -1
 		for j, b := range out {
-			if b.Count < k && (i < 0 || b.Count < out[i].Count) {
+			if weight(b) < k && (i < 0 || weight(b) < weight(out[i])) {
 				i = j
 			}
 		}
@@ -47,14 +66,19 @@ func mergeOrdinal(bins []Bin, k int64) ([]Bin, int) {
 			break
 		}
 		to := i - 1
-		if i == 0 || (i+1 < len(out) && out[i+1].Count > out[i-1].Count) {
+		if i == 0 || (i+1 < len(out) && weight(out[i+1]) > weight(out[i-1])) {
 			to = i + 1
 		}
+		if out[i].Rows > 0 || out[to].Rows > 0 {
+			out[to].Rows = weight(out[to]) + weight(out[i])
+		}
 		out[to].Count += out[i].Count
+		spans[to] = [2]int{min(spans[to][0], spans[i][0]), max(spans[to][1], spans[i][1])}
 		out = append(out[:i], out[i+1:]...)
+		spans = append(spans[:i], spans[i+1:]...)
 		merges++
 	}
-	return out, merges
+	return out, spans, merges
 }
 
 // jitterBounds applies 4.2 step 7 and returns lo' and hi'. The draws

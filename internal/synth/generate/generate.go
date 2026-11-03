@@ -128,6 +128,8 @@ var registry = map[apitypes.SyntheticGenerator]Generator{
 	apitypes.GenDateOffset:       dateOffset{},
 	apitypes.GenExpression:       expression{},
 	apitypes.GenForeignKey:       foreignKey{},
+	apitypes.GenSourceVocabulary: sourceVocabulary{},
+	apitypes.GenSentenceShape:    sentenceShape{},
 }
 
 // Lookup returns the generator of a name.

@@ -175,6 +175,8 @@ const (
 	GenDateOffset       SyntheticGenerator = "dateOffset"
 	GenExpression       SyntheticGenerator = "expression"
 	GenForeignKey       SyntheticGenerator = "foreignKey"
+	GenSourceVocabulary SyntheticGenerator = "sourceVocabulary"
+	GenSentenceShape    SyntheticGenerator = "sentenceShape"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -249,7 +251,29 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenExpression:       {args: map[string]argCheck{"sql": sqlArg}, required: []string{"sql"}, noUnique: true},
 	GenForeignKey: {args: map[string]argCheck{"table": tableRefArg, "column": columnArg, "fanOut": fanOutArg, "orphanRate": rateArg},
 		required: []string{"table", "column"}, noUnique: true},
+	GenSourceVocabulary: {args: map[string]argCheck{"minWordCount": minWordCountArg, "words": lengthArg(1, 10000), "maxWords": maxWordsArg}},
+	GenSentenceShape: {args: map[string]argCheck{
+		"vocabulary":   enumArg("lorem", "en", "de", "source"),
+		"minWordCount": minWordCountArg,
+		"maxWords":     maxWordsArg,
+	}, cross: func(a map[string]any) (string, error) {
+		if a["vocabulary"] == "source" {
+			return "", nil
+		}
+		for _, k := range []string{"maxWords", "minWordCount"} {
+			if _, ok := a[k]; ok {
+				return k, errors.New("only with vocabulary source")
+			}
+		}
+		return "", nil
+	}},
 }
+
+// minWordCountArg and maxWordsArg are the source vocabulary args.
+var (
+	minWordCountArg = intArg(2, 1000000)
+	maxWordsArg     = intArg(1, 10000)
+)
 
 // sharedArgs are valid on every generator.
 var sharedArgs = map[string]argCheck{"nullRate": rateArg, "unique": boolArg}

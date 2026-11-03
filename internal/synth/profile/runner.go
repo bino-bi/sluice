@@ -25,7 +25,12 @@ var (
 	ErrNoGroups    = errors.New("no group has minGroupSize rows, use a generator without a profile")
 	ErrKind        = errors.New("profile part does not fit the column type")
 	ErrQuery       = errors.New("profile query failed")
+	ErrNoWords     = errors.New("no word occurs minWordCount times in minGroupSize rows")
 )
+
+// sentenceRe matches one sentence: a run without ., ! and ? that holds
+// at least one other character than a space.
+const sentenceRe = `[^.!?]*[^.!?\s][^.!?]*`
 
 // Runner runs profile queries on one connection of the builder instance.
 // The connection must have TimeZone set to UTC, so weekdays and months
@@ -132,6 +137,14 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 		}},
 		{PartCharClasses, func() error { return p.charClasses(&out.CharClasses) }},
 		{PartFanOut, func() error { return p.fanOut(t, *needs.Parent, out) }},
+		{PartVocabulary, func() error { return p.vocabulary(needs, out) }},
+		{PartSentences, func() error {
+			return p.ordinal(&out.Sentences, &out.MergedBins, "len(regexp_extract_all("+p.x+", '"+sentenceRe+"'))", "trim("+p.x+") <> ''")
+		}},
+		{PartSentenceWords, func() error { return p.sentenceWords(&out.SentenceWords, &out.MergedBins) }},
+		{PartTerminators, func() error {
+			return p.listNominal(&out.Terminators, &out.Suppressed, "regexp_extract_all(sluice_x, '"+sentenceRe+"([.!?])', 1)", "true", 0, 0)
+		}},
 		{PartCaseStyles, func() error { return p.caseStyles(&out.CaseStyles) }},
 	}
 	for _, st := range steps {
@@ -196,7 +209,7 @@ func (p *colRun) check(needs Needs) error {
 	parts := needs.Parts
 	bad := parts&numberParts != 0 && !p.kind.Numeric() ||
 		parts&PartOffset != 0 && (p.kind != KindDate && p.kind != KindTimestamp || needs.From == "") ||
-		parts&textParts != 0 && p.kind != KindText ||
+		parts&(textParts|wordParts) != 0 && p.kind != KindText ||
 		parts&dateParts != 0 && p.kind != KindDate && p.kind != KindTimestamp ||
 		parts&PartTopValues != 0 && p.kind == KindOther ||
 		parts&PartFanOut != 0 && (needs.Parent == nil || p.kind != KindInteger && p.kind != KindText && p.kind != KindUUID)
@@ -473,6 +486,118 @@ func (p *colRun) fanOut(t Table, ref Ref, out *Column) error {
 	if orphans >= p.k {
 		out.OrphanRate = float64(orphans) / float64(total)
 	}
+	return nil
+}
+
+// textRows is a CTE that numbers the non-null rows, with the column as
+// sluice_x. The numbering is not stable between runs, but count(DISTINCT
+// rn) per group is.
+func (p *colRun) textRows() string {
+	return "r AS (SELECT row_number() OVER () AS rn, " + p.x + " AS sluice_x FROM " + p.from + " WHERE " + p.x + " IS NOT NULL)"
+}
+
+// listNominal reads a nominal part whose values come from the list
+// expression list over sluice_x, many per row. A value is kept when it
+// occurs minCount times in at least k rows; where filters the values v.
+// Only the number of dropped values leaves DuckDB. limit 0 means no
+// limit. No kept value gives an empty dst.
+func (p *colRun) listNominal(dst *Nominal, suppressed *int64, list, where string, minCount int64, limit int) error {
+	if limit <= 0 {
+		limit = math.MaxInt32
+	}
+	q := "WITH " + p.textRows() + ", " +
+		"e AS (SELECT rn, unnest(" + list + ") AS v FROM r), " +
+		"g AS (SELECT v, count(*) AS c, count(DISTINCT rn) AS n FROM e WHERE " + where + " GROUP BY v), " +
+		"kept AS (SELECT v, c FROM g WHERE c >= ? AND n >= ? ORDER BY c DESC, v LIMIT ?) " +
+		"SELECT false AS summary, v, c, 0 AS dropped FROM kept " +
+		"UNION ALL SELECT true, NULL, coalesce(sum(c), 0), count(*) FILTER (WHERE c < ? OR n < ?) FROM g " +
+		"ORDER BY summary, c DESC, v"
+	var total, dropped, kept int64
+	var values []Value
+	err := p.query(q, []any{minCount, p.k, int64(limit), minCount, p.k}, func(rows *sql.Rows) error {
+		var summary bool
+		var v sql.NullString
+		var c, d int64
+		if err := rows.Scan(&summary, &v, &c, &d); err != nil {
+			return err
+		}
+		if summary {
+			total, dropped = c, d
+			return nil
+		}
+		values = append(values, Value{V: v.String, Count: c})
+		kept += c
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	*dst = Nominal{Values: values, Rest: total - kept}
+	*suppressed += dropped
+	return nil
+}
+
+// vocabulary reads the words of a text column (plan 1.11). Words are
+// letter runs only, so ids and amounts in free text never become words.
+func (p *colRun) vocabulary(needs Needs, out *Column) error {
+	err := p.listNominal(&out.Vocabulary, &out.Suppressed, "regexp_extract_all(lower(sluice_x), '\\p{L}+')",
+		"length(v) BETWEEN 2 AND 40", int64(needs.MinWordCount), needs.MaxWords)
+	if err != nil {
+		return err
+	}
+	if len(out.Vocabulary.Values) == 0 {
+		return p.fail(ErrNoWords)
+	}
+	return nil
+}
+
+// sentenceWords reads the words per sentence histogram. A bin counts
+// sentences, and one row can have sentences in many bins, so the merge
+// works on distinct rows: after each pass the rows of every merged bin
+// are counted again in DuckDB, and a bin still below k merges again.
+func (p *colRun) sentenceWords(dst *[]Bin, merged *int) error {
+	w := "WITH " + p.textRows() + ", " +
+		"s AS (SELECT rn, unnest(regexp_extract_all(sluice_x, '" + sentenceRe + "')) AS s FROM r), " +
+		"w AS (SELECT rn, len(regexp_extract_all(s, '\\S+')) AS m FROM s) "
+	var bins []Bin
+	var ranges [][2]int64
+	err := p.query(w+"SELECT m, count(*), count(DISTINCT rn) FROM w GROUP BY m ORDER BY m", nil, func(rows *sql.Rows) error {
+		var m, c, n int64
+		if err := rows.Scan(&m, &c, &n); err != nil {
+			return err
+		}
+		bins = append(bins, Bin{Lo: float64(m), Hi: float64(m), Count: c, Rows: n})
+		ranges = append(ranges, [2]int64{m, m})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for len(bins) > 0 {
+		out, spans, n := mergeSpans(bins, p.k)
+		*merged += n
+		next := make([][2]int64, len(out))
+		short := false
+		for j, sp := range spans {
+			next[j] = [2]int64{ranges[sp[0]][0], ranges[sp[1]][1]}
+			if sp[0] == sp[1] {
+				continue
+			}
+			q := w + "SELECT count(DISTINCT rn) FROM w WHERE m BETWEEN ? AND ?"
+			if err := p.query(q, []any{next[j][0], next[j][1]}, func(rows *sql.Rows) error { return rows.Scan(&out[j].Rows) }); err != nil {
+				return err
+			}
+			short = short || out[j].Rows < p.k
+		}
+		bins, ranges = out, next
+		if !short || len(bins) == 1 {
+			break
+		}
+	}
+	if len(bins) == 0 || len(bins) == 1 && bins[0].Rows < p.k {
+		return p.fail(ErrTooFewRows)
+	}
+	*dst = bins
 	return nil
 }
 

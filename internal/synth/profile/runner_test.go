@@ -294,7 +294,7 @@ func TestTextProfile(t *testing.T) {
 	all := Needs{Parts: PartLengths | PartInitials | PartCharClasses | PartCaseStyles | PartPrefixes, PrefixLength: 1}
 	c := mustProfile(t, r, "name", all, Effective())
 	// 'Zq' (length 2) merges into length 4 ('Anna'), the only neighbor.
-	wantLengths := []Bin{{4, 4, 501}, {5, 5, 999}, {6, 6, 500}}
+	wantLengths := []Bin{{4, 4, 501, 0}, {5, 5, 999, 0}, {6, 6, 500, 0}}
 	if !reflect.DeepEqual(c.Lengths, wantLengths) || c.MergedBins != 1 {
 		t.Errorf("lengths %v, merges %d", c.Lengths, c.MergedBins)
 	}

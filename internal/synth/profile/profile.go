@@ -53,11 +53,22 @@ const (
 	// Needs.Parent, as an ordinal histogram over the parent keys, and the
 	// share of rows whose key has no parent.
 	PartFanOut
+	// PartVocabulary reads the words (letter runs, lower case) that occur
+	// Needs.MinWordCount times in k rows, at most Needs.MaxWords.
+	PartVocabulary
+	// PartSentences reads the sentence count histogram of a text column.
+	PartSentences
+	// PartSentenceWords reads the words per sentence histogram. Its bins
+	// count sentences; Bin.Rows counts the rows they come from.
+	PartSentenceWords
+	// PartTerminators reads the sentence ends ., ! and ?.
+	PartTerminators
 )
 
 const (
 	numberParts = PartRange | PartStats | PartQuantiles | PartLogStats | PartBins
 	textParts   = PartLengths | PartInitials | PartCharClasses | PartCaseStyles | PartPatterns | PartPrefixes | PartWordCounts
+	wordParts   = PartVocabulary | PartSentences | PartSentenceWords | PartTerminators
 	dateParts   = PartWeekdays | PartMonths
 )
 
@@ -81,6 +92,10 @@ type Needs struct {
 	KeepSign bool
 	// Parent is the parent key column of PartFanOut, in the same catalog.
 	Parent *Ref
+	// MinWordCount and MaxWords are the word threshold and cap of
+	// PartVocabulary.
+	MinWordCount int
+	MaxWords     int
 }
 
 // Ref names a column of another table of the same catalog.
@@ -202,6 +217,15 @@ type Column struct {
 	FanOut     []Bin
 	OrphanRate float64
 
+	// Vocabulary holds the kept words with their occurrence counts.
+	Vocabulary Nominal
+	// Sentences has one bin per sentence count, SentenceWords one bin per
+	// word count of a sentence (both Lo == Hi). Terminators holds ".",
+	// "!" and "?" by sentence count; it is empty when none is kept.
+	Sentences     []Bin
+	SentenceWords []Bin
+	Terminators   Nominal
+
 	// Suppressed counts the nominal groups removed for having fewer than
 	// k rows. MergedBins counts the ordinal merges.
 	Suppressed int64
@@ -234,6 +258,9 @@ type Nominal struct {
 type Bin struct {
 	Lo, Hi float64
 	Count  int64
+	// Rows is the number of source rows in the bin when it differs from
+	// Count (one row can hold many sentences). 0 means the same as Count.
+	Rows int64
 }
 
 // CharClasses tells which classes occur in at least k rows.

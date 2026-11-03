@@ -31,7 +31,9 @@ import (
 // orders has 15 400 rows: customer i has i % 7 orders, customer 42 has
 // 400, and 3 orders have a customer that does not exist. shipped_at is
 // ordered_at plus 1 to 10 days, NULL for 5 %. total is quantity times
-// unit_price, NULL for 10 %.
+// unit_price, NULL for 10 %. notes has 1 to 3 sentences where invoice
+// and delivery are frequent, NULL for 5 %; zebulon occurs 3 times in one
+// row only.
 const relationsSQL = `
 CREATE SCHEMA crm;
 CREATE TABLE crm.customers AS
@@ -64,7 +66,14 @@ SELECT
   TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000) AS ordered_at,
   CASE WHEN id % 20 = 0 THEN NULL
        ELSE TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000 + 86400 + (id * 104729) % (9 * 86400)) END AS shipped_at,
-  CAST(CASE WHEN id % 10 = 3 THEN NULL ELSE (1 + (id * 13) % 20) * (5 + ((id * 17) % 1000) / 10) END AS DECIMAL(12,2)) AS total
+  CAST(CASE WHEN id % 10 = 3 THEN NULL ELSE (1 + (id * 13) % 20) * (5 + ((id * 17) % 1000) / 10) END AS DECIMAL(12,2)) AS total,
+  CASE WHEN id % 20 = 1 THEN NULL
+       WHEN id = 102 THEN 'Zebulon called. Zebulon zebulon!'
+       ELSE concat(
+         ['Invoice sent', 'Delivery is late', 'Please check the invoice', 'Delivery done', 'Invoice paid'][id % 5 + 1],
+         ['.', '!', '.', '?'][id % 4 + 1],
+         CASE WHEN id % 3 > 0 THEN ' ' || ['Thanks for the fast delivery', 'Call me about the invoice'][id % 3] || '.' END,
+         CASE WHEN id % 7 = 0 THEN ' The delivery address changed and the invoice went out again today.' END) END AS notes
 FROM o;
 `
 
