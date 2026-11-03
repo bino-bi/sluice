@@ -777,7 +777,7 @@ func TestBuildIDChecks(t *testing.T) {
 	if err := os.MkdirAll(l.Root(), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"../x", "20261102T101500Z-a1b2c", "20261102T101500Z-A1B2C3", "x"} {
+	for _, bad := range []string{"../x", "20261102T101500Z-a1b2c", "20261102T101500Z-A1B2C3", "not-a-build-id"} {
 		if err := os.WriteFile(filepath.Join(l.Root(), "current"), []byte(bad+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
