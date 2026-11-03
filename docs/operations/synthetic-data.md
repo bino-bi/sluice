@@ -237,7 +237,7 @@ What happened: the build made 22 noisy measurements, so each got an `epsilon` of
 - A measurement is one released set of counts. Examples: the rows of a table, the nulls of a column, one histogram, one correlated pair.
 - A rebuild over changed data spends `epsilon` again. Nothing adds up the budget over builds.
 - Sluice counts the measurements before it reads data. A default with a fallback counts every generator it may fall back to.
-- `foreignKey`, `dateOffset`, `sourceVocabulary`, `sentenceShape` and `by` are refused with `noise`.
+- `foreignKey` with `fanOut: source` or `orphanRate: source`, `dateOffset`, `sourceVocabulary`, `sentenceShape` and `by` are refused with `noise`.
 
 ### Counts
 
@@ -308,7 +308,8 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 `by` names 1 to 3 columns. The generator then uses the profile of the rows that have the same values in these columns. The example uses the dates of the same product.
 
 - A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
-- Values compare as text. The `by` column needs a generator that keeps source values, such as `categorical`. The report warns when most rows find no group. `bucket` on a `by` column is refused.
+- Values compare as text. The `by` column needs a generator that keeps source labels: `categorical`, `uniformCategory`, `shuffleLabels`, `weighted`, `boolean` or `constant`. Other generators are refused, also when a default falls back to one. The report warns when most rows find no group.
+- `minGroupSize` counts rows, not people. Do not group by a column that holds one value per person, such as a customer id.
 - A group needs `minGroupSize` rows. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
 - `NULL` is a group value of its own.
 - The spike check runs per group. The report counts groups with a spike, but names none.

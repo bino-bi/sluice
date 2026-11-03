@@ -17,6 +17,7 @@ func fullSpec() *apitypes.SyntheticSpec {
 	spec := exactSpec("first_name", "last_name")
 	cust := spec.Tables[0].Columns
 	cust["id"] = sequenceID
+	cust["status"] = apitypes.SyntheticColumn{Generator: apitypes.GenCategorical}
 	cust["salary"] = apitypes.SyntheticColumn{Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"status"}}}
 	cust["dept"] = apitypes.SyntheticColumn{Generator: apitypes.GenCategorical, Args: map[string]any{"by": []any{"status"}}}
 	spec.Tables = append(spec.Tables, apitypes.SyntheticTable{

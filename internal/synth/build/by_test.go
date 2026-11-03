@@ -91,11 +91,11 @@ func equalBy(a, b ByReport) bool {
 		a.FallbackRows == b.FallbackRows && a.SpikeGroups == b.SpikeGroups
 }
 
-// A by column that does not reproduce the source values falls back to
-// the global profile on most rows.
+// A by column whose labels are not source values falls back to the
+// global profile on most rows.
 func TestByFallbackWarning(t *testing.T) {
 	spec := relSpec(map[string]apitypes.SyntheticColumn{
-		"first_name": {Generator: apitypes.GenFake, Args: map[string]any{"kind": "first_name"}},
+		"first_name": {Generator: apitypes.GenWeighted, Args: map[string]any{"values": map[string]any{"Zed": 0.5, "Quinn": 0.5}}},
 		"salary":     {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"first_name"}}},
 	})
 	rep, _ := mustRun(t, opts{spec: spec, source: relationsPath(t), tagger: mapTagger{}})
@@ -127,7 +127,7 @@ func TestByErrors(t *testing.T) {
 	}
 	for _, want := range []string{
 		"column rare: by column small has type UBIGINT, which cannot be matched",
-		"column flag: by column tiny uses bucket, its labels do not match the source values",
+		"column flag: by column tiny uses bucket, a by column needs a generator that keeps source labels",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not hold %q", err, want)
@@ -180,5 +180,43 @@ FROM range(3000) r(i);
 		if c.By == nil || c.By.Groups != groups || c.By.FallbackRows != 0 {
 			t.Errorf("%s by = %+v, want %d groups and no fallback", name, c.By, groups)
 		}
+	}
+}
+
+// A by column with keys that equal real ids would give a synthetic row
+// the profile of the real entity with the same id.
+func TestByRefusesKeyGenerators(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cols map[string]apitypes.SyntheticColumn
+		want string
+	}{
+		"sequence": {
+			cols: map[string]apitypes.SyntheticColumn{
+				"id":     {Generator: apitypes.GenSequence},
+				"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"id"}}},
+			},
+			want: "column salary: by column id uses sequence",
+		},
+		"default distribution": {
+			cols: map[string]apitypes.SyntheticColumn{
+				"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"id"}}},
+			},
+			want: "column salary: by column id uses distribution",
+		},
+		// first_name defaults to categorical, then falls back to
+		// randomString because of its rare names.
+		"default after fallback": {
+			cols: map[string]apitypes.SyntheticColumn{
+				"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"first_name"}}},
+			},
+			want: "column salary: by column first_name uses randomString",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := run(t, opts{spec: relSpec(tc.cols), source: relationsPath(t), tagger: mapTagger{}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

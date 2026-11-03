@@ -571,7 +571,7 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 		}
 		c.choice = choice
 	}
-	errs = append(errs, checkByBucket(cols)...)
+	errs = append(errs, checkByGenerators(cols)...)
 	errs = append(errs, b.checkForeignKeys(cols)...)
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -592,6 +592,9 @@ func (b *builder) resolve(ctx context.Context, conn *sql.Conn, runner *profile.R
 			return nil, err
 		}
 		groups = append(groups, g)
+	}
+	if errs := checkByGenerators(cols); len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 	return groups, nil
 }
@@ -615,9 +618,24 @@ func (b *builder) genColumn(ctx context.Context, conn *sql.Conn, c *column, rows
 	}
 }
 
-// checkByBucket refuses a by column whose generator is bucket: its
-// labels are ranges, the source groups are values, so no row would match.
-func checkByBucket(cols []*column) []error {
+// byGenerators are the generators whose values are kept source labels.
+// Any other generator on a by column either never matches a source group
+// (bucket, random strings) or makes keys that equal real ids (sequence,
+// foreignKey, numbers), which would give a synthetic row the profile of
+// the real entity with the same id.
+var byGenerators = map[apitypes.SyntheticGenerator]bool{
+	apitypes.GenCategorical:     true,
+	apitypes.GenUniformCategory: true,
+	apitypes.GenShuffleLabels:   true,
+	apitypes.GenWeighted:        true,
+	apitypes.GenBoolean:         true,
+	apitypes.GenConstant:        true,
+}
+
+// checkByGenerators refuses a by column whose generator is not in
+// byGenerators. It runs on the first choice and again after defaults
+// fell back.
+func checkByGenerators(cols []*column) []error {
 	var errs []error
 	for _, c := range cols {
 		by, err := generate.BySiblings(generate.Column{Siblings: c.sibs}, c.choice.Args)
@@ -625,8 +643,8 @@ func checkByBucket(cols []*column) []error {
 			continue
 		}
 		for _, s := range by {
-			if cols[s.Index].choice.Generator == apitypes.GenBucket {
-				errs = append(errs, fmt.Errorf("column %s: by column %s uses bucket, its labels do not match the source values", c.info.Name, s.Name))
+			if g := cols[s.Index].choice.Generator; !byGenerators[g] {
+				errs = append(errs, fmt.Errorf("column %s: by column %s uses %s, a by column needs a generator that keeps source labels, such as categorical", c.info.Name, s.Name, g))
 			}
 		}
 	}
