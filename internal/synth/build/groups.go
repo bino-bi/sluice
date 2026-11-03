@@ -91,19 +91,20 @@ func (b *builder) prepareGroup(ctx context.Context, conn *sql.Conn, runner *prof
 		c := cols[i]
 		gcols[j] = b.genColumn(ctx, conn, c, rows)
 		settings := profile.Effective(c.choice.Privacy, t.Privacy, b.spec.Privacy)
-		prof, err := runner.Column(ctx, pt, c.info, c.counts, g.Needs(gcols[j], c.choice.Args), settings,
-			rng.For(b.seed, b.name, t.Name, c.info.Name, rng.PurposeJitter))
+		needs := g.Needs(gcols[j], c.choice.Args)
+		prof, err := runner.Column(ctx, pt, c.info, c.counts, needs, settings,
+			rng.For(b.seed, b.name, t.Name, c.info.Name, rng.PurposeJitter), b.columnNoise(t, c.info.Name))
 		if err != nil {
 			return nil, err
 		}
-		c.settings, c.prof = settings, prof
+		c.settings, c.prof, c.needs = settings, prof, needs
 		grp.rep.Columns[j] = c.info.Name
 		grp.rep.Cells[j] = prof.Cells()
 		edges[j] = prof.CellEdges(grp.rep.Cells[j])
 		infos[j] = c.info
 		grp.k = max(grp.k, int64(settings.MinGroupSize))
 	}
-	corr, err := runner.Correlation(ctx, pt, infos, edges, grp.k)
+	corr, err := runner.Correlation(ctx, pt, infos, edges, grp.k, b.noiseFor(t))
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,7 @@ func (b *builder) syntheticCorrelation(ctx context.Context, conn *sql.Conn, runn
 	var corr *profile.Correlation
 	if measured {
 		var err error
-		corr, err = runner.Correlation(ctx, target, infos, edges, grp.k)
+		corr, err = runner.Correlation(ctx, target, infos, edges, grp.k, nil)
 		switch {
 		case errors.Is(err, profile.ErrPairRows):
 			measured = false

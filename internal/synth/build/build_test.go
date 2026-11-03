@@ -906,15 +906,6 @@ func TestSpecHashNoise(t *testing.T) {
 	}
 }
 
-func TestNoiseNotSupportedYet(t *testing.T) {
-	spec := baseSpec()
-	spec.Privacy.Noise = &apitypes.SyntheticNoise{Epsilon: 1}
-	_, err := run(t, opts{spec: spec})
-	if err == nil || !strings.Contains(err.Error(), "privacy.noise is not supported yet") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 // smallFixture writes a source with a nested ENUM and small integer
 // ranges. rare has one row with 17, the rest is 0 to 9.
 func smallFixture(t *testing.T) string {

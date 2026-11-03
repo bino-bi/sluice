@@ -117,7 +117,7 @@ func profileOf(t *testing.T, r *Runner, name string, needs Needs, s Settings) (*
 	}
 	for i, c := range cols {
 		if c.Name == name {
-			return r.Column(context.Background(), tbl, c, counts[i], needs, s, jitterStream(i))
+			return r.Column(context.Background(), tbl, c, counts[i], needs, s, jitterStream(i), nil)
 		}
 	}
 	t.Fatalf("no column %s", name)
@@ -417,7 +417,7 @@ func TestProfileErrors(t *testing.T) {
 func TestQueryErrorHidesDuckDBText(t *testing.T) {
 	r, buf := newRunner(t)
 	_, err := r.Column(context.Background(), Table{Catalog: "src", Schema: "crm", Name: "missing"},
-		ColumnInfo{Name: "x", Type: "DOUBLE"}, Counts{Rows: 10, NonNull: 10}, Needs{Parts: PartRange}, Effective(), jitterStream(0))
+		ColumnInfo{Name: "x", Type: "DOUBLE"}, Counts{Rows: 10, NonNull: 10}, Needs{Parts: PartRange}, Effective(), jitterStream(0), nil)
 	if !errors.Is(err, ErrQuery) || err.Error() != "column x: profile query failed" {
 		t.Errorf("err = %v", err)
 	}
@@ -532,7 +532,7 @@ func TestDecimalJitterUnit(t *testing.T) {
 		}
 	}
 	for seed := range 200 {
-		c, err := r.Column(context.Background(), tbl, cols[i], counts[i], Needs{Parts: PartRange}, Effective(), jitterStream(seed))
+		c, err := r.Column(context.Background(), tbl, cols[i], counts[i], Needs{Parts: PartRange}, Effective(), jitterStream(seed), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -558,7 +558,7 @@ func TestJitterUnitFloor(t *testing.T) {
 		}
 	}
 	for seed := range 200 {
-		c, err := r.Column(context.Background(), tbl, cols[i], counts[i], Needs{Parts: PartRange, Unit: 0.01}, Effective(), jitterStream(seed))
+		c, err := r.Column(context.Background(), tbl, cols[i], counts[i], Needs{Parts: PartRange, Unit: 0.01}, Effective(), jitterStream(seed), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

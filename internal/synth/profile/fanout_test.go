@@ -37,7 +37,7 @@ func fanOutProfile(t *testing.T, r *Runner, table, col string, needs Needs) (*Co
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r.Column(ctx, tbl, info, counts[0], needs, Effective(), jitterStream(0))
+	return r.Column(ctx, tbl, info, counts[0], needs, Effective(), jitterStream(0), nil)
 }
 
 func TestFanOut(t *testing.T) {

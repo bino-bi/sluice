@@ -177,6 +177,11 @@ type builder struct {
 	exprs map[string]map[string]exprColumn
 	// keys holds the parent keys of the foreignKey columns.
 	keys *keyCache
+	// epsM is the epsilon of one measurement, 0 without noise.
+	epsM float64
+	// fingerprint keys the noise streams (plan 1.9). It is never logged
+	// or stored.
+	fingerprint [32]byte
 }
 
 func (b *builder) finish(result string, err error) {
@@ -211,9 +216,6 @@ func (b *builder) cleanup() {
 }
 
 func (b *builder) run(ctx context.Context) error {
-	if b.spec.Privacy != nil && b.spec.Privacy.Noise != nil {
-		return errors.New("privacy.noise is not supported yet")
-	}
 	if !strings.HasPrefix(b.spec.Seed, "secret://") {
 		return errors.New("seed: must be a secret reference")
 	}
@@ -234,6 +236,11 @@ func (b *builder) run(ctx context.Context) error {
 	defer closeAll()
 	if err := conn.QueryRowContext(ctx, "SELECT version()").Scan(&b.rep.DuckDBVersion); err != nil {
 		return b.duckErr("read the DuckDB version", err)
+	}
+	if b.spec.Privacy != nil && b.spec.Privacy.Noise != nil {
+		if err := b.planNoise(ctx, conn, b.spec.Privacy.Noise.Epsilon); err != nil {
+			return err
+		}
 	}
 	if err := b.checkExpressions(ctx, conn); err != nil {
 		return err
@@ -344,8 +351,11 @@ func (b *builder) duckErr(what string, err error) error {
 
 // column is one column of a table in the build.
 type column struct {
-	info     profile.ColumnInfo
+	info profile.ColumnInfo
+	// counts are noisy under noise, exact the exact ones for the report.
 	counts   profile.Counts
+	exact    profile.Counts
+	needs    profile.Needs
 	tags     []string
 	choice   generate.Choice
 	settings profile.Settings
@@ -403,7 +413,11 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 		return err
 	}
 	srcRows := counts[0].Rows
-	rows, ratio, err := b.size(t.Size, srcRows)
+	noisy := counts
+	if nf := b.noiseFor(t); nf != nil {
+		noisy = profile.NoisyCounts(counts, infos, nf)
+	}
+	rows, ratio, err := b.size(t.Size, noisy[0].Rows)
 	if err != nil {
 		return fail(err)
 	}
@@ -416,7 +430,7 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	}
 	cols := make([]*column, len(infos))
 	for i, info := range infos {
-		cols[i] = &column{info: info, counts: counts[i], tags: []string{}, snapType: snapshotType(info.Type, ""), sibs: sibs}
+		cols[i] = &column{info: info, counts: noisy[i], exact: counts[i], tags: []string{}, snapType: snapshotType(info.Type, ""), sibs: sibs}
 		if b.keys.wanted(t.Name, info.Name) {
 			cols[i].keyOut = &generate.KeySet{}
 		}
@@ -643,7 +657,7 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		if choice.Generator == apitypes.GenTemplate || choice.Generator == apitypes.GenExpression {
 			prof = &profile.Column{}
 		} else {
-			prof, err = runner.Column(ctx, pt, c.info, c.counts, needs, settings, stream(rng.PurposeJitter))
+			prof, err = runner.Column(ctx, pt, c.info, c.counts, needs, settings, stream(rng.PurposeJitter), b.columnNoise(t, c.info.Name))
 			genProf = prof
 		}
 		var by []generate.Sibling
@@ -684,7 +698,7 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			}
 		}
 		if err == nil {
-			c.choice, c.settings, c.prof, c.gen = choice, settings, prof, gen
+			c.choice, c.settings, c.prof, c.gen, c.needs = choice, settings, prof, gen, needs
 			if len(by) > 0 {
 				c.by = &stats
 			}

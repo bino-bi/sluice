@@ -80,19 +80,24 @@ func (r *Runner) Base(ctx context.Context, t Table, cols []ColumnInfo) ([]Counts
 
 // Column runs the profile parts of needs on one column and applies the
 // privacy filter. jitter is the column's jitter stream. It is read only
-// when the column reads number parts and the jitter is on.
-func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, needs Needs, s Settings, jitter *rng.Stream) (*Column, error) {
+// when the column reads number parts and the jitter is on. noise nil is
+// off; with noise c holds the noisy counts (NoisyCounts) and every part
+// takes its noisy variant (plan 4.3).
+func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, needs Needs, s Settings, jitter *rng.Stream, noise *Noise) (*Column, error) {
 	k := int64(s.MinGroupSize)
 	out := &Column{Counts: c, NullRate: nullRate(c, k)}
 	if needs.Parts == 0 {
 		return out, nil
 	}
-	p := &colRun{ctx: ctx, r: r, from: t.sql(), x: parser.QuoteIdent(col.Name), name: col.Name, typ: col.Type, kind: KindOf(col.Type), k: k}
+	p := &colRun{ctx: ctx, r: r, from: t.sql(), x: parser.QuoteIdent(col.Name), name: col.Name, typ: col.Type, kind: KindOf(col.Type), k: k, noise: noise}
 	if c.NonNull < k {
 		return nil, p.fail(ErrTooFewRows)
 	}
 	if err := p.check(needs); err != nil {
 		return nil, err
+	}
+	if _, ok := Measurements(needs); noise != nil && !ok {
+		return nil, p.fail(ErrNoiseUnsupported)
 	}
 	p.axis = p.kind.axis(p.x)
 	if needs.Parts&PartOffset != 0 {
@@ -106,7 +111,12 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 		part Part
 		run  func() error
 	}{
-		{numberParts, func() error { return p.numbers(needs, s, jitter, out) }},
+		{numberParts, func() error {
+			if noise != nil {
+				return p.noisyNumbers(needs, s, jitter, out)
+			}
+			return p.numbers(needs, s, jitter, out)
+		}},
 		{PartTopValues, func() error {
 			return p.nominal(&out.TopValues, &out.Suppressed, "value", p.x, p.x+" IS NOT NULL", needs.MaxValues)
 		}},
@@ -123,17 +133,29 @@ func (r *Runner) Column(ctx context.Context, t Table, col ColumnInfo, c Counts, 
 				p.x+" IS NOT NULL AND length("+p.x+") >= "+n, 0)
 		}},
 		{PartWeekdays, func() error {
+			if noise != nil {
+				return p.noisyFixed(&out.Weekdays, "weekdays", "dayofweek("+p.x+")", p.x+" IS NOT NULL", 0, 6)
+			}
 			return p.nominal(&out.Weekdays, &out.Suppressed, "weekday", "dayofweek("+p.x+")", p.x+" IS NOT NULL", 0)
 		}},
 		{PartMonths, func() error {
+			if noise != nil {
+				return p.noisyFixed(&out.Months, "months", "month("+p.x+")", p.x+" IS NOT NULL", 1, 12)
+			}
 			return p.nominal(&out.Months, &out.Suppressed, "month", "month("+p.x+")", p.x+" IS NOT NULL", 0)
 		}},
 		{PartLengths, func() error {
+			if noise != nil {
+				return p.noisyOrdinal(&out.Lengths, "lengths", "length("+p.x+")", p.x+" IS NOT NULL", 0)
+			}
 			return p.ordinal(&out.Lengths, &out.MergedBins, "length("+p.x+")", p.x+" IS NOT NULL")
 		}},
 		{PartWordCounts, func() error {
-			return p.ordinal(&out.WordCounts, &out.MergedBins,
-				"len(regexp_split_to_array(trim("+p.x+"), '\\s+'))", "trim("+p.x+") <> ''")
+			expr := "len(regexp_split_to_array(trim(" + p.x + "), '\\s+'))"
+			if noise != nil {
+				return p.noisyOrdinal(&out.WordCounts, "words", expr, "trim("+p.x+") <> ''", 1)
+			}
+			return p.ordinal(&out.WordCounts, &out.MergedBins, expr, "trim("+p.x+") <> ''")
 		}},
 		{PartCharClasses, func() error { return p.charClasses(&out.CharClasses) }},
 		{PartFanOut, func() error { return p.fanOut(t, *needs.Parent, out) }},
@@ -177,6 +199,8 @@ type colRun struct {
 	k    int64
 	// axis is the number axis of the number parts.
 	axis string
+	// noise is nil without noise.
+	noise *Noise
 }
 
 func (p *colRun) fail(err error) error {
@@ -223,26 +247,9 @@ func (p *colRun) check(needs Needs) error {
 // (step 4), bin merge (step 6), jitter (step 7) and spike check (step 8).
 func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Column) error {
 	e := p.axis
-	var lo, hi float64
-	if s.Clip != nil {
-		var qs []float64
-		q := "SELECT quantile_cont(" + e + ", " + floatList([]float64{s.Clip.Lower, s.Clip.Upper}) +
-			") FROM " + p.from + " WHERE isfinite(" + e + ")"
-		if err := p.query(q, nil, func(rows *sql.Rows) error { return scanFloatList(rows, &qs) }); err != nil {
-			return err
-		}
-		if len(qs) != 2 {
-			return p.fail(ErrQuery)
-		}
-		lo, hi = qs[0], qs[1]
-	} else {
-		q := "SELECT min(" + e + "), max(" + e + ") FROM " + p.from + " WHERE isfinite(" + e + ")"
-		if err := p.query(q, nil, func(rows *sql.Rows) error { return scanFloats(rows, &lo, &hi) }); err != nil {
-			return err
-		}
-	}
-	if !finite(lo, hi) {
-		return p.fail(ErrTooFewRows)
+	lo, hi, err := p.sourceRange(s)
+	if err != nil {
+		return err
 	}
 	inRange := " FROM " + p.from + " WHERE " + e + " BETWEEN ? AND ?"
 	bounds := []any{lo, hi}
@@ -303,25 +310,14 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 		bins, out.MergedBins = mergeOrdinal(bins, p.k)
 	}
 
-	if s.SpikeWarning && hi > lo {
-		r := hi - lo
-		var low, high int64
-		q := "SELECT count(*) FILTER (WHERE " + e + " <= ?), count(*) FILTER (WHERE " + e + " >= ?)" + inRange
-		args := []any{lo + float64(0.01*r), hi - float64(0.01*r), lo, hi}
-		if err := p.query(q, args, func(rows *sql.Rows) error { return rows.Scan(&low, &high) }); err != nil {
-			return err
-		}
-		out.Spikes = spikesOf(low, high, p.k)
+	if err := p.spikes(lo, hi, s, out); err != nil {
+		return err
 	}
 
 	// The type step is a floor: a smaller move rounds back to the
 	// source bound in the stage or the final CAST.
 	unit := max(needs.Unit, defaultUnit(p.typ))
-	out.Lo, out.Hi = jitterBounds(lo, hi, unit, s, jitter)
-	if needs.KeepSign && lo >= 0 {
-		out.Lo = max(out.Lo, 0)
-		out.Hi = max(out.Hi, out.Lo)
-	}
+	out.Lo, out.Hi = p.jitter(lo, hi, unit, needs, s, jitter)
 	out.axisQ = append([]float64(nil), quantiles...)
 	for i, q := range quantiles {
 		quantiles[i] = mapLinear(q, lo, hi, out.Lo, out.Hi)
@@ -333,6 +329,63 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 	}
 	out.Bins = bins
 	return nil
+}
+
+// sourceRange reads the range of the number parts: the clip quantiles,
+// or min and max.
+func (p *colRun) sourceRange(s Settings) (float64, float64, error) {
+	e := p.axis
+	var lo, hi float64
+	if s.Clip != nil {
+		var qs []float64
+		q := "SELECT quantile_cont(" + e + ", " + floatList([]float64{s.Clip.Lower, s.Clip.Upper}) +
+			") FROM " + p.from + " WHERE isfinite(" + e + ")"
+		if err := p.query(q, nil, func(rows *sql.Rows) error { return scanFloatList(rows, &qs) }); err != nil {
+			return 0, 0, err
+		}
+		if len(qs) != 2 {
+			return 0, 0, p.fail(ErrQuery)
+		}
+		lo, hi = qs[0], qs[1]
+	} else {
+		q := "SELECT min(" + e + "), max(" + e + ") FROM " + p.from + " WHERE isfinite(" + e + ")"
+		if err := p.query(q, nil, func(rows *sql.Rows) error { return scanFloats(rows, &lo, &hi) }); err != nil {
+			return 0, 0, err
+		}
+	}
+	if !finite(lo, hi) {
+		return 0, 0, p.fail(ErrTooFewRows)
+	}
+	return lo, hi, nil
+}
+
+// spikes applies 4.2 step 8 on [lo, hi].
+func (p *colRun) spikes(lo, hi float64, s Settings, out *Column) error {
+	if !s.SpikeWarning || hi <= lo {
+		return nil
+	}
+	e := p.axis
+	r := hi - lo
+	var low, high int64
+	q := "SELECT count(*) FILTER (WHERE " + e + " <= ?), count(*) FILTER (WHERE " + e + " >= ?) FROM " + p.from +
+		" WHERE " + e + " BETWEEN ? AND ?"
+	args := []any{lo + float64(0.01*r), hi - float64(0.01*r), lo, hi}
+	if err := p.query(q, args, func(rows *sql.Rows) error { return rows.Scan(&low, &high) }); err != nil {
+		return err
+	}
+	out.Spikes = spikesOf(low, high, p.k)
+	return nil
+}
+
+// jitter applies 4.2 step 7 to [lo, hi] and keeps the sign with
+// KeepSign.
+func (p *colRun) jitter(lo, hi, unit float64, needs Needs, s Settings, r *rng.Stream) (float64, float64) {
+	jlo, jhi := jitterBounds(lo, hi, unit, s, r)
+	if needs.KeepSign && lo >= 0 {
+		jlo = max(jlo, 0)
+		jhi = max(jhi, jlo)
+	}
+	return jlo, jhi
 }
 
 // offsetNullRate sets the null rate of x among the rows where f is not
@@ -413,10 +466,14 @@ func (p *colRun) nominal(dst *Nominal, suppressed *int64, what, expr, where stri
 	if err != nil {
 		return err
 	}
+	rest := total - kept
+	if p.noise != nil {
+		values, rest = p.noisyNominal(what+"s", values, rest)
+	}
 	if len(values) == 0 {
 		return p.fail(fmt.Errorf("%w (%s)", ErrNoGroups, what))
 	}
-	*dst = Nominal{Values: values, Rest: total - kept}
+	*dst = Nominal{Values: values, Rest: rest}
 	*suppressed += dropped
 	return nil
 }
@@ -611,7 +668,12 @@ func (p *colRun) charClasses(dst *CharClasses) error {
 	if err := p.query(q, nil, func(rows *sql.Rows) error { return rows.Scan(&u, &l, &d, &sp) }); err != nil {
 		return err
 	}
-	*dst = CharClasses{Upper: u >= p.k, Lower: l >= p.k, Digit: d >= p.k, Space: sp >= p.k}
+	k := p.k
+	if p.noise != nil {
+		c := p.noise.fixedCells("classes", []int64{u, l, d, sp}, classDelta, p.k)
+		u, l, d, sp, k = c[0], c[1], c[2], c[3], 1
+	}
+	*dst = CharClasses{Upper: u >= k, Lower: l >= k, Digit: d >= k, Space: sp >= k}
 	if *dst == (CharClasses{}) {
 		return p.fail(fmt.Errorf("%w (character class)", ErrNoGroups))
 	}
@@ -630,13 +692,16 @@ func (p *colRun) caseStyles(dst *[4]int64) error {
 		if err := rows.Scan(&s, &c); err != nil {
 			return err
 		}
-		if c >= p.k {
+		if c >= p.k || p.noise != nil {
 			styles[s] = c
 		}
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+	if p.noise != nil {
+		copy(styles[:], p.noise.fixedCells("cases", styles[:], 1, p.k))
 	}
 	if styles == ([4]int64{}) {
 		return p.fail(fmt.Errorf("%w (case style)", ErrNoGroups))

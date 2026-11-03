@@ -39,8 +39,18 @@ type Report struct {
 	Tables        []TableReport `json:"tables"`
 	Spikes        []SpikeReport `json:"spikes"`
 	Warnings      []string      `json:"warnings"`
+	// Noise is set when the build adds noise to the profile counts.
+	Noise *NoiseReport `json:"noise,omitempty"`
 	// Audit is the audit record of a CLI build, nil for server builds.
 	Audit *audit.Record `json:"audit"`
+}
+
+// NoiseReport is the noise budget of a build (plan 1.4).
+type NoiseReport struct {
+	Epsilon float64 `json:"epsilon"`
+	// Measurements is the planned number of noisy measurements M.
+	Measurements          int     `json:"measurements"`
+	EpsilonPerMeasurement float64 `json:"epsilon_per_measurement"`
 }
 
 // TableReport is one table of a Report.
@@ -111,7 +121,13 @@ type ColumnReport struct {
 	FanOut *FanOutReport `json:"fan_out,omitempty"`
 	// Words is the number of kept source vocabulary words, never the
 	// words.
-	Words    int      `json:"words,omitempty"`
+	Words int `json:"words,omitempty"`
+	// NoiseMeasurements counts the nulls measurement and those of the
+	// generator's profile parts, only under noise.
+	NoiseMeasurements int `json:"noise_measurements,omitempty"`
+	// Range is bounds or profile for a column that reads numbers, only
+	// under noise: profile means its range is not covered by the noise.
+	Range    string   `json:"range,omitempty"`
 	Warnings []string `json:"warnings"`
 }
 

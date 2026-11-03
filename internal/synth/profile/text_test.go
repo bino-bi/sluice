@@ -49,7 +49,7 @@ func textOf(t *testing.T, r *Runner, table string, needs Needs) (*Column, error)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r.Column(ctx, tb, info, counts[0], needs, Effective(), jitterStream(0))
+	return r.Column(ctx, tb, info, counts[0], needs, Effective(), jitterStream(0), nil)
 }
 
 func TestVocabulary(t *testing.T) {
@@ -105,7 +105,7 @@ func TestSentenceParts(t *testing.T) {
 	}
 
 	if _, err := r.Column(context.Background(), tbl, ColumnInfo{Name: "id", Type: "BIGINT"}, Counts{Rows: 2000, NonNull: 2000},
-		Needs{Parts: PartVocabulary}, Effective(), jitterStream(0)); !errors.Is(err, ErrKind) {
+		Needs{Parts: PartVocabulary}, Effective(), jitterStream(0), nil); !errors.Is(err, ErrKind) {
 		t.Errorf("vocabulary on BIGINT: err = %v, want ErrKind", err)
 	}
 }

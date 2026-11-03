@@ -98,6 +98,9 @@ type Needs struct {
 	MaxWords     int
 }
 
+// ReadsNumbers reports whether needs reads a number part.
+func (n Needs) ReadsNumbers() bool { return n.Parts&numberParts != 0 }
+
 // Ref names a column of another table of the same catalog.
 type Ref struct {
 	Schema, Table, Column string
@@ -119,6 +122,8 @@ type Settings struct {
 	JitterMin    float64
 	JitterMax    float64
 	SpikeWarning bool
+	// Bounds is the public range of the column. Only with noise.
+	Bounds *apitypes.SyntheticBounds
 }
 
 // Effective merges privacy levels field by field. levels go from the most
@@ -131,7 +136,7 @@ func Effective(levels ...*apitypes.SyntheticPrivacy) Settings {
 		JitterMax:    DefaultJitterMax,
 		SpikeWarning: true,
 	}
-	var k, clip, jit, spike bool
+	var k, clip, jit, spike, bounds bool
 	for _, p := range levels {
 		if p == nil {
 			continue
@@ -149,6 +154,10 @@ func Effective(levels ...*apitypes.SyntheticPrivacy) Settings {
 		}
 		if !spike && p.SpikeWarning != nil {
 			s.SpikeWarning, spike = *p.SpikeWarning, true
+		}
+		if !bounds && p.Bounds != nil {
+			b := *p.Bounds
+			s.Bounds, bounds = &b, true
 		}
 	}
 	return s

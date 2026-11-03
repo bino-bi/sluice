@@ -42,7 +42,7 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 		settings = profile.Effective(t.Privacy, b.spec.Privacy)
 	}
 	k := int64(settings.MinGroupSize)
-	src := &Stats{NullRate: nullRate(c.counts, k), Distinct: c.counts.Distinct}
+	src := &Stats{NullRate: nullRate(c.exact, k), Distinct: c.exact.Distinct}
 	cr.Source = src
 	cr.Synthetic = &Stats{}
 	if rows == 0 {
@@ -54,6 +54,20 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 	}
 	for _, w := range c.warnings {
 		warn(w)
+	}
+	if b.rep.Noise != nil {
+		n, _ := profile.Measurements(c.needs)
+		cr.NoiseMeasurements = 1 + n
+		switch {
+		case !c.needs.ReadsNumbers():
+		case c.settings.Bounds != nil:
+			cr.Range = "bounds"
+		default:
+			cr.Range = "profile"
+			warn("range is not covered by noise, set privacy.bounds")
+			b.log.Warn("synthetic build: range is not covered by noise, set privacy.bounds",
+				slog.String("name", b.name), slog.String("table", t.Name), slog.String("column", c.info.Name))
+		}
 	}
 	if c.by != nil {
 		cr.By = b.byReport(t, c, warn)
@@ -80,8 +94,8 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 
 	from := parser.QuoteIdent(pt.Catalog) + "." + parser.QuoteIdent(pt.Schema) + "." + parser.QuoteIdent(pt.Name)
 	x := parser.QuoteIdent(c.info.Name)
-	if e := profile.Axis(c.info.Type, x); e != "" && c.counts.NonNull >= 2*k {
-		lo, hi := float64(k)/float64(c.counts.NonNull), 1-float64(k)/float64(c.counts.NonNull)
+	if e := profile.Axis(c.info.Type, x); e != "" && c.exact.NonNull >= 2*k {
+		lo, hi := float64(k)/float64(c.exact.NonNull), 1-float64(k)/float64(c.exact.NonNull)
 		// A clip below k/n would report the value of fewer than k rows.
 		if settings.Clip != nil {
 			lo, hi = max(lo, settings.Clip.Lower), min(hi, settings.Clip.Upper)

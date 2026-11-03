@@ -29,8 +29,10 @@ type Correlation struct {
 // Correlation estimates the Spearman matrix of cols from one B_a x B_b
 // table per pair (plan 1.2), all pairs in one scan. edges[i] are the
 // inner cell edges of cols[i] (CellEdges), so len(edges[i]) + 1 is B_i.
-// A pair needs 2k rows with both values finite.
-func (r *Runner) Correlation(ctx context.Context, t Table, cols []ColumnInfo, edges [][]float64, k int64) (*Correlation, error) {
+// A pair needs 2k rows with both values finite. noise nil is off; with
+// it the cells of pair (a, b) get the measurement corr/<b> of column a,
+// clamped at 0 (plan 4.3).
+func (r *Runner) Correlation(ctx context.Context, t Table, cols []ColumnInfo, edges [][]float64, k int64, noise func(column string) *Noise) (*Correlation, error) {
 	m := len(cols)
 	names := make([]string, m)
 	for i, c := range cols {
@@ -114,6 +116,16 @@ func (r *Runner) Correlation(ctx context.Context, t Table, cols []ColumnInfo, ed
 		out.Rho[i][i] = 1
 	}
 	for i, pr := range pairs {
+		if noise != nil {
+			flat := make([]int64, 0, len(tables[i])*len(tables[i][0]))
+			for _, row := range tables[i] {
+				flat = append(flat, row...)
+			}
+			noisy, _ := noise(cols[pr.a].Name).cells("corr/"+cols[pr.b].Name, flat, 1)
+			for j, row := range tables[i] {
+				copy(row, noisy[j*len(row):])
+			}
+		}
 		var total int64
 		cells := make([][]float64, len(tables[i]))
 		for j, row := range tables[i] {

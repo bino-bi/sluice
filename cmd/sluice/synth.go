@@ -280,6 +280,9 @@ func printReport(w io.Writer, r *build.Report) {
 	if r.Error != "" {
 		_, _ = fmt.Fprintf(w, "error: %s\n", r.Error)
 	}
+	if r.Noise != nil {
+		_, _ = fmt.Fprintf(w, "noise: epsilon %s, %d measurements\n", strconv.FormatFloat(r.Noise.Epsilon, 'g', -1, 64), r.Noise.Measurements)
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "TABLE\tCOLUMN\tGENERATOR\tSOURCE MEDIAN\tSYNTHETIC MEDIAN\tDISTANCE\tWARNINGS")
 	for _, t := range r.Tables {

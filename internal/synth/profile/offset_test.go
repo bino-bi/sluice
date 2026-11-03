@@ -39,7 +39,7 @@ func offsetProfile(t *testing.T, r *Runner, name string, needs Needs, s Settings
 	}
 	for i, c := range cols {
 		if c.Name == name {
-			return r.Column(ctx, offsetTbl, c, counts[i], needs, s, jitterStream(seed))
+			return r.Column(ctx, offsetTbl, c, counts[i], needs, s, jitterStream(seed), nil)
 		}
 	}
 	t.Fatalf("no column %s", name)

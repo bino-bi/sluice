@@ -117,7 +117,7 @@ func (r *Runner) Groups(ctx context.Context, t Table, col ColumnInfo, by []Colum
 			return nil, stats, p.fail(ErrQuery)
 		}
 		key := GroupKey(vals)
-		prof, err := r.Column(ctx, groupTable, col, counts[0], needs, s, jitter(key))
+		prof, err := r.Column(ctx, groupTable, col, counts[0], needs, s, jitter(key), nil)
 		if errors.Is(err, ErrTooFewRows) || errors.Is(err, ErrGrid) || errors.Is(err, ErrNoGroups) {
 			stats.Dropped++
 			continue

@@ -169,7 +169,8 @@ func TestEffective(t *testing.T) {
 		SpikeWarning:  &off,
 	}
 	table := &apitypes.SyntheticPrivacy{MinGroupSize: &ten}
-	col := &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0.01, Upper: 0.99}}
+	col := &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0.01, Upper: 0.99},
+		Bounds: &apitypes.SyntheticBounds{Min: 0.0, Max: 10.0}}
 	got := Effective(col, table, nil, src)
 	want := Settings{
 		MinGroupSize: 10,
@@ -177,6 +178,7 @@ func TestEffective(t *testing.T) {
 		JitterMin:    0.05,
 		JitterMax:    0.1,
 		SpikeWarning: false,
+		Bounds:       &apitypes.SyntheticBounds{Min: 0.0, Max: 10.0},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Effective = %+v, want %+v", got, want)

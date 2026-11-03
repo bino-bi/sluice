@@ -290,3 +290,30 @@ func TestPrintReportCorrelated(t *testing.T) {
 		t.Errorf("report:\n%s\nwant line %q", buf.String(), want)
 	}
 }
+
+// Test 19, noise part: the noise line follows the header, before the
+// column table.
+func TestPrintReportNoise(t *testing.T) {
+	r := &build.Report{BuildID: "b1", Result: build.ResultSucceeded,
+		Noise: &build.NoiseReport{Epsilon: 1.5, Measurements: 31, EpsilonPerMeasurement: 1.5 / 31},
+		Tables: []build.TableReport{
+			{Name: "crm.people", Columns: []build.ColumnReport{{Name: "age"}, {Name: "income"}},
+				Correlations: []build.CorrelationReport{{Columns: []string{"age", "income"}, Cells: []int{20, 20}}}},
+		}}
+	var buf bytes.Buffer
+	printReport(&buf, r)
+	out := buf.String()
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 || lines[1] != "noise: epsilon 1.5, 31 measurements" || !strings.HasPrefix(lines[2], "TABLE") {
+		t.Errorf("report:\n%s", out)
+	}
+	if !strings.Contains(out, "correlated crm.people: age, income max_diff 0.000 shrinkage 0.00\n") {
+		t.Errorf("report without group line:\n%s", out)
+	}
+	buf.Reset()
+	r.Noise = nil
+	printReport(&buf, r)
+	if strings.Contains(buf.String(), "noise:") {
+		t.Errorf("noise line without noise:\n%s", buf.String())
+	}
+}

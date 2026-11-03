@@ -107,7 +107,7 @@ func peopleEdges(t *testing.T, r *Runner, names ...string) ([]ColumnInfo, [][]fl
 	}
 	edges := make([][]float64, len(names))
 	for i, info := range infos {
-		p, err := r.Column(ctx, people, info, counts[i], Needs{Parts: PartQuantiles}, Settings{MinGroupSize: 5, JitterOff: true}, jitterStream(i))
+		p, err := r.Column(ctx, people, info, counts[i], Needs{Parts: PartQuantiles}, Settings{MinGroupSize: 5, JitterOff: true}, jitterStream(i), nil)
 		if err != nil {
 			t.Fatalf("profile %s: %v", info.Name, err)
 		}
@@ -131,7 +131,7 @@ func TestCorrelationQuery(t *testing.T) {
 		if _, err := r.Conn.ExecContext(ctx, "SET threads = "+threads); err != nil {
 			t.Fatal(err)
 		}
-		c, err := r.Correlation(ctx, people, infos, edges, 5)
+		c, err := r.Correlation(ctx, people, infos, edges, 5, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +166,7 @@ func TestCorrelationQuery(t *testing.T) {
 	// B_a != B_b in both orders: a swapped table index panics or reads
 	// the wrong cells, which a square table does not show.
 	for _, e := range [][][]float64{{edges[0][:9], edges[1]}, {edges[0], edges[1][:9]}} {
-		c, err := r.Correlation(ctx, people, infos[:2], e, 5)
+		c, err := r.Correlation(ctx, people, infos[:2], e, 5, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func TestCorrelationQuery(t *testing.T) {
 		}
 	}
 
-	_, err := r.Correlation(ctx, people, infos[:2], edges[:2], 10001)
+	_, err := r.Correlation(ctx, people, infos[:2], edges[:2], 10001, nil)
 	if !errors.Is(err, ErrPairRows) || !strings.Contains(err.Error(), "column age, income:") || strings.Contains(err.Error(), "20000") {
 		t.Errorf("err = %v", err)
 	}
@@ -189,7 +189,7 @@ func TestCorrelationNoSpread(t *testing.T) {
 		t.Fatal(err)
 	}
 	infos := []ColumnInfo{{Name: "a", Type: "DOUBLE"}, {Name: "b", Type: "DOUBLE"}}
-	c, err := r.Correlation(ctx, Table{Catalog: "src", Schema: "crm", Name: "flat"}, infos, [][]float64{{50}, {1}}, 5)
+	c, err := r.Correlation(ctx, Table{Catalog: "src", Schema: "crm", Name: "flat"}, infos, [][]float64{{50}, {1}}, 5, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
