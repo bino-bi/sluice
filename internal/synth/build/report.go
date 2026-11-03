@@ -52,6 +52,19 @@ type TableReport struct {
 	Columns       []ColumnReport `json:"columns"`
 	// DependsOn lists the parent tables (foreignKey), sorted.
 	DependsOn []string `json:"depends_on,omitempty"`
+	// ExactMatches is set for a table with privacy.rejectExactMatches.
+	ExactMatches *ExactMatchReport `json:"exact_matches,omitempty"`
+}
+
+// ExactMatchReport is the rejectExactMatches part of a TableReport. It
+// holds counts only.
+type ExactMatchReport struct {
+	Columns []string `json:"columns"`
+	// MatchedRows counts the rows that matched after the main pass,
+	// RedrawnRows the rows redrawn in all rounds.
+	MatchedRows int64 `json:"matched_rows"`
+	RedrawnRows int64 `json:"redrawn_rows"`
+	Rounds      int   `json:"rounds"`
 }
 
 // ColumnReport is one column of a TableReport.

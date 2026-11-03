@@ -246,9 +246,9 @@ func (c SyntheticColumn) ForeignKey() (table, column string, ok bool) {
 }
 
 // checkTableRelations checks the refs between the columns entries of one
-// table: no column reads itself or an expression column, and the graph
-// has no cycle. A ref to a
-// column without an entry is a leaf; the build checks that it exists.
+// table: no column reads itself or an expression column, the graph has no
+// cycle, and privacy.rejectExactMatches names no expression column. A ref
+// to a column without an entry is a leaf; the build checks that it exists.
 // names are the columns keys, sorted. tables are the lower-case names of
 // every table of the spec, for foreignKey.
 func checkTableRelations(t SyntheticTable, path string, names []string, tables map[string]bool) (string, string) {
@@ -286,6 +286,13 @@ func checkTableRelations(t SyntheticTable, path string, names []string, tables m
 		for _, r := range t.Columns[name].Refs() {
 			if _, ok := byLower[r]; ok {
 				deps[low] = append(deps[low], r)
+			}
+		}
+	}
+	if t.Privacy != nil {
+		for _, c := range t.Privacy.RejectExactMatches {
+			if n, ok := byLower[strings.ToLower(c)]; ok && t.Columns[n].Generator == GenExpression {
+				return path + ".privacy.rejectExactMatches", fmt.Sprintf("names expression column %s, which is computed after the check", n)
 			}
 		}
 	}

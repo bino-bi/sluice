@@ -262,3 +262,17 @@ func TestPrintBuildSummaryForeignKey(t *testing.T) {
 		t.Errorf("summary:\n%s\nwant line %q", buf.String(), want)
 	}
 }
+
+func TestPrintBuildSummaryExactMatches(t *testing.T) {
+	r := &build.Report{BuildID: "b1", Result: build.ResultSucceeded, Tables: []build.TableReport{
+		{Name: "crm.customers", SourceRows: 5000, SyntheticRows: 1000,
+			ExactMatches: &build.ExactMatchReport{Columns: []string{"first_name", "last_name"}, MatchedRows: 4, RedrawnRows: 5, Rounds: 2}},
+		{Name: "crm.orders", SourceRows: 15400, SyntheticRows: 3080},
+	}}
+	var buf bytes.Buffer
+	printBuildSummary(&buf, r)
+	want := "exact matches: crm.customers on first_name, last_name, 4 rows matched, 5 rows redrawn in 2 rounds\n"
+	if !strings.Contains(buf.String(), want) || strings.Count(buf.String(), "exact matches:") != 1 {
+		t.Errorf("summary:\n%s\nwant line %q", buf.String(), want)
+	}
+}

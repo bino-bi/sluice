@@ -41,13 +41,16 @@ const (
 )
 
 // SyntheticPrivacy holds the privacy filter settings. StrictTags is read
-// only at source level.
+// only at source level, RejectExactMatches only at table level.
 type SyntheticPrivacy struct {
 	MinGroupSize  *int           `yaml:"minGroupSize,omitempty" json:"minGroupSize,omitempty"`
 	ClipOutliers  *ClipOutliers  `yaml:"clipOutliers,omitempty" json:"clipOutliers,omitempty"`
 	ExtremeJitter *ExtremeJitter `yaml:"extremeJitter,omitempty" json:"extremeJitter,omitempty"`
 	SpikeWarning  *bool          `yaml:"spikeWarning,omitempty" json:"spikeWarning,omitempty"`
 	StrictTags    []string       `yaml:"strictTags,omitempty" json:"strictTags,omitempty"`
+	// RejectExactMatches names the columns that together must not equal a
+	// source row.
+	RejectExactMatches []string `yaml:"rejectExactMatches,omitempty" json:"rejectExactMatches,omitempty"`
 }
 
 // ClipOutliers names the source quantiles that bound number and date
@@ -311,7 +314,7 @@ func validateSynthetic(d *DataSource) error {
 	default:
 		return fail(base+".build.onStart", fmt.Sprintf("unknown value %q (never, ifMissing)", syn.Build.OnStart))
 	}
-	if field, reason := checkPrivacy(syn.Privacy, base+".privacy", true); field != "" {
+	if field, reason := checkPrivacy(syn.Privacy, base+".privacy", levelSource); field != "" {
 		return fail(field, reason)
 	}
 	for i, r := range syn.Rules {
@@ -342,7 +345,7 @@ func validateSynthetic(d *DataSource) error {
 		if field, reason := checkSize(t.Size, path+".size"); field != "" {
 			return fail(field, reason)
 		}
-		if field, reason := checkPrivacy(t.Privacy, path+".privacy", false); field != "" {
+		if field, reason := checkPrivacy(t.Privacy, path+".privacy", levelTable); field != "" {
 			return fail(field, reason)
 		}
 		cols := make([]string, 0, len(t.Columns))
@@ -364,7 +367,7 @@ func validateSynthetic(d *DataSource) error {
 			if field, reason := checkGenerator(c.Generator, c.Args, cpath); field != "" {
 				return fail(field, reason)
 			}
-			if field, reason := checkPrivacy(c.Privacy, cpath+".privacy", false); field != "" {
+			if field, reason := checkPrivacy(c.Privacy, cpath+".privacy", levelColumn); field != "" {
 				return fail(field, reason)
 			}
 		}
@@ -395,7 +398,19 @@ func checkSize(s SyntheticSize, path string) (string, string) {
 	return "", ""
 }
 
-func checkPrivacy(p *SyntheticPrivacy, path string, sourceLevel bool) (string, string) {
+// privacyLevel is where a SyntheticPrivacy sits in the spec.
+type privacyLevel int
+
+const (
+	levelSource privacyLevel = iota
+	levelTable
+	levelColumn
+)
+
+// maxExactColumns caps privacy.rejectExactMatches.
+const maxExactColumns = 32
+
+func checkPrivacy(p *SyntheticPrivacy, path string, level privacyLevel) (string, string) {
 	if p == nil {
 		return "", ""
 	}
@@ -409,13 +424,32 @@ func checkPrivacy(p *SyntheticPrivacy, path string, sourceLevel bool) (string, s
 		return path + ".extremeJitter", "needs 0 <= min <= max <= 0.5, or off"
 	}
 	if len(p.StrictTags) > 0 {
-		if !sourceLevel {
+		if level != levelSource {
 			return path + ".strictTags", "only allowed in spec.synthetic.privacy"
 		}
 		for _, tag := range p.StrictTags {
 			if !tagPattern.MatchString(tag) {
 				return path + ".strictTags", fmt.Sprintf("tag %q invalid (use [a-z0-9._-])", tag)
 			}
+		}
+	}
+	if p.RejectExactMatches != nil {
+		f := path + ".rejectExactMatches"
+		if level != levelTable {
+			return f, "only allowed in spec.synthetic.tables[].privacy"
+		}
+		if n := len(p.RejectExactMatches); n == 0 || n > maxExactColumns {
+			return f, fmt.Sprintf("needs 1 to %d columns", maxExactColumns)
+		}
+		seen := map[string]bool{}
+		for _, c := range p.RejectExactMatches {
+			if strings.TrimSpace(c) == "" {
+				return f, "column name is empty"
+			}
+			if seen[strings.ToLower(c)] {
+				return f, fmt.Sprintf("names column %s twice", c)
+			}
+			seen[strings.ToLower(c)] = true
 		}
 	}
 	return "", ""

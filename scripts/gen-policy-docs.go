@@ -196,6 +196,7 @@ var docs = map[string]doc{
 	"SyntheticPrivacy.extremeJitter.max":  {"", "Largest share. At most 0.5."},
 	"SyntheticPrivacy.spikeWarning":       {"", "Warn about a few rows far from the rest. Default true."},
 	"SyntheticPrivacy.strictTags":         {"", "Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source."},
+	"SyntheticPrivacy.rejectExactMatches": {"", "Columns that together must not equal a source row. Only on a table."},
 
 	"SyntheticRule.match.columns": {"", "Column name patterns. `*` is a wildcard. Case does not matter."},
 	"SyntheticRule.match.types":   {"", "Column type patterns, for example `DECIMAL*`. Case does not matter."},

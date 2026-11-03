@@ -18,8 +18,9 @@ import (
 )
 
 // appendRows appends rows rows to the staging table. fill sets the values
-// of one row. The appender flushes every batchRows rows.
-func appendRows(ctx context.Context, conn *sql.Conn, rows int64, ncols int, fill func(*generate.RowCtx) error,
+// of one row. With rn the row index goes into a last column. The appender
+// flushes every batchRows rows.
+func appendRows(ctx context.Context, conn *sql.Conn, rows int64, ncols int, rn bool, fill func(*generate.RowCtx) error,
 	duckErr func(string, error) error) error {
 	return conn.Raw(func(dc any) error {
 		dconn, ok := dc.(driver.Conn)
@@ -31,7 +32,10 @@ func appendRows(ctx context.Context, conn *sql.Conn, rows int64, ncols int, fill
 			return duckErr("open the appender", err)
 		}
 		row := generate.RowCtx{Values: make([]any, ncols)}
-		vals := make([]driver.Value, ncols)
+		vals := make([]driver.Value, ncols, ncols+1)
+		if rn {
+			vals = vals[:ncols+1]
+		}
 		for i := range rows {
 			row.Index = i
 			if err := fill(&row); err != nil {
@@ -40,6 +44,9 @@ func appendRows(ctx context.Context, conn *sql.Conn, rows int64, ncols int, fill
 			}
 			for j, v := range row.Values {
 				vals[j] = v
+			}
+			if rn {
+				vals[ncols] = i
 			}
 			if err := a.AppendRow(vals...); err != nil {
 				_ = a.Close()

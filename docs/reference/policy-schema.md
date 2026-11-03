@@ -107,6 +107,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `extremeJitter.max` | float |  | Largest share. At most 0.5. |
 | `spikeWarning` | bool |  | Warn about a few rows far from the rest. Default true. |
 | `strictTags` | []string |  | Tags whose columns need a generator set by a column entry or a rule. Default `pii`. Only on the data source. |
+| `rejectExactMatches` | []string |  | Columns that together must not equal a source row. Only on a table. |
 
 ### SyntheticRule
 

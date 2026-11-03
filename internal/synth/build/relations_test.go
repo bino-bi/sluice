@@ -217,7 +217,7 @@ func TestStageHashOrdinal(t *testing.T) {
 	}
 	b := &builder{hash: sha256.New(), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	const rows = 5
-	if err := b.stage(ctx, conn, cols, []int{1, 0}, rows); err != nil {
+	if err := b.stage(ctx, conn, cols, []int{1, 0}, rows, false); err != nil {
 		t.Fatal(err)
 	}
 	want := sha256.New()

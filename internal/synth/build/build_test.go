@@ -841,6 +841,16 @@ func TestSpecHash(t *testing.T) {
 	if b, _ := SpecHash(s); b != a {
 		t.Errorf("report-only fields change the hash")
 	}
+	// R11: a table privacy with only rejectExactMatches is not report-only.
+	s.Tables[0].Privacy.RejectExactMatches = []string{"name"}
+	withList, _ := SpecHash(s)
+	if withList == a {
+		t.Errorf("rejectExactMatches keeps the hash")
+	}
+	s.Tables[0].Privacy.RejectExactMatches = []string{"name", "region"}
+	if b, _ := SpecHash(s); b == withList {
+		t.Errorf("a rejectExactMatches change keeps the hash")
+	}
 	s.Tables[0].Columns["score"] = apitypes.SyntheticColumn{Generator: apitypes.GenUniform}
 	if b, _ := SpecHash(s); b == a {
 		t.Errorf("a generator change keeps the hash")

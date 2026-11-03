@@ -388,6 +388,10 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	if missing := resolver.MissingColumns(names); len(missing) > 0 {
 		return fail(fmt.Errorf("columns %s are not in the source table", strings.Join(missing, ", ")))
 	}
+	exact, err := exactColumns(t, infos)
+	if err != nil {
+		return fail(err)
+	}
 	if t.Size.Ratio != nil && *t.Size.Ratio > b.in.MaxRatio {
 		return fail(fmt.Errorf("size.ratio %g is above synthetic.maxRatio %g", *t.Size.Ratio, b.in.MaxRatio))
 	}
@@ -434,8 +438,13 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	}
 	b.hashTable(t.Name, cols)
 	if rows > 0 {
-		if err := b.stage(ctx, conn, cols, order, rows); err != nil {
+		if err := b.stage(ctx, conn, cols, order, rows, len(exact) > 0); err != nil {
 			return fail(err)
+		}
+		if len(exact) > 0 {
+			if tr.ExactMatches, err = b.rejectExact(ctx, conn, pt, cols, order, exact, rows); err != nil {
+				return fail(err)
+			}
 		}
 	}
 	for _, c := range cols {
@@ -696,15 +705,19 @@ func evalOrder(cols []*column) ([]int, error) {
 // goroutine, so the rows and the content hash have a fixed order. The
 // columns are drawn in order, then hashed in ordinal order, so the hash
 // does not depend on the column graph.
-func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, order []int, rows int64) error {
+// With rn the staging table gets the row index as rnColumn.
+func (b *builder) stage(ctx context.Context, conn *sql.Conn, cols []*column, order []int, rows int64, rn bool) error {
 	defs := make([]string, len(cols))
 	for i, c := range cols {
 		defs[i] = stageName(i) + " " + c.stage.SQL()
 	}
+	if rn {
+		defs = append(defs, rnColumn+" BIGINT")
+	}
 	if _, err := conn.ExecContext(ctx, "CREATE OR REPLACE TABLE "+stageTable+" ("+strings.Join(defs, ", ")+")"); err != nil {
 		return b.duckErr("create the staging table", err)
 	}
-	return appendRows(ctx, conn, rows, len(cols), func(row *generate.RowCtx) error {
+	return appendRows(ctx, conn, rows, len(cols), rn, func(row *generate.RowCtx) error {
 		for _, j := range order {
 			v, err := cols[j].gen.Next(*row)
 			if err != nil {
@@ -776,6 +789,15 @@ func castExpr(staged, snapType string) string {
 // error can name it without the DuckDB text.
 func (b *builder) castError(ctx context.Context, conn *sql.Conn, cols []*column, err error) error {
 	b.log.Debug("synthetic build: snapshot insert failed", "name", b.name, "error", err)
+	if cerr := b.castFailure(ctx, conn, cols); cerr != nil {
+		return cerr
+	}
+	return errors.New("cannot write the snapshot table")
+}
+
+// castFailure returns the error of the first column whose cast or
+// expression fails, nil when all succeed.
+func (b *builder) castFailure(ctx context.Context, conn *sql.Conn, cols []*column) error {
 	for i, c := range cols {
 		if c.expr != nil {
 			continue
@@ -796,5 +818,5 @@ func (b *builder) castError(ctx context.Context, conn *sql.Conn, cols []*column,
 			return fmt.Errorf("column %s: the expression fails or does not cast to %s", c.info.Name, c.snapType)
 		}
 	}
-	return errors.New("cannot write the snapshot table")
+	return nil
 }

@@ -60,7 +60,7 @@ func clearReportOnly(p *apitypes.SyntheticPrivacy) *apitypes.SyntheticPrivacy {
 	}
 	p.SpikeWarning = nil
 	p.StrictTags = nil
-	if p.MinGroupSize == nil && p.ClipOutliers == nil && p.ExtremeJitter == nil {
+	if p.MinGroupSize == nil && p.ClipOutliers == nil && p.ExtremeJitter == nil && p.RejectExactMatches == nil {
 		return nil
 	}
 	return p

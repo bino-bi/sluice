@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -260,6 +261,10 @@ func printBuildSummary(w io.Writer, r *build.Report) {
 	}
 	_ = tw.Flush()
 	for _, t := range r.Tables {
+		if e := t.ExactMatches; e != nil {
+			_, _ = fmt.Fprintf(w, "exact matches: %s on %s, %d rows matched, %d rows redrawn in %d rounds\n",
+				t.Name, strings.Join(e.Columns, ", "), e.MatchedRows, e.RedrawnRows, e.Rounds)
+		}
 		for _, c := range t.Columns {
 			if f := c.FanOut; f != nil {
 				_, _ = fmt.Fprintf(w, "foreign key: %s.%s -> %s, scale %s, %d orphan rows\n",

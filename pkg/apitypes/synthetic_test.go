@@ -132,7 +132,7 @@ spec:
     tables:
       - name: public.customers
         size: { rows: 10000 }
-        privacy: { minGroupSize: 10, extremeJitter: { min: 0.01, max: 0.02 } }
+        privacy: { minGroupSize: 10, extremeJitter: { min: 0.01, max: 0.02 }, rejectExactMatches: [first_name, Last_Name] }
         columns:
           id: { generator: sequence }
           revenue: { generator: distribution, args: { decimals: 2 }, privacy: { clipOutliers: { lower: 0.01, upper: 0.99 } } }
@@ -153,6 +153,9 @@ spec:
 	}
 	if j := syn.Tables[0].Privacy.ExtremeJitter; j == nil || j.Off || j.Min != 0.01 || j.Max != 0.02 {
 		t.Errorf("table extremeJitter = %+v", j)
+	}
+	if got := syn.Tables[0].Privacy.RejectExactMatches; len(got) != 2 || got[0] != "first_name" || got[1] != "Last_Name" {
+		t.Errorf("rejectExactMatches = %v", got)
 	}
 	if r := syn.Tables[0].Size.Rows; r == nil || *r != 10000 {
 		t.Errorf("rows = %v", r)
@@ -345,6 +348,12 @@ spec:
 		{"by cycle", table + "        columns:\n          a: { generator: categorical, args: { by: [b] } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 		{"foreignKey in source rule", "    rules:\n      - match: { columns: [\"*_id\"] }\n        generator: foreignKey\n        args: { table: crm.customers, column: id }\n" + table, "spec.synthetic.rules[0].generator"},
 		{"foreignKey in table rule", table + "        rules:\n          - match: { columns: [\"*_id\"] }\n            generator: foreignKey\n            args: { table: crm.customers, column: id }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"source rejectExactMatches", "    privacy: { rejectExactMatches: [a] }\n" + table, "spec.synthetic.privacy.rejectExactMatches"},
+		{"column rejectExactMatches", table + "        columns:\n          a: { generator: \"null\", privacy: { rejectExactMatches: [a] } }\n", "spec.synthetic.tables[0].columns.a.privacy.rejectExactMatches"},
+		{"empty rejectExactMatches", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [] }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
+		{"duplicate rejectExactMatches", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, A] }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
+		{"rejectExactMatches names expression", "    tables:\n      - name: crm.customers\n        size: { ratio: 0.2 }\n        privacy: { rejectExactMatches: [a, Total] }\n" +
+			"        columns:\n          total: { generator: expression, args: { sql: \"a\" } }\n", "spec.synthetic.tables[0].privacy.rejectExactMatches"},
 		{"foreignKey cycle", "    tables:\n" +
 			"      - name: crm.a\n        size: { ratio: 0.2 }\n        columns:\n          b_id: { generator: foreignKey, args: { table: crm.b, column: id } }\n" +
 			"      - name: crm.b\n        size: { ratio: 0.2 }\n        columns:\n          a_id: { generator: foreignKey, args: { table: CRM.A, column: id } }\n",
@@ -452,6 +461,9 @@ spec:
 			"names expression column total, which is computed after the other columns"},
 		{"by self", "        columns:\n          a: { generator: distribution, args: { by: [b, A] } }\n", "refers to the column itself"},
 		{"by twice", "        columns:\n          a: { generator: distribution, args: { by: [b, B] } }\n", "names column B twice"},
+		{"rejectExactMatches expression", "        privacy: { rejectExactMatches: [a, Total] }\n        columns:\n          total: { generator: expression, args: { sql: \"a\" } }\n",
+			"names expression column total, which is computed after the check"},
+		{"rejectExactMatches twice", "        privacy: { rejectExactMatches: [a, A] }\n", "names column A twice"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
