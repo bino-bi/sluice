@@ -71,7 +71,8 @@ A rule matches by `columns` (name patterns), `types` (type patterns such as `DEC
 
 | Column type | Default generator |
 |---|---|
-| Numbers, `TIME` | `distribution` |
+| Integers with at most 50 distinct values, each in at least `minGroupSize` rows | `categorical` |
+| Other numbers, `TIME` | `distribution` |
 | `BOOLEAN` | `boolean` |
 | `ENUM` | `categorical` |
 | `VARCHAR` with at most 50 distinct values, each in at least `minGroupSize` rows | `categorical` |
@@ -204,6 +205,7 @@ The same spec, seed and source data give the same rows on the same CPU architect
 - The privacy settings make rare values and extremes hard to find. They are no formal privacy guarantee.
 - `sluice synth build` writes no record to the audit log. It prints the record on stderr and stores it in the report.
 - A running server picks up a snapshot from `sluice synth build` only after a restart. Use the admin API to build in the server.
+- Each build keeps only the current and the previous snapshot. Two CLI builds against a running server delete the file it serves. Restart the server after CLI builds into its folder.
 - Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec.
 - The seed value is not part of the `stale` check. Build again after you change the seed value.
 

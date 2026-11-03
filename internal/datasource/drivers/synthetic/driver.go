@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
@@ -113,6 +114,16 @@ func (d *driver) State() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.state
+}
+
+// BuildID returns the id of the attached build, "" when not built.
+func (d *driver) BuildID() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == memoryDB {
+		return ""
+	}
+	return strings.TrimSuffix(filepath.Base(d.path), ".duckdb")
 }
 
 // ExternalPaths implements pkgds.ExternalPather. The trailing separator

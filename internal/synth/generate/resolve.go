@@ -34,8 +34,8 @@ type Choice struct {
 // set.
 var DefaultStrictTags = []string{"pii"}
 
-// maxDefaultCategories is the most distinct values a VARCHAR column can
-// have to default to categorical (concept 4.6).
+// maxDefaultCategories is the most distinct values a VARCHAR or integer
+// column can have to default to categorical (concept 4.6).
 const maxDefaultCategories = 50
 
 type rule struct {
@@ -192,6 +192,14 @@ func (r *Resolver) byType(col Column, counts profile.Counts) Choice {
 		null.Warning = "too few rows for a profile, written as NULL"
 		c := def(g, args)
 		c.Fallback = &null
+		return c
+	}
+	// A small integer range would lose whole values to the extreme
+	// jitter, which moves a bound by at least one.
+	if kind == profile.KindInteger && counts.Distinct <= maxDefaultCategories {
+		c := def(apitypes.GenCategorical, nil)
+		dist := withNull(apitypes.GenDistribution, nil)
+		c.Fallback = &dist
 		return c
 	}
 	switch kind {

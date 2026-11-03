@@ -287,10 +287,9 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 		out.Spikes = spikesOf(low, high, p.k)
 	}
 
-	unit := needs.Unit
-	if unit == 0 {
-		unit = defaultUnit(p.typ)
-	}
+	// The type step is a floor: a smaller move rounds back to the
+	// source bound in the stage or the final CAST.
+	unit := max(needs.Unit, defaultUnit(p.typ))
 	out.Lo, out.Hi = jitterBounds(lo, hi, unit, s, jitter)
 	for i, q := range quantiles {
 		quantiles[i] = mapLinear(q, lo, hi, out.Lo, out.Hi)

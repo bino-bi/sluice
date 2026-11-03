@@ -232,3 +232,17 @@ func TestSynthReport_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestPrintBuildWarningsOnce(t *testing.T) {
+	r := &build.Report{
+		Tables: []build.TableReport{{Name: "main.t", Columns: []build.ColumnReport{
+			{Name: "bl", Warnings: []string{"type BLOB, written as NULL"}},
+		}}},
+		Warnings: []string{"main.t.bl: type BLOB, written as NULL"},
+	}
+	var buf bytes.Buffer
+	printBuildWarnings(&buf, r)
+	if got, want := buf.String(), "warning: main.t.bl: type BLOB, written as NULL\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}

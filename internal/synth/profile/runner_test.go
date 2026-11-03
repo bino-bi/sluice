@@ -527,3 +527,29 @@ func TestDecimalJitterUnit(t *testing.T) {
 		}
 	}
 }
+
+// A generator unit below the type step does not replace it: on a
+// DECIMAL(2,1) column a move of 0.01 would round back to the source bound.
+func TestJitterUnitFloor(t *testing.T) {
+	r, _ := newRunner(t)
+	cols := columns(t, r)
+	counts, err := r.Base(context.Background(), tbl, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var i int
+	for i = range cols {
+		if cols[i].Name == "rating" {
+			break
+		}
+	}
+	for seed := range 200 {
+		c, err := r.Column(context.Background(), tbl, cols[i], counts[i], Needs{Parts: PartRange, Unit: 0.01}, Effective(), jitterStream(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.Round(c.Lo*10) == 10 || math.Round(c.Hi*10) == 50 {
+			t.Fatalf("seed %d: bounds %v %v round to the source bounds 1.0 5.0", seed, c.Lo, c.Hi)
+		}
+	}
+}

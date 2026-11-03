@@ -371,6 +371,30 @@ func TestSynthServer_NotBuiltThenSwap(t *testing.T) {
 	assertOnlyA(t, deps)
 }
 
+// A CLI build moves current on disk, but the status names the build the
+// server serves, also after retention removed its report.
+func TestSynthServer_StatusShowsServedBuild(t *testing.T) {
+	cfg, policies, _ := synthServerFixture(t, "")
+	deps, _ := startRuntime(t, cfg, policies)
+	served := adminBuild(t, deps)
+
+	for range 2 {
+		// Build ids sort by the second they start in.
+		time.Sleep(1100 * time.Millisecond)
+		if _, stderr, code := runCLI("synth", "build", "crmsynth", "--config", cfg); code != 0 {
+			t.Fatalf("synth build: exit %d, %s", code, stderr)
+		}
+		st := synthStatus(t, deps)
+		if st.Current == nil || st.Current.BuildID != served.BuildID {
+			t.Fatalf("status after a CLI build: %+v, want current %s", st.Current, served.BuildID)
+		}
+		if st.Report != nil && st.Report.BuildID != served.BuildID {
+			t.Errorf("report of build %s, want %s", st.Report.BuildID, served.BuildID)
+		}
+	}
+	assertOnlyA(t, deps)
+}
+
 // build.onStart ifMissing builds a missing snapshot after the start.
 func TestSynthServer_OnStartIfMissing(t *testing.T) {
 	cfg, policies, _ := synthServerFixture(t, "ifMissing")

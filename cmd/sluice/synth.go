@@ -293,13 +293,7 @@ func printBuildWarnings(w io.Writer, r *build.Report) {
 	for _, s := range r.Spikes {
 		_, _ = fmt.Fprintf(w, "spike: %s.%s, %s side, %d rows\n", s.Table, s.Column, s.Side, s.Rows)
 	}
-	for _, t := range r.Tables {
-		for _, c := range t.Columns {
-			for _, msg := range c.Warnings {
-				_, _ = fmt.Fprintf(w, "warning: %s.%s: %s\n", t.Name, c.Name, msg)
-			}
-		}
-	}
+	// r.Warnings holds every column warning with its table and column.
 	for _, msg := range r.Warnings {
 		_, _ = fmt.Fprintf(w, "warning: %s\n", msg)
 	}

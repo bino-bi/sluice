@@ -83,6 +83,9 @@ func TestResolveDefaults(t *testing.T) {
 		warning string
 	}{
 		{"INTEGER", many, apitypes.GenDistribution, "null", ""},
+		{"INTEGER", few, apitypes.GenCategorical, "distribution null", ""},
+		{"HUGEINT", few, apitypes.GenCategorical, "distribution null", ""},
+		{"DECIMAL(12,2)", few, apitypes.GenDistribution, "null", ""},
 		{"DECIMAL(12,2)", many, apitypes.GenDistribution, "null", ""},
 		{"BOOLEAN", few, apitypes.GenBoolean, "null", ""},
 		{"VARCHAR", few, apitypes.GenCategorical, "randomString null", ""},

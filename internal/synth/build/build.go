@@ -448,10 +448,11 @@ func (b *builder) size(s apitypes.SyntheticSize, srcRows int64) (int64, float64,
 }
 
 // snapshotType is the column type in the snapshot (plan 1.14): the
-// source type, except VARCHAR for bucket and for ENUM, whose labels would
-// otherwise show in the catalog.
+// source type, except VARCHAR for bucket and for any type with an ENUM,
+// whose labels would otherwise show in the catalog. An ENUM nested in a
+// STRUCT, MAP or UNION is KindOther, so its column is NULL anyway.
 func snapshotType(dataType string, g apitypes.SyntheticGenerator) string {
-	if g == apitypes.GenBucket || profile.KindOf(dataType) == profile.KindEnum {
+	if g == apitypes.GenBucket || strings.Contains(strings.ToUpper(dataType), "ENUM(") {
 		return "VARCHAR"
 	}
 	return dataType
@@ -521,10 +522,11 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 		}
 		settings := profile.Effective(choice.Privacy, t.Privacy, b.spec.Privacy)
 		prof, err := runner.Column(ctx, pt, c.info, c.counts, g.Needs(gcol, choice.Args), settings, stream(rng.PurposeJitter))
-		// The VARCHAR default categorical is for columns without rare
-		// values; with them the column is free text.
+		// The VARCHAR and integer default categorical is for columns
+		// without rare values; with them the column falls back.
+		kind := profile.KindOf(c.info.Type)
 		if err == nil && choice.Fallback != nil && choice.Generator == apitypes.GenCategorical &&
-			profile.KindOf(c.info.Type) == profile.KindText && prof.TopValues.Rest > 0 {
+			(kind == profile.KindText || kind == profile.KindInteger) && prof.TopValues.Rest > 0 {
 			err = errors.New("rare values")
 		}
 		var gen generate.ColumnGen

@@ -270,11 +270,17 @@ func TestSwap(t *testing.T) {
 	}
 
 	writeBuild(t, l, build1, hash, 3)
+	if got := d.BuildID(); got != "" {
+		t.Errorf("BuildID before a swap = %q", got)
+	}
 	if err := d.Swap(ctx, c, build1, hash); err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
 	if got := d.State(); got != StateReady {
 		t.Errorf("State = %q; want ready", got)
+	}
+	if got := d.BuildID(); got != build1 {
+		t.Errorf("BuildID = %q; want %s", got, build1)
 	}
 	if n := count(t, c); n != 3 {
 		t.Errorf("rows = %d; want 3", n)
@@ -286,6 +292,9 @@ func TestSwap(t *testing.T) {
 	}
 	if got := d.State(); got != StateReady {
 		t.Errorf("State after failed swap = %q; want ready", got)
+	}
+	if got := d.BuildID(); got != build1 {
+		t.Errorf("BuildID after failed swap = %q; want %s", got, build1)
 	}
 	if n := count(t, c); n != 3 {
 		t.Errorf("rows after failed swap = %d; want 3", n)
@@ -315,6 +324,9 @@ func TestSwap(t *testing.T) {
 	}
 	if got := d.State(); got != StateNotBuilt {
 		t.Errorf("State after failed fallback = %q; want not_built", got)
+	}
+	if got := d.BuildID(); got != "" {
+		t.Errorf("BuildID after failed fallback = %q", got)
 	}
 	var one int
 	q := `SELECT 1 FROM information_schema.schemata WHERE catalog_name = '` + catalog + `' LIMIT 1`

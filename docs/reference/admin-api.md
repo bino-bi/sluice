@@ -84,7 +84,7 @@ Every response has an `X-Admin-Request-Id` header.
 - A second call during a build returns the running build with `already_running: true`. A retry is harmless.
 - `status` is `not_built`, `ready` or `stale`. `GET /admin/datasources` shows it too.
 - `builds` lists only the builds of this server process. `current` and `report` are `null` when no snapshot exists.
-- `GET` reads the folder. After `sluice synth build` it shows the new build, while queries read the old snapshot until a restart.
+- `current` and `report` show the build that the server serves. After `sluice synth build`, the server serves the old snapshot until a restart or the next server build. `GET` shows that old build.
 - An unknown name, or a data source that is not synthetic, gives 404 with an empty body.
 - Without a synthetic data source, both routes give 501.
 - With `audit.failClosed`, a build whose start record the audit log does not take gives 503 `ERR_AUDIT_UNAVAILABLE`.

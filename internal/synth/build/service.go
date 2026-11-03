@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"sync"
 	"time"
@@ -58,7 +59,7 @@ type BuildView struct {
 	Error      string    `json:"error"`
 }
 
-// CurrentView names the build that current points to.
+// CurrentView names the build the server serves.
 type CurrentView struct {
 	BuildID    string    `json:"build_id"`
 	SpecHash   string    `json:"spec_hash"`
@@ -213,13 +214,26 @@ func (s *Service) state(name string) string {
 	return ""
 }
 
+// currentID returns the build the driver serves. A CLI build moves
+// current on disk, but the server serves its snapshot until a swap.
+// Without a registry it reads current.
+func (s *Service) currentID(name string) (string, error) {
+	if s.opts.Registry != nil {
+		if d, err := s.opts.Registry.Lookup(name); err == nil {
+			if b, ok := d.(interface{ BuildID() string }); ok {
+				return b.BuildID(), nil
+			}
+		}
+	}
+	return Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
+}
+
 func (s *Service) currentReport(name string) (*Report, error) {
-	l := Layout{Dir: s.opts.Dir, Name: name}
-	id, err := l.ReadCurrent()
+	id, err := s.currentID(name)
 	if err != nil || id == "" {
 		return nil, err
 	}
-	return l.ReadReport(id)
+	return Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
 }
 
 // Start starts a build of name. When a build of name runs, it returns
@@ -501,14 +515,25 @@ func (s *Service) Status(name string) (StatusView, error) {
 	if v.Status == stateNotBuilt {
 		return v, nil
 	}
-	rep, err := s.currentReport(name)
+	id, err := s.currentID(name)
 	if err != nil {
 		return StatusView{}, fmt.Errorf("synthetic %s: %w", name, err)
 	}
-	if rep != nil {
-		v.Report = rep
-		v.Current = &CurrentView{BuildID: rep.BuildID, SpecHash: rep.SpecHash, FinishedAt: rep.FinishedAt}
+	if id == "" {
+		return v, nil
 	}
+	rep, err := Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
+	if errors.Is(err, fs.ErrNotExist) {
+		// Retention of later CLI builds removed the report of the
+		// served build.
+		v.Current = &CurrentView{BuildID: id}
+		return v, nil
+	}
+	if err != nil {
+		return StatusView{}, fmt.Errorf("synthetic %s: %w", name, err)
+	}
+	v.Report = rep
+	v.Current = &CurrentView{BuildID: rep.BuildID, SpecHash: rep.SpecHash, FinishedAt: rep.FinishedAt}
 	return v, nil
 }
 

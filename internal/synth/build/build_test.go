@@ -849,3 +849,85 @@ func TestSpecHash(t *testing.T) {
 		t.Errorf("hash = %s", a)
 	}
 }
+
+// smallFixture writes a source with a nested ENUM and small integer
+// ranges. rare has one row with 17, the rest is 0 to 9.
+func smallFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "small.duckdb")
+	c, err := duckdb.NewConnector(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`
+CREATE SCHEMA crm;
+CREATE TYPE crm.diag AS ENUM ('flu', 'cold', 'RARE_LABEL');
+CREATE TABLE crm.t AS
+SELECT
+  {'d': CAST(CASE WHEN i = 0 THEN 'RARE_LABEL' WHEN i % 2 = 0 THEN 'flu' ELSE 'cold' END AS crm.diag)} AS st,
+  MAP {'k': CAST('flu' AS crm.diag)} AS m,
+  CAST(i % 2 AS HUGEINT) AS flag,
+  CAST(i % 5 AS UBIGINT) AS small,
+  CAST(i % 7 AS TINYINT) AS tiny,
+  CAST(CASE WHEN i = 0 THEN 17 ELSE i % 10 END AS INTEGER) AS rare
+FROM range(2000) r(i);
+`); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	return path
+}
+
+// A nested ENUM keeps no label in the snapshot schema, and a small
+// integer range keeps its values.
+func TestSmallFixture(t *testing.T) {
+	src := smallFixture(t)
+	spec := &apitypes.SyntheticSpec{
+		Source:  "crm",
+		Seed:    seedRef,
+		Privacy: &apitypes.SyntheticPrivacy{MinGroupSize: intp(5)},
+		Tables:  []apitypes.SyntheticTable{{Name: "crm.t", Size: apitypes.SyntheticSize{Ratio: f64(0.2)}}},
+	}
+	rep, dir := mustRun(t, opts{spec: spec, source: src})
+	l := Layout{Dir: dir, Name: "crmsynth"}
+	c, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("ATTACH '" + l.Snapshot(rep.BuildID) + "' AS syn (READ_ONLY)"); err != nil {
+		t.Fatal(err)
+	}
+	if n := scalar[int64](t, db, "SELECT count(*) FROM information_schema.columns WHERE table_catalog = 'syn' AND upper(data_type) LIKE '%ENUM(%'"); n != 0 {
+		t.Errorf("%d snapshot columns with an ENUM type", n)
+	}
+	for col, want := range map[string]string{"flag": "0,1", "small": "0,1,2,3,4", "tiny": "0,1,2,3,4,5,6"} {
+		got := scalar[string](t, db, "SELECT string_agg(DISTINCT CAST("+col+" AS VARCHAR), ',' ORDER BY CAST("+col+" AS VARCHAR)) FROM syn.crm.t")
+		if got != want {
+			t.Errorf("%s values = %s, want %s", col, got, want)
+		}
+		if g := reportColumn(t, rep, col).Generator; g != string(apitypes.GenCategorical) {
+			t.Errorf("%s generator = %s, want categorical", col, g)
+		}
+	}
+	if g := reportColumn(t, rep, "rare").Generator; g != string(apitypes.GenDistribution) {
+		t.Errorf("rare generator = %s, want distribution", g)
+	}
+}
+
+func TestSnapshotType(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"STRUCT(d ENUM('a', 'b'))", "VARCHAR"},
+		{"MAP(VARCHAR, ENUM('a'))", "VARCHAR"},
+		{"ENUM('a')", "VARCHAR"},
+		{"STRUCT(d INTEGER)", "STRUCT(d INTEGER)"},
+		{"INTEGER", "INTEGER"},
+	} {
+		if got := snapshotType(tc.in, apitypes.GenNull); got != tc.want {
+			t.Errorf("snapshotType(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
