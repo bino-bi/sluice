@@ -35,11 +35,15 @@ func (s Stage) SQL() string {
 }
 
 // StageOf returns the stage of a column with generator g. bucket writes
-// text. Integers above 2^63 stage as DOUBLE, TIME as DOUBLE seconds of
+// text. expression stages a BOOLEAN marker, true or NULL: DuckDB computes
+// the value when it writes the snapshot. Integers above 2^63 stage as DOUBLE, TIME as DOUBLE seconds of
 // the day, UUID and ENUM as VARCHAR.
 func StageOf(col Column, g apitypes.SyntheticGenerator) Stage {
-	if g == apitypes.GenBucket {
+	switch g {
+	case apitypes.GenBucket:
 		return StageVarchar
+	case apitypes.GenExpression:
+		return StageBoolean
 	}
 	switch col.Kind() {
 	case profile.KindInteger:

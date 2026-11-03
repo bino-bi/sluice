@@ -76,6 +76,7 @@ func TestSyntheticValidArgs(t *testing.T) {
 		"distribution-by":     `{ generator: distribution, args: { by: [status, Region, day] } }`,
 		"categorical-by":      `{ generator: categorical, args: { by: [status] } }`,
 		"dateDistribution-by": `{ generator: dateDistribution, args: { by: [status], keepWeekday: true } }`,
+		"expression":          `{ generator: expression, args: { sql: "quantity * unit_price - 1", nullRate: 0.1 } }`,
 	}
 	for name, col := range cols {
 		t.Run(name, func(t *testing.T) {
@@ -239,6 +240,18 @@ func TestSyntheticInvalid(t *testing.T) {
 		{"by not a list", synDoc("crmsynth", `{ generator: categorical, args: { by: a } }`), "spec.synthetic.tables[0].columns.c.args.by"},
 		{"by empty name", synDoc("crmsynth", `{ generator: categorical, args: { by: [" "] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
 		{"by number", synDoc("crmsynth", `{ generator: categorical, args: { by: [3] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
+		{"expression no sql", synDoc("crmsynth", `{ generator: expression }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression empty sql", synDoc("crmsynth", `{ generator: expression, args: { sql: " " } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression sql number", synDoc("crmsynth", `{ generator: expression, args: { sql: 3 } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression semicolon", synDoc("crmsynth", `{ generator: expression, args: { sql: "a; DROP TABLE t" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression NUL", synDoc("crmsynth", `{ generator: expression, args: { sql: "a\0" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression line comment", synDoc("crmsynth", `{ generator: expression, args: { sql: "quantity -- x" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression block comment", synDoc("crmsynth", `{ generator: expression, args: { sql: "quantity /* x */" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression newline", synDoc("crmsynth", `{ generator: expression, args: { sql: "quantity\n+ 1" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression carriage return", synDoc("crmsynth", `{ generator: expression, args: { sql: "quantity\r+ 1" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression too long", synDoc("crmsynth", `{ generator: expression, args: { sql: "a`+strings.Repeat(" ", 1024)+`" } }`), "spec.synthetic.tables[0].columns.c.args.sql"},
+		{"expression unique", synDoc("crmsynth", `{ generator: expression, args: { sql: "a", unique: true } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
+		{"expression unique false", synDoc("crmsynth", `{ generator: expression, args: { sql: "a", unique: false } }`), "spec.synthetic.tables[0].columns.c.args.unique"},
 		{"by self ref", synDoc("crmsynth", `{ generator: dateDistribution, args: { by: [a, C] } }`), "spec.synthetic.tables[0].columns.c.args.by"},
 		{"column strictTags", synDoc("crmsynth", `{ generator: "null", privacy: { strictTags: [pii] } }`), "spec.synthetic.tables[0].columns.c.privacy.strictTags"},
 		{"dash in name", synDoc("crm-synth", `{ generator: "null" }`), "metadata.name"},
@@ -304,6 +317,11 @@ spec:
 		{"dateOffset in table rule", table + "        rules:\n          - match: { types: [DATE] }\n            generator: dateOffset\n            args: { from: a }\n", "spec.synthetic.tables[0].rules[0].generator"},
 		{"dateOffset cycle", table + "        columns:\n          a: { generator: dateOffset, args: { from: b } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
 		{"template cycle", table + "        columns:\n          a: { generator: template, args: { template: \"{b}\" } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
+		{"expression in source rule", "    rules:\n      - match: { columns: [total] }\n        generator: expression\n        args: { sql: \"a\" }\n" + table, "spec.synthetic.rules[0].generator"},
+		{"expression in table rule", table + "        rules:\n          - match: { types: [DOUBLE] }\n            generator: expression\n            args: { sql: \"a\" }\n", "spec.synthetic.tables[0].rules[0].generator"},
+		{"template reads expression", table + "        columns:\n          a: { generator: template, args: { template: \"{B}\" } }\n          b: { generator: expression, args: { sql: \"a\" } }\n", "spec.synthetic.tables[0].columns.a.args.template"},
+		{"dateOffset reads expression", table + "        columns:\n          a: { generator: dateOffset, args: { from: b } }\n          b: { generator: expression, args: { sql: \"c\" } }\n", "spec.synthetic.tables[0].columns.a.args.from"},
+		{"by reads expression", table + "        columns:\n          a: { generator: categorical, args: { by: [c, b] } }\n          b: { generator: expression, args: { sql: \"c\" } }\n", "spec.synthetic.tables[0].columns.a.args.by"},
 		{"by in source rule", "    rules:\n      - match: { columns: [amount] }\n        generator: distribution\n        args: { by: [status] }\n" + table, "spec.synthetic.rules[0].args.by"},
 		{"by in table rule", table + "        rules:\n          - match: { types: [VARCHAR] }\n            generator: categorical\n            args: { by: [status] }\n", "spec.synthetic.tables[0].rules[0].args.by"},
 		{"by cycle", table + "        columns:\n          a: { generator: categorical, args: { by: [b] } }\n          b: { generator: template, args: { template: \"{A}\" } }\n", "spec.synthetic.tables[0].columns"},
@@ -402,6 +420,12 @@ spec:
 			"          status: { generator: categorical, args: { by: [Dept] } }\n" +
 			"          dept: { generator: categorical, args: { by: [region, status] } }\n",
 			"columns dept, status depend on each other"},
+		{"expression rule", "        rules:\n          - match: { columns: [total] }\n            generator: expression\n            args: { sql: \"a\" }\n",
+			"expression refers to other columns, set it under tables[].columns"},
+		{"template reads expression", "        columns:\n" +
+			"          email: { generator: template, args: { template: \"{Total}\" } }\n" +
+			"          total: { generator: expression, args: { sql: \"email\" } }\n",
+			"names expression column total, which is computed after the other columns"},
 		{"by self", "        columns:\n          a: { generator: distribution, args: { by: [b, A] } }\n", "refers to the column itself"},
 		{"by twice", "        columns:\n          a: { generator: distribution, args: { by: [b, B] } }\n", "names column B twice"},
 	}

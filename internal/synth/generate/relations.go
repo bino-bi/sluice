@@ -303,3 +303,23 @@ func (g *offsetGen) Next(row RowCtx) (any, error) {
 	// 9999-12-31 is above the 292 years a Duration holds.
 	return time.Unix(t.Unix()+int64(o), int64(t.Nanosecond())).In(t.Location()), nil
 }
+
+// expression is computed by DuckDB from the other columns of the row when
+// the builder writes the snapshot. The generator only stages a marker: true,
+// or NULL when the nullRate draw says NULL. The builder checks args.sql.
+type expression struct{}
+
+func (expression) Check(col Column, _ Args) error {
+	return fits(col, apitypes.GenExpression, col.Kind() != profile.KindOther)
+}
+
+func (expression) Needs(Column, Args) profile.Needs { return profile.Needs{} }
+
+func (expression) New(Column, *profile.Column, Args, Streams) (ColumnGen, error) {
+	return exprMarker{}, nil
+}
+
+type exprMarker struct{}
+
+func (exprMarker) Next(RowCtx) (any, error) { return true, nil }
+func (exprMarker) Pool() int64              { return -1 }

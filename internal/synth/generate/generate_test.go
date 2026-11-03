@@ -619,7 +619,9 @@ func TestEveryGeneratorRegistered(t *testing.T) {
 	// which cases() does not give. relations_test.go covers them.
 	names[apitypes.GenTemplate] = true
 	names[apitypes.GenDateOffset] = true
-	if len(registry) != 28 || len(names) != 28 {
-		t.Errorf("registry has %d generators, cases cover %d, want 28", len(registry), len(names))
+	// expression draws only a marker; relations_test.go covers it.
+	names[apitypes.GenExpression] = true
+	if len(registry) != 29 || len(names) != 29 {
+		t.Errorf("registry has %d generators, cases cover %d, want 29", len(registry), len(names))
 	}
 }

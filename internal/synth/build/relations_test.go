@@ -30,7 +30,8 @@ import (
 // lists, except the pairs of ids 11, 12 and 13. email is NULL for 10 %.
 // orders has 15 400 rows: customer i has i % 7 orders, customer 42 has
 // 400, and 3 orders have a customer that does not exist. shipped_at is
-// ordered_at plus 1 to 10 days, NULL for 5 %.
+// ordered_at plus 1 to 10 days, NULL for 5 %. total is quantity times
+// unit_price, NULL for 10 %.
 const relationsSQL = `
 CREATE SCHEMA crm;
 CREATE TABLE crm.customers AS
@@ -62,7 +63,8 @@ SELECT
   CAST(5 + ((id * 17) % 1000) / 10 AS DECIMAL(10,2)) AS unit_price,
   TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000) AS ordered_at,
   CASE WHEN id % 20 = 0 THEN NULL
-       ELSE TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000 + 86400 + (id * 104729) % (9 * 86400)) END AS shipped_at
+       ELSE TIMESTAMP '2023-01-01 00:00:00' + to_seconds((id * 7919) % 31536000 + 86400 + (id * 104729) % (9 * 86400)) END AS shipped_at,
+  CAST(CASE WHEN id % 10 = 3 THEN NULL ELSE (1 + (id * 13) % 20) * (5 + ((id * 17) % 1000) / 10) END AS DECIMAL(12,2)) AS total
 FROM o;
 `
 

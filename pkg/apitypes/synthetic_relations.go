@@ -16,6 +16,7 @@ import (
 var relationGenerators = map[SyntheticGenerator]bool{
 	GenTemplate:   true,
 	GenDateOffset: true,
+	GenExpression: true,
 }
 
 // maxTemplateBytes caps the template arg.
@@ -31,6 +32,31 @@ func templateArg(v any) error {
 	}
 	_, _, err := ParseTemplate(s)
 	return err
+}
+
+// maxSQLBytes caps the expression arg sql.
+const maxSQLBytes = 1024
+
+// sqlArg is the shape check of expression.sql. The builder parses it with
+// DuckDB at build start; a comment or a line break could change the
+// meaning of the statement the text is embedded in.
+func sqlArg(v any) error {
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return errors.New("must be a non-empty string")
+	}
+	if len(s) > maxSQLBytes {
+		return fmt.Errorf("must be at most %d bytes", maxSQLBytes)
+	}
+	switch {
+	case strings.ContainsAny(s, ";\x00"):
+		return errors.New("must not hold ; or a NUL byte")
+	case strings.Contains(s, "--"), strings.Contains(s, "/*"):
+		return errors.New("must not hold a comment (-- or /*)")
+	case strings.ContainsAny(s, "\r\n"):
+		return errors.New("must be one line")
+	}
+	return nil
 }
 
 // columnArg is the name of another column of the same table.
@@ -186,7 +212,8 @@ func (c SyntheticColumn) Refs() []string {
 }
 
 // checkTableRelations checks the refs between the columns entries of one
-// table: no column reads itself, and the graph has no cycle. A ref to a
+// table: no column reads itself or an expression column, and the graph
+// has no cycle. A ref to a
 // column without an entry is a leaf; the build checks that it exists.
 // names are the columns keys, sorted.
 func checkTableRelations(t SyntheticTable, path string, names []string) (string, string) {
@@ -207,6 +234,9 @@ func checkTableRelations(t SyntheticTable, path string, names []string) (string,
 			for _, r := range args[a] {
 				if r == low {
 					return path + ".columns." + name + ".args." + a, "refers to the column itself"
+				}
+				if n, ok := byLower[r]; ok && t.Columns[n].Generator == GenExpression {
+					return path + ".columns." + name + ".args." + a, fmt.Sprintf("names expression column %s, which is computed after the other columns", n)
 				}
 			}
 		}

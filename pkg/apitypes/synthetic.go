@@ -170,6 +170,7 @@ const (
 	GenNull             SyntheticGenerator = "null"
 	GenTemplate         SyntheticGenerator = "template"
 	GenDateOffset       SyntheticGenerator = "dateOffset"
+	GenExpression       SyntheticGenerator = "expression"
 )
 
 // argCheck validates one arg value as it arrives from JSON: numbers are
@@ -241,6 +242,7 @@ var syntheticGenerators = map[SyntheticGenerator]genSchema{
 	GenNull:             {args: map[string]argCheck{}},
 	GenTemplate:         {args: map[string]argCheck{"template": templateArg, "lower": boolArg}, required: []string{"template"}, noUnique: true},
 	GenDateOffset:       {args: map[string]argCheck{"from": columnArg, "offset": offsetArg}, required: []string{"from"}},
+	GenExpression:       {args: map[string]argCheck{"sql": sqlArg}, required: []string{"sql"}, noUnique: true},
 }
 
 // sharedArgs are valid on every generator.

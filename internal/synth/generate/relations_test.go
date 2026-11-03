@@ -353,3 +353,43 @@ func TestDateOffsetGolden(t *testing.T) {
 		}
 	}
 }
+
+// expression stages a true marker, NULL only by args.nullRate: without a
+// profile the null rate is 0.
+func TestExpressionMarker(t *testing.T) {
+	g, _ := Lookup(apitypes.GenExpression)
+	for typ, ok := range map[string]bool{"DECIMAL(12,2)": true, "VARCHAR": true, "TIME": true, "ENUM('a')": true, "BLOB": false, "INTEGER[]": false} {
+		if err := g.Check(col("total", typ), nil); (err == nil) != ok {
+			t.Errorf("Check on %s: err = %v", typ, err)
+		}
+	}
+	if st := StageOf(col("total", "DECIMAL(12,2)"), apitypes.GenExpression); st != StageBoolean {
+		t.Errorf("stage = %s, want BOOLEAN", st.SQL())
+	}
+	for _, tc := range []struct {
+		args  Args
+		nulls bool
+	}{{nil, false}, {Args{"nullRate": 0.5}, true}} {
+		cg, err := New(apitypes.GenExpression, col("total", "DOUBLE"), nil, tc.args, streams("total"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var nulls int
+		for i := range 200 {
+			v, err := cg.Next(RowCtx{Index: int64(i)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch v {
+			case nil:
+				nulls++
+			case true:
+			default:
+				t.Fatalf("value %v, want true or NULL", v)
+			}
+		}
+		if (nulls > 0) != tc.nulls {
+			t.Errorf("args %v: %d NULLs", tc.args, nulls)
+		}
+	}
+}

@@ -172,6 +172,9 @@ type builder struct {
 	hash hash.Hash
 	// renamed is set once the snapshot has its final name.
 	renamed bool
+	// exprs are the checked expression columns by lower-case table and
+	// column name.
+	exprs map[string]map[string]exprColumn
 }
 
 func (b *builder) finish(result string, err error) {
@@ -226,6 +229,9 @@ func (b *builder) run(ctx context.Context) error {
 	defer closeAll()
 	if err := conn.QueryRowContext(ctx, "SELECT version()").Scan(&b.rep.DuckDBVersion); err != nil {
 		return b.duckErr("read the DuckDB version", err)
+	}
+	if err := b.checkExpressions(ctx, conn); err != nil {
+		return err
 	}
 	runner := &profile.Runner{Conn: conn, Log: b.log}
 	for i := range b.spec.Tables {
@@ -344,6 +350,8 @@ type column struct {
 	refs []string
 	// by holds the group counts of a column with by, nil otherwise.
 	by *profile.GroupStats
+	// expr is set for an expression column.
+	expr *exprColumn
 }
 
 func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Runner, t *apitypes.SyntheticTable) error {
@@ -395,6 +403,15 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	if rows > 0 {
 		if err := b.resolve(ctx, conn, runner, t, pt, resolver, cols, rows); err != nil {
 			return fail(err)
+		}
+		for _, c := range cols {
+			if c.choice.Generator == apitypes.GenExpression {
+				e, ok := b.exprs[strings.ToLower(t.Name)][strings.ToLower(c.info.Name)]
+				if !ok {
+					return fail(fmt.Errorf("column %s: expression was not checked", c.info.Name))
+				}
+				c.expr = &e
+			}
 		}
 		if order, err = evalOrder(cols); err != nil {
 			return fail(err)
@@ -556,12 +573,12 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			return fmt.Errorf("column %s: unknown generator %q", c.info.Name, choice.Generator)
 		}
 		settings := profile.Effective(choice.Privacy, t.Privacy, b.spec.Privacy)
-		// A template has no profile: without one its null rate defaults to
-		// 0, so its NULLs come from NULL refs only.
+		// A template or an expression has no profile: without one its null
+		// rate defaults to 0. A template's NULLs come from NULL refs only.
 		var prof, genProf *profile.Column
 		var err error
 		needs := g.Needs(gcol, choice.Args)
-		if choice.Generator == apitypes.GenTemplate {
+		if choice.Generator == apitypes.GenTemplate || choice.Generator == apitypes.GenExpression {
 			prof = &profile.Column{}
 		} else {
 			prof, err = runner.Column(ctx, pt, c.info, c.counts, needs, settings, stream(rng.PurposeJitter))
@@ -682,10 +699,8 @@ func stageName(i int) string { return fmt.Sprintf("c%d", i) }
 func (b *builder) write(ctx context.Context, conn *sql.Conn, schema, name string, cols []*column, staged bool) error {
 	target := outCatalog + "." + parser.QuoteIdent(schema) + "." + parser.QuoteIdent(name)
 	defs := make([]string, len(cols))
-	exprs := make([]string, len(cols))
 	for i, c := range cols {
 		defs[i] = parser.QuoteIdent(c.info.Name) + " " + c.snapType
-		exprs[i] = castExpr(stageName(i), c.snapType)
 	}
 	stmts := []string{
 		"CREATE SCHEMA IF NOT EXISTS " + outCatalog + "." + parser.QuoteIdent(schema),
@@ -700,11 +715,14 @@ func (b *builder) write(ctx context.Context, conn *sql.Conn, schema, name string
 		return nil
 	}
 	// preserve_insertion_order (on by default) keeps the staged row order.
-	if _, err := conn.ExecContext(ctx, "INSERT INTO "+target+" SELECT "+strings.Join(exprs, ", ")+" FROM "+stageTable); err != nil {
+	if _, err := conn.ExecContext(ctx, "INSERT INTO "+target+" "+snapshotSelect(cols)); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return b.castError(ctx, conn, cols, err)
+	}
+	if err := b.hashExpressions(ctx, conn, target, cols); err != nil {
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, "DROP TABLE "+stageTable); err != nil {
 		return b.duckErr("drop the staging table", err)
@@ -721,15 +739,28 @@ func castExpr(staged, snapType string) string {
 	return "CAST(" + staged + " AS " + snapType + ")"
 }
 
-// castError finds the column whose cast failed, so the error can name it
-// without the DuckDB text.
+// castError finds the column whose cast or expression failed, so the
+// error can name it without the DuckDB text.
 func (b *builder) castError(ctx context.Context, conn *sql.Conn, cols []*column, err error) error {
 	b.log.Debug("synthetic build: snapshot insert failed", "name", b.name, "error", err)
 	for i, c := range cols {
+		if c.expr != nil {
+			continue
+		}
 		var n int64
 		q := "SELECT count(" + castExpr(stageName(i), c.snapType) + ") FROM " + stageTable
 		if qerr := conn.QueryRowContext(ctx, q).Scan(&n); qerr != nil {
 			return fmt.Errorf("column %s: a value does not cast to %s", c.info.Name, c.snapType)
+		}
+	}
+	for i, c := range cols {
+		if c.expr == nil {
+			continue
+		}
+		var n int64
+		q := "SELECT count(" + exprValue(i, c) + ") FROM (" + innerSelect(cols) + ") AS r"
+		if qerr := conn.QueryRowContext(ctx, q).Scan(&n); qerr != nil {
+			return fmt.Errorf("column %s: the expression fails or does not cast to %s", c.info.Name, c.snapType)
 		}
 	}
 	return errors.New("cannot write the snapshot table")

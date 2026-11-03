@@ -33,6 +33,9 @@ func (b *builder) columnReport(ctx context.Context, conn *sql.Conn, pt profile.T
 	for _, r := range c.refs {
 		cr.DependsOn = append(cr.DependsOn, c.sibs[r].Name)
 	}
+	if c.expr != nil {
+		cr.DependsOn = append(cr.DependsOn, c.expr.refs...)
+	}
 	sort.Strings(cr.DependsOn)
 	settings := c.settings
 	if c.prof == nil {
