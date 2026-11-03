@@ -29,8 +29,13 @@ Sluice serves Prometheus metrics at `GET /metrics` on the [admin API](admin-api.
 | `sluice_schema_cache_misses_total` | counter | `catalog` | Schema cache misses that triggered an introspection. |
 | `sluice_schema_refresh_duration_seconds` | histogram |  | Duration of one read of the tables of a catalog. |
 | `sluice_schema_stale_entries_total` | counter | `catalog` | Number of times a cached entry became stale after a refresh failure. |
+| `sluice_synthetic_build_duration_seconds` | histogram |  | Duration of synthetic builds in the server. |
+| `sluice_synthetic_builds_total` | counter | `result` | Finished synthetic builds in the server. |
+| `sluice_synthetic_spikes` | gauge | `name` | Spikes in the report of the current snapshot. |
+| `sluice_synthetic_stale` | gauge | `name` | 1 when the current snapshot was built from another spec. |
 
 - Sluice also exports the Go runtime metrics (`go_*`) and the process metrics (`process_*`).
 - The `sluice_approval_*` metrics exist only when `approval.publicBaseUrl` is set.
 - A counter with labels appears after its first event.
 - The `sluice_policy_*` metrics count the YAML engine only, also as a member of `composite`.
+- The `sluice_synthetic_*` metrics exist only when a `synthetic` data source is loaded. They count only builds in the server, not `sluice synth build`.

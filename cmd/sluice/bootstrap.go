@@ -33,6 +33,7 @@ import (
 	"github.com/bino-bi/sluice/internal/rewriter"
 	"github.com/bino-bi/sluice/internal/schema"
 	"github.com/bino-bi/sluice/internal/secrets"
+	"github.com/bino-bi/sluice/internal/synth/build"
 	"github.com/bino-bi/sluice/internal/telemetry"
 	"github.com/bino-bi/sluice/internal/transport/admin"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
@@ -75,6 +76,7 @@ type runtimeDeps struct {
 	mcp          *mcp.Server
 	admin        *admin.Server
 	watcher      *config.Watcher
+	synth        *build.Service // nil without a synthetic data source
 	telShutdown  func(context.Context) error
 
 	// applyPolicies makes the policies active that the watcher prepared
@@ -451,6 +453,32 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		deps.applyReload(ctx, cur)
 	})
 
+	// 17. Synthetic builds. Only with a synthetic data source, so its
+	//     metrics exist only then.
+	if hasSynthetic(snap.DataSources) {
+		build.RegisterMetrics()
+		deps.synth = build.NewService(build.ServiceOptions{
+			DataSources: snap.DataSources,
+			Tagger: func() (build.Tagger, error) {
+				return policy.NewColumnTagger(deps.registry.Current())
+			},
+			Secrets:  secrets.NewDataSourceResolver(deps.resolver),
+			Dir:      scfg.Synthetic.Dir,
+			MaxRatio: scfg.Synthetic.MaxRatio,
+			Harden: executor.HardenConfig{
+				MemoryLimit:   scfg.DuckDB.MemoryLimit,
+				Threads:       scfg.DuckDB.Threads,
+				TempDirectory: scfg.DuckDB.TempDir,
+			},
+			Audit:      deps.auditDisp,
+			FailClosed: scfg.Audit.FailClosed,
+			Registry:   deps.sourceReg,
+			Exec:       deps.exec,
+			Schema:     deps.schemaCache,
+			Log:        deps.log,
+		})
+	}
+
 	if scfg.Admin.Enabled {
 		token, err := resolveAdminToken(ctx, deps.resolver, scfg.Admin.Token)
 		if err != nil {
@@ -473,6 +501,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Logger:    deps.log,
 			Reloader:  reloaderFromWatcher(deps.watcher),
 			Audit:     auditTailer(deps.auditFile),
+			Synth:     adminSynthService(deps.synth),
 
 			AuthFailed: deps.authFailed("admin"),
 		})
@@ -566,6 +595,34 @@ func auditTailer(fs *audit.FileSink) admin.AuditTailer {
 	return fs
 }
 
+func hasSynthetic(sources []*apitypes.DataSource) bool {
+	for _, ds := range sources {
+		if ds != nil && ds.Spec.Type == apitypes.DSSynthetic {
+			return true
+		}
+	}
+	return false
+}
+
+// adminSynth gives admin builds the origin admin. The typed-nil guard
+// keeps a nil service from becoming a non-nil interface.
+type adminSynth struct{ svc *build.Service }
+
+func adminSynthService(svc *build.Service) admin.SynthService {
+	if svc == nil {
+		return nil
+	}
+	return adminSynth{svc: svc}
+}
+
+// Start implements admin.SynthService.
+func (a adminSynth) Start(ctx context.Context, name, remoteIP string) (build.BuildView, bool, error) {
+	return a.svc.Start(ctx, name, build.OriginAdmin, remoteIP)
+}
+
+// Status implements admin.SynthService.
+func (a adminSynth) Status(name string) (build.StatusView, error) { return a.svc.Status(name) }
+
 // reloaderFromWatcher adapts the config.Watcher.Reload signature to the
 // admin.Reloader interface. Nil is returned when the watcher is disabled
 // so /admin/reload responds 501 rather than silently succeeding.
@@ -589,6 +646,14 @@ func (d *runtimeDeps) Close(ctx context.Context) {
 	}
 	if d.watcher != nil {
 		_ = d.watcher.Close()
+	}
+	if d.synth != nil {
+		// Before the dispatcher: the end record of a canceled build goes
+		// through it. Before the registry and the executor: a build may
+		// be swapping.
+		if err := d.synth.Close(ctx); err != nil {
+			d.log.Warn("synthetic: builds did not stop in time", "error", err)
+		}
 	}
 	if d.budget != nil {
 		// Final flush so the last window of usage is persisted.

@@ -68,6 +68,7 @@ type Deps struct {
 	Logger    *slog.Logger
 	Reloader  Reloader
 	Approvals PendingLister
+	Synth     SynthService
 
 	// AuthFailed is called for a request with a missing or wrong token,
 	// with the client address and a fixed reason. Nil means no call.

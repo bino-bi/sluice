@@ -72,6 +72,9 @@ type Input struct {
 	Harden executor.HardenConfig
 	// Origin is cli, admin or startup. It goes into the report.
 	Origin string
+	// BuildID is the id of this build. Empty makes a new one. The service
+	// sets it, so its start audit record names the build.
+	BuildID string
 	// Clock returns now. Nil uses time.Now.
 	Clock func() time.Time
 	// Log gets the build log. Raw DuckDB errors go there at debug level.
@@ -108,9 +111,14 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 		return nil, fmt.Errorf("synthetic build: spec hash: %w", err)
 	}
 	start := in.Clock()
-	id, err := newBuildID(start)
-	if err != nil {
-		return nil, fmt.Errorf("synthetic build: build id: %w", err)
+	id := in.BuildID
+	if id == "" {
+		id, err = newBuildID(start)
+		if err != nil {
+			return nil, fmt.Errorf("synthetic build: build id: %w", err)
+		}
+	} else if !ValidBuildID(id) {
+		return nil, fmt.Errorf("synthetic build: %w", ErrInvalidBuildID)
 	}
 	l := Layout{Dir: in.Dir, Name: in.DataSource.Metadata.Name}
 	if err := l.mkdirs(); err != nil {

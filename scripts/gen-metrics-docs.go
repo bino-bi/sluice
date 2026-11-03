@@ -59,6 +59,7 @@ const footer = `
 - The ` + "`sluice_approval_*`" + ` metrics exist only when ` + "`approval.publicBaseUrl`" + ` is set.
 - A counter with labels appears after its first event.
 - The ` + "`sluice_policy_*`" + ` metrics count the YAML engine only, also as a member of ` + "`composite`" + `.
+- The ` + "`sluice_synthetic_*`" + ` metrics exist only when a ` + "`synthetic`" + ` data source is loaded. They count only builds in the server, not ` + "`sluice synth build`" + `.
 `
 
 func main() {

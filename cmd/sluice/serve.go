@@ -119,6 +119,12 @@ Signals:
 				})
 			}
 
+			// build.onStart: after the listeners started, so the server
+			// is ready at once and serves not_built until the swap.
+			if deps.synth != nil {
+				deps.synth.StartMissing()
+			}
+
 			// Block on the first signal or the first transport error.
 			err = g.Wait()
 			if err != nil && !errors.Is(err, context.Canceled) {
