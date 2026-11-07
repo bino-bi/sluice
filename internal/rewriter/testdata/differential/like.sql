@@ -64,3 +64,8 @@ rawfails SELECT id, s ~~ pg_catalog.like_escape('a!_%', '!') FROM t
 
 # GLOB is DuckDB only.
 ERR_SYNTAX SELECT id FROM t WHERE s GLOB 'a*'
+
+# pg_query writes NOT before like_escape without parentheses, so before
+# IS NULL DuckDB groups it another way. Hint: coalesce(...) IS NULL.
+ERR_UNSUPPORTED_SYNTAX SELECT id, (s NOT LIKE 'a!_%' ESCAPE '!') IS NULL FROM t ORDER BY id
+same SELECT id FROM t WHERE s NOT LIKE 'a!_%' ESCAPE '!' ORDER BY id

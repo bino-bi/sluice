@@ -13,7 +13,8 @@ import (
 
 // Algorithm names the generator algorithms. A change of any algorithm
 // that changes the values must change it, so old snapshots show stale.
-const Algorithm = "synth/v1"
+// v2: DuckDB 2.0 computes the profile aggregates a little differently.
+const Algorithm = "synth/v2"
 
 // SpecHash returns the hash of the parts of spec that change the data:
 // "sha256:" and the hex digest of Algorithm and the canonical JSON of

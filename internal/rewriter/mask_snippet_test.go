@@ -116,7 +116,7 @@ func TestMaskSnippet_WholeWrapperItem(t *testing.T) {
 		"nullif(__col__, '')":                       "NULLIF(sluice_src.secret, '') AS secret",
 		"trim(__col__)":                             "TRIM (BOTH  FROM sluice_src.secret) AS secret",
 		"TRIM(LEADING 'a' FROM __col__)":            "TRIM (LEADING 'a' FROM sluice_src.secret) AS secret",
-		"EXTRACT(year FROM __col__)":                "extract ('year' FROM sluice_src.secret) AS secret",
+		"EXTRACT(year FROM __col__)":                "extract ('YEAR' FROM sluice_src.secret) AS secret",
 		"substring(__col__ FROM 1 FOR 3)":           "SUBSTRING(sluice_src.secret FROM 1 FOR 3) AS secret",
 		"position('a' IN __col__)":                  "POSITION('a' IN sluice_src.secret) AS secret",
 		"overlay(__col__ PLACING '*' FROM 1 FOR 2)": "OVERLAY(sluice_src.secret PLACING '*' FROM 1 FOR 2) AS secret",

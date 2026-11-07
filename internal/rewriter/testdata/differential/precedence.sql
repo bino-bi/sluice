@@ -1,7 +1,7 @@
 # DuckDB operators pg_query reads with another precedence: ** sits at the ^
-# level, // at the * level, the lambda -> binds looser than OR, and ->> binds
-# looser than AND, OR and NOT. Hints: pow, divide, x -> (x > 1),
-# (j ->> 'a') = '1'.
+# level and // at the * level. Hints: pow, divide. DuckDB refuses the lambda
+# ->, also with parentheses around its body, and reads j -> 'a' ->> 0 as a
+# lambda.
 
 # Select list.
 ERR_UNSUPPORTED_SYNTAX SELECT 2 * 3 ** 2 FROM t WHERE id = 1
@@ -10,38 +10,38 @@ ERR_UNSUPPORTED_SYNTAX SELECT id, b // 2 + 1 FROM t ORDER BY id
 ERR_UNSUPPORTED_SYNTAX SELECT id, a + b // 2 FROM t ORDER BY id
 ERR_UNSUPPORTED_SYNTAX SELECT id, list_filter(l, x -> x > 1) FROM t ORDER BY id
 ERR_UNSUPPORTED_SYNTAX SELECT id, list_transform(l, x -> x + 1 = 2) FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, flag AND j ->> 'a' = '1' FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id, NOT j ->> 'a' = '1' FROM t ORDER BY id
+same SELECT id, flag AND j ->> 'a' = '1' FROM t ORDER BY id
+same SELECT id, NOT j ->> 'a' = '1' FROM t ORDER BY id
 
 # WHERE.
 ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE b // 2 + 1 = 2 ORDER BY id
 ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE a * 2 ** 2 > 4 ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE flag AND j ->> 'a' = '1' ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE flag OR j ->> 'a' = 'x' ORDER BY id
+same SELECT id FROM t WHERE flag AND j ->> 'a' = '1' ORDER BY id
+same SELECT id FROM t WHERE flag OR j ->> 'a' = 'x' ORDER BY id
 ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE len(list_filter(l, x -> x > 1)) > 0 ORDER BY id
 
 # Nested.
 ERR_UNSUPPORTED_SYNTAX SELECT id, CASE WHEN a // 2 + 1 = 1 THEN 'y' END FROM t ORDER BY id
-ERR_UNSUPPORTED_SYNTAX SELECT count(*) FILTER (WHERE flag AND j ->> 'a' = '1') FROM t
+same SELECT count(*) FILTER (WHERE flag AND j ->> 'a' = '1') FROM t
 ERR_UNSUPPORTED_SYNTAX SELECT id, (SELECT list_filter(l, x -> x > 1)) FROM t ORDER BY id
 
 # The hints.
 same SELECT 2 * pow(3, 2) FROM t WHERE id = 1
 same SELECT id, a * pow(b, 2), power(a, 2) FROM t ORDER BY id
 same SELECT id, divide(b, 2) + 1 FROM t ORDER BY id
-same SELECT id, list_filter(l, x -> (x > 1)) FROM t ORDER BY id
-same SELECT id, list_transform(l, x -> (x + 1 = 2)) FROM t ORDER BY id
+rawfails SELECT id, list_filter(l, x -> (x > 1)) FROM t ORDER BY id
+rawfails SELECT id, list_transform(l, x -> (x + 1 = 2)) FROM t ORDER BY id
 same SELECT id FROM t WHERE flag AND (j ->> 'a') = '1' ORDER BY id
 same SELECT id, NOT ((j ->> 'a') = '1') FROM t ORDER BY id
-same SELECT id FROM t WHERE len(list_filter(l, x -> (x > 1))) > 0 ORDER BY id
+rawfails SELECT id FROM t WHERE len(list_filter(l, x -> (x > 1))) > 0 ORDER BY id
 
 # A lone operator has nothing to group with.
 same SELECT id, a ** 2 FROM t ORDER BY id
 same SELECT id, b // 2 FROM t ORDER BY id
 same SELECT id, j ->> 'a' FROM t ORDER BY id
 same SELECT id, j -> 'a' FROM t ORDER BY id
-same SELECT id, list_transform(l, x -> x * 2) FROM t ORDER BY id
-same SELECT id, list_apply(l, x -> x + a) FROM t ORDER BY id
+rawfails SELECT id, list_transform(l, x -> x * 2) FROM t ORDER BY id
+rawfails SELECT id, list_apply(l, x -> x + a) FROM t ORDER BY id
 
 # Precedence both parsers share.
 same SELECT id, a + b * 2, (a + b) * 2, a - b - 1, a / 2 * 2 FROM t ORDER BY id
@@ -63,7 +63,8 @@ same SELECT id, a & b, a | b, ~a, a << 1, b >> 1 FROM t ORDER BY id
 ERR_SYNTAX SELECT id, a # b FROM t ORDER BY id
 same SELECT id, l @> ARRAY[1], ARRAY[1] <@ l, l && ARRAY[2] FROM t ORDER BY id
 same SELECT id, st.x + 1, (st).y FROM t ORDER BY id
-same SELECT id, j -> 'a' ->> 0, j ->> 'b' FROM t ORDER BY id
+ERR_UNSUPPORTED_SYNTAX SELECT id, j -> 'a' ->> 0, j ->> 'b' FROM t ORDER BY id
+same SELECT id, (j -> 'a') ->> 0, j ->> 'b' FROM t ORDER BY id
 same SELECT id FROM t WHERE (j ->> 'a') = '1' OR (j ->> 'a') = 'x' ORDER BY id
 same SELECT id, l[1] + l[2], l[1:2] FROM t ORDER BY id
 same SELECT id, f + 0.5 * 2, f / 3 FROM t ORDER BY id

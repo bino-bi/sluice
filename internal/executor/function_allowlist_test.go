@@ -51,8 +51,8 @@ WHERE database_name = 'system' AND schema_name = 'main'`)
 
 	for _, name := range parser.AllowedExprFunctions() {
 		got := types[name]
-		if !got["scalar"] && !got["aggregate"] && !got["macro"] {
-			t.Errorf("expression function %q is not a scalar, aggregate or macro in system.main (types: %v)", name, got)
+		if !got["scalar"] && !got["aggregate"] && !got["window"] && !got["macro"] {
+			t.Errorf("expression function %q is not a scalar, aggregate, window or macro in system.main (types: %v)", name, got)
 		}
 		// A macro may wrap a subquery over a table function; such a macro
 		// reads state the gate cannot see.

@@ -74,13 +74,17 @@ func duckDBNode(n *pg.Node) *pg.Node {
 }
 
 // likeEscapeFuncs maps the operator of x [NOT] [I]LIKE p ESCAPE e to the
-// function DuckDB reads it as. pg_query reads it as x <op>
-// pg_catalog.like_escape(p, e), which DuckDB has no 2-argument form of.
-var likeEscapeFuncs = map[string]string{
-	"~~":   "like_escape",
-	"!~~":  "not_like_escape",
-	"~~*":  "ilike_escape",
-	"!~~*": "not_ilike_escape",
+// function DuckDB reads it as, and whether DuckDB puts NOT around the call.
+// pg_query reads it as x <op> pg_catalog.like_escape(p, e), which DuckDB
+// has no 2-argument form of.
+var likeEscapeFuncs = map[string]struct {
+	fn  string
+	not bool
+}{
+	"~~":   {"like_escape", false},
+	"!~~":  {"like_escape", true},
+	"~~*":  {"ilike_escape", false},
+	"!~~*": {"ilike_escape", true},
 }
 
 func likeEscapeCall(e *pg.A_Expr) *pg.Node {
@@ -95,7 +99,11 @@ func likeEscapeCall(e *pg.A_Expr) *pg.Node {
 		!isQualifiedName(call.Funcname, "pg_catalog", "like_escape") {
 		return nil
 	}
-	return pg.MakeFuncCallNode([]*pg.Node{pg.MakeStrNode(fn)}, []*pg.Node{e.Lexpr, call.Args[0], call.Args[1]}, e.Location)
+	n := pg.MakeFuncCallNode([]*pg.Node{pg.MakeStrNode(fn.fn)}, []*pg.Node{e.Lexpr, call.Args[0], call.Args[1]}, e.Location)
+	if fn.not {
+		n = pg.MakeBoolExprNode(pg.BoolExprType_NOT_EXPR, []*pg.Node{n}, e.Location)
+	}
+	return n
 }
 
 // intervalUnits maps the typmod of INTERVAL 'n' <unit> to the function
@@ -150,30 +158,64 @@ func normalizeTypeName(tn *pg.TypeName, src string) {
 		return
 	}
 	switch tn.Names[1].GetString_().GetSval() {
-	case "json", "bit", "varbit":
-		// DuckDB writes these types without the pg_catalog schema. It has
-		// no varbit type, so that one fails at bind as the raw text does.
+	case "json":
+		// DuckDB writes this type without the pg_catalog schema.
 		tn.Names = tn.Names[1:]
-	case "float8":
-		// pg_query reads a bare FLOAT as float8, DuckDB as REAL.
-		if len(tn.Typmods) == 0 && isBareFloat(src, tn.Location) {
+	case "bit", "varbit":
+		// DuckDB reads BIT [(n)] and BIT VARYING [(n)] as BIT without a
+		// length. pg_query reads a bare BIT as bit(1).
+		tn.Names = []*pg.Node{pg.MakeStrNode("bit")}
+		tn.Typmods = nil
+	case "float8", "float4":
+		// pg_query reads a bare FLOAT as float8, DuckDB as REAL. DuckDB
+		// keeps FLOAT(n) as written, pg_query resolves it to a type.
+		switch {
+		case len(tn.Typmods) == 0 && isBareWord(src, tn.Location, "float"):
 			tn.Names[1] = pg.MakeStrNode("float4")
+		case len(tn.Typmods) == 0 && floatPrecision(src, tn.Location) > 0:
+			tn.Names = []*pg.Node{pg.MakeStrNode("float")}
+			tn.Typmods = []*pg.Node{pg.MakeAConstIntNode(floatPrecision(src, tn.Location), -1)}
 		}
 	}
 }
 
-// isBareFloat reports whether src has the word FLOAT at loc, without a
-// precision after it. FLOAT(n) is resolved by both parsers alike.
-func isBareFloat(src string, loc int32) bool {
-	const word = "float"
+// isBareWord reports whether src has word at loc, without a modifier list
+// after it.
+func isBareWord(src string, loc int32, word string) bool {
+	rest, ok := afterWord(src, loc, word)
+	return ok && !strings.HasPrefix(rest, "(")
+}
+
+// afterWord returns the text after word at loc with leading space removed,
+// and whether word stands at loc.
+func afterWord(src string, loc int32, word string) (string, bool) {
 	if loc < 0 || int(loc)+len(word) > len(src) || !equalFoldASCII(src[loc:int(loc)+len(word)], word) {
-		return false
+		return "", false
 	}
 	rest := src[int(loc)+len(word):]
 	if rest != "" && isIdentByte(rest[0]) {
-		return false
+		return "", false
 	}
-	return !strings.HasPrefix(strings.TrimLeft(rest, " \t\n\r\f\v"), "(")
+	return strings.TrimLeft(rest, " \t\n\r\f\v"), true
+}
+
+// floatPrecision returns n of FLOAT(n) at loc, or 0 when there is none.
+func floatPrecision(src string, loc int32) int64 {
+	rest, ok := afterWord(src, loc, "float")
+	if !ok || !strings.HasPrefix(rest, "(") {
+		return 0
+	}
+	rest = strings.TrimLeft(rest[1:], " \t\n\r\f\v")
+	var n int64
+	k := 0
+	for k < len(rest) && rest[k] >= '0' && rest[k] <= '9' && n < 1000 {
+		n = n*10 + int64(rest[k]-'0')
+		k++
+	}
+	if k == 0 || !strings.HasPrefix(strings.TrimLeft(rest[k:], " \t\n\r\f\v"), ")") {
+		return 0
+	}
+	return n
 }
 
 func isIdentByte(c byte) bool {
@@ -181,20 +223,21 @@ func isIdentByte(c byte) bool {
 		('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
-// duckDBExtractKeywords are the EXTRACT units DuckDB's grammar has as
-// keywords. It writes them as the lower-case singular unit.
-var duckDBExtractKeywords = map[string]bool{
-	"year": true, "years": true, "month": true, "months": true, "day": true, "days": true,
-	"hour": true, "hours": true, "minute": true, "minutes": true, "second": true, "seconds": true,
-	"millisecond": true, "milliseconds": true, "microsecond": true, "microseconds": true,
-	"week": true, "weeks": true, "quarter": true, "quarters": true, "decade": true, "decades": true,
-	"century": true, "centuries": true, "millennium": true, "millennia": true,
+// duckDBExtractKeywords maps the EXTRACT units DuckDB's grammar has as
+// keywords to the unit it writes for them.
+var duckDBExtractKeywords = map[string]string{
+	"year": "YEAR", "years": "YEAR", "month": "MONTH", "months": "MONTH", "day": "DAY", "days": "DAY",
+	"hour": "HOUR", "hours": "HOUR", "minute": "MINUTE", "minutes": "MINUTE", "second": "SECOND", "seconds": "SECOND",
+	"millisecond": "MILLISECONDS", "milliseconds": "MILLISECONDS", "microsecond": "MICROSECONDS", "microseconds": "MICROSECONDS",
+	"week": "WEEK", "weeks": "WEEK", "quarter": "QUARTER", "quarters": "QUARTER", "decade": "DECADE", "decades": "DECADE",
+	"century": "CENTURY", "centuries": "CENTURY", "millennium": "MILLENNIUM", "millennia": "MILLENNIUM",
 }
 
-// restoreExtractUnit gives the unit of EXTRACT(<unit> FROM x) the spelling
-// of src. pg_query folds an identifier unit to lower case. DuckDB keeps its
-// spelling in the date_part constant unless the unit is one of its
-// keywords: EXTRACT(EPOCH FROM ts) is date_part('EPOCH', ts) there.
+// restoreExtractUnit gives the unit of EXTRACT(<unit> FROM x) the text
+// DuckDB puts in the date_part constant. pg_query folds an identifier unit
+// to lower case. DuckDB writes a keyword unit as in duckDBExtractKeywords
+// and keeps the spelling of any other: EXTRACT(Epoch FROM ts) is
+// date_part('Epoch', ts) there.
 func restoreExtractUnit(fc *pg.FuncCall, src string) {
 	if fc.Funcformat != pg.CoercionForm_COERCE_SQL_SYNTAX || len(fc.Args) != 2 ||
 		!isQualifiedName(fc.Funcname, "pg_catalog", "extract") {
@@ -202,12 +245,16 @@ func restoreExtractUnit(fc *pg.FuncCall, src string) {
 	}
 	c := fc.Args[0].GetAConst()
 	unit := c.GetSval()
-	if unit == nil || c.Location < 0 || duckDBExtractKeywords[unit.Sval] {
+	if unit == nil || c.Location < 0 {
 		return
 	}
 	// A quoted unit starts with a quote, so it never folds to unit.Sval.
 	start, end := int(c.Location), int(c.Location)+len(unit.Sval)
 	if end > len(src) || !equalFoldASCII(src[start:end], unit.Sval) || (end < len(src) && isIdentByte(src[end])) {
+		return
+	}
+	if kw, ok := duckDBExtractKeywords[unit.Sval]; ok {
+		unit.Sval = kw
 		return
 	}
 	unit.Sval = src[start:end]
@@ -359,16 +406,18 @@ func duckDBVerdict(ctx context.Context, pc ParseChecker, src string, tree *pg.Pa
 // DuckDB cannot parse.
 const errorTreePrefix = `{"error":true`
 
-// queryLocationKey holds a byte offset into the statement text.
-const queryLocationKey = `"query_location":`
+// skippedKeys are members that do not change what a statement means:
+// byte offsets into the text, and whether a function was written as an
+// operator (LIKE ... ESCAPE is the operator form of the like_escape call
+// the normalizer writes).
+var skippedKeys = []string{`"query_location":`, `"query_location_length":`, `"is_operator":`}
 
 // sameDuckDBParse reports whether two json_serialize_sql trees describe
 // the same statement, and whether the first one parsed. It walks both in
 // one pass and:
-//   - skips query locations;
-//   - reads the schema "main" as no schema, because DuckDB qualifies the
-//     like_escape it expands LIKE ... ESCAPE to;
-//   - compares a string constant ("value") exactly;
+//   - skips the members in skippedKeys;
+//   - compares the text of a constant ("text", "value") exactly. DuckDB
+//     names an unaliased constant column after that text;
 //   - compares everything else without regard to ASCII case, as DuckDB
 //     resolves names.
 func sameDuckDBParse(rawJSON, depJSON string) (same, rawParses bool) {
@@ -382,7 +431,7 @@ func sameDuckDBParse(rawJSON, depJSON string) (same, rawParses bool) {
 	i, j := 0, 0
 	for {
 		// i and j are outside a string here.
-		i, j = skipQueryLocation(a, i), skipQueryLocation(b, j)
+		i, j = skipMembers(a, i), skipMembers(b, j)
 		if i == len(a) || j == len(b) {
 			return i == len(a) && j == len(b), true
 		}
@@ -400,45 +449,42 @@ func sameDuckDBParse(rawJSON, depJSON string) (same, rawParses bool) {
 		}
 		key := a[i:ei]
 		i, j = ei, ej
-		if key != `"value"` && key != `"schema"` {
+		if key != `"text"` && key != `"value"` {
 			continue
 		}
-		// Only a key followed by a string value gets the special rules.
+		// Only a key followed by a string value is compared exactly.
 		if !strings.HasPrefix(a[i:], `:"`) || !strings.HasPrefix(b[j:], `:"`) {
 			continue
 		}
 		i++
 		j++
 		ei, ej = jsonStringEnd(a, i), jsonStringEnd(b, j)
-		if ei < 0 || ej < 0 {
-			return false, true
-		}
-		va, vb := a[i:ei], b[j:ej]
-		if key == `"value"` {
-			if va != vb {
-				return false, true
-			}
-		} else if !equalFoldASCII(mainAsNoSchema(va), mainAsNoSchema(vb)) {
+		if ei < 0 || ej < 0 || a[i:ei] != b[j:ej] {
 			return false, true
 		}
 		i, j = ei, ej
 	}
 }
 
-// skipQueryLocation returns the index after a query_location member at
-// s[i:], or i when there is none.
-func skipQueryLocation(s string, i int) int {
-	if !strings.HasPrefix(s[i:], queryLocationKey) {
-		return i
+// skipMembers returns the index after the skippedKeys members at s[i:],
+// or i when there is none. Their values are numbers or booleans.
+func skipMembers(s string, i int) int {
+	for {
+		k := 0
+		for k < len(skippedKeys) && !strings.HasPrefix(s[i:], skippedKeys[k]) {
+			k++
+		}
+		if k == len(skippedKeys) {
+			return i
+		}
+		i += len(skippedKeys[k])
+		for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] >= 'a' && s[i] <= 'z') {
+			i++
+		}
+		if i < len(s) && s[i] == ',' {
+			i++
+		}
 	}
-	i += len(queryLocationKey)
-	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-		i++
-	}
-	if i < len(s) && s[i] == ',' {
-		i++
-	}
-	return i
 }
 
 // jsonStringEnd returns the index after the JSON string that starts at
@@ -453,13 +499,6 @@ func jsonStringEnd(s string, i int) int {
 		}
 	}
 	return -1
-}
-
-func mainAsNoSchema(quoted string) string {
-	if equalFoldASCII(quoted, `"main"`) {
-		return `""`
-	}
-	return quoted
 }
 
 // equalFoldASCII folds A-Z only. strings.EqualFold would also match the

@@ -711,7 +711,7 @@ func checkKeywordRefusal(t *testing.T, position, word, code string, err error) {
 
 func duckDBKeywords(t *testing.T, e *executor.Executor) []string {
 	t.Helper()
-	rows, err := e.DB().QueryContext(context.Background(), "SELECT keyword_name FROM duckdb_keywords() ORDER BY 1")
+	rows, err := e.DB().QueryContext(context.Background(), "SELECT DISTINCT keyword_name FROM duckdb_keywords() ORDER BY 1")
 	if err != nil {
 		t.Fatalf("duckdb_keywords: %v", err)
 	}

@@ -13,18 +13,25 @@ ERR_SYNTAX SELECT id FROM t WHERE a = 0x1 ORDER BY id
 ERR_SYNTAX SELECT id, CASE WHEN a > 0b1 THEN 1 END FROM t ORDER BY id
 same SELECT 31, 5, 15, -16 FROM t WHERE id = 1
 
-# DuckDB cannot parse U& strings, \u escapes in E strings, or a bare alias
-# that is a DuckDB keyword.
-ERR_SYNTAX SELECT E'\u0041' FROM t WHERE id = 1
-ERR_SYNTAX SELECT E'\U0001F642' FROM t WHERE id = 1
-ERR_SYNTAX SELECT id FROM t WHERE s = E'\u0041lice'
-ERR_SYNTAX SELECT U&'d\0061t\+000061' FROM t WHERE id = 1
+# DuckDB reads U& as the operator & and does not decode \u in E strings, so
+# the trees differ. It cannot parse a bare alias that is a DuckDB keyword.
+ERR_UNSUPPORTED_SYNTAX SELECT E'\u0041' FROM t WHERE id = 1
+ERR_UNSUPPORTED_SYNTAX SELECT E'\U0001F642' FROM t WHERE id = 1
+ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE s = E'\u0041lice'
+ERR_UNSUPPORTED_SYNTAX SELECT U&'d\0061t\+000061' FROM t WHERE id = 1
 ERR_SYNTAX SELECT id, 1 at FROM t
-ERR_SYNTAX SELECT id FROM t WHERE s = U&'bob'
+ERR_UNSUPPORTED_SYNTAX SELECT id FROM t WHERE s = U&'bob'
 
 # Number forms both parsers read alike.
-same SELECT 1_000, 1e3, .5, 5., 1.5e-3, 123456789012, 9223372036854775807 FROM t WHERE id = 1
-same SELECT id, a + 1_000, a * 1e3, a + .5 FROM t ORDER BY id
+same SELECT 1e3, .5, 5., 1.5e-3, 123456789012, 9223372036854775807 FROM t WHERE id = 1
+same SELECT id, a + 1000, a * 1e3, a + .5 FROM t ORDER BY id
+# DuckDB keeps the text of a number and names an unaliased column after it.
+# The deparse writes an integer without digit separators and leading zeros,
+# so another column of that name could be read. Hint: 1000, 7.
+ERR_UNSUPPORTED_SYNTAX SELECT 1_000 AS k FROM t WHERE id = 1
+ERR_UNSUPPORTED_SYNTAX SELECT id, a + 1_000 FROM t ORDER BY id
+ERR_UNSUPPORTED_SYNTAX SELECT s."7" FROM (SELECT 007, id AS "7" FROM t) s ORDER BY 1
+ERR_UNSUPPORTED_SYNTAX SELECT q."10" FROM (SELECT 1_0, b AS "10" FROM t) q ORDER BY 1
 same SELECT id FROM t WHERE f > 1e3 ORDER BY id
 same SELECT id FROM t WHERE n = 1.50 OR n = -2.25 ORDER BY id
 same SELECT 170141183460469231731687303715884105727, -170141183460469231731687303715884105727 FROM t WHERE id = 1

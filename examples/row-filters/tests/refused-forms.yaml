@@ -63,33 +63,6 @@ cases:
     sql: "SELECT id FROM shop.main.orders WHERE coalesce(region = 'eu' OR status = 'open') IS NULL"
     expect: { outcome: allow, rewrittenSqlContains: ["COALESCE("] }
 
-  - name: a lambda with a comparison
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT list_filter(list_value(1, 2, 3), x -> x > 1) AS l FROM shop.main.orders"
-    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
-  - name: the lambda body in parentheses
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT list_filter(list_value(1, 2, 3), x -> (x > 1)) AS l FROM shop.main.orders"
-    expect: { outcome: allow, rewrittenSqlContains: ["list_filter("] }
-
-  - name: a JSON text operator next to AND
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT id FROM shop.main.orders WHERE status = 'open' AND '{\"a\":1}'::json ->> 'a' = '1'"
-    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
-  - name: the JSON text operator in parentheses
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT id FROM shop.main.orders WHERE status = 'open' AND ('{\"a\":1}'::json ->> 'a') = '1'"
-    expect: { outcome: allow, rewrittenSqlContains: ["->>"] }
-
-  - name: EXTRACT with a plural unit
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT id, EXTRACT(days FROM DATE '2026-01-01') AS d FROM shop.main.orders"
-    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
-  - name: EXTRACT with a singular unit
-    identity: { subject: ana, groups: [sales] }
-    sql: "SELECT id, EXTRACT(day FROM DATE '2026-01-01') AS d FROM shop.main.orders"
-    expect: { outcome: allow, rewrittenSqlContains: ["FROM"] }
-
   - name: a nested ARRAY without the inner keyword
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, ARRAY[[1, 2], [3, 4]] AS a FROM shop.main.orders"
@@ -142,11 +115,11 @@ cases:
   - name: a unicode escape
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, E'\\u0041' AS x FROM shop.main.orders"
-    expect: { errorCode: ERR_SYNTAX }
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
   - name: a unicode string
     identity: { subject: ana, groups: [sales] }
     sql: "SELECT id, U&'\\0041' AS x FROM shop.main.orders"
-    expect: { errorCode: ERR_SYNTAX }
+    expect: { errorCode: ERR_UNSUPPORTED_SYNTAX }
 
   - name: a bare alias that DuckDB reads as a keyword
     identity: { subject: ana, groups: [sales] }

@@ -70,7 +70,7 @@ same WITH c AS (SELECT id FROM t WHERE iv > INTERVAL '1' HOUR) SELECT count(*) F
 same SELECT x.id, x.later FROM (SELECT id, ts + INTERVAL '2' DAY AS later FROM t) x ORDER BY x.id
 same SELECT id, coalesce(iv, INTERVAL '0' SECOND) + INTERVAL '5' MINUTE FROM t ORDER BY id
 same SELECT t.id FROM t JOIN u ON u.id = t.id AND u.d = t.d + INTERVAL '7' DAY ORDER BY t.id
-same SELECT id, list_transform(l, x -> d + to_days(x)) FROM t ORDER BY id
+rawfails SELECT id, list_transform(l, x -> d + to_days(x)) FROM t ORDER BY id
 
 # Explicit casts keep a typmod both parsers ignore.
 same SELECT id, '1'::interval day FROM t ORDER BY id

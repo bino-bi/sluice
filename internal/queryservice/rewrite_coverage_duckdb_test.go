@@ -1437,7 +1437,7 @@ func TestExecute_StatementRefusedByDuckDB(t *testing.T) {
 		{"constant mask parsed as a date", constantEmailPolicy, "SELECT strptime(email, '%Y-%m-%d') AS d FROM shop.main.customers"},
 		{"scalar subquery with two rows", "", "SELECT id FROM shop.main.customers WHERE id = (SELECT id FROM shop.main.customers)"},
 		{"unknown type", "", "SELECT CAST(id AS nosuchtype) AS n FROM shop.main.customers"},
-		{"USING on the null-masked email", "", "SELECT c.id FROM shop.main.customers c JOIN (SELECT 'alice@acme.test' AS email) x USING (email)"},
+		{"lambda", "", "SELECT list_transform(ARRAY[c], x -> x.email) AS e FROM shop.main.customers c"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1794,17 +1794,17 @@ func TestExecute_SchemaLoadErrorCodesUnderStar(t *testing.T) {
 	}
 }
 
-// The gateway passes these forms on and DuckDB 1.5.5 refuses them. Each one
+// The gateway passes these forms on and DuckDB 2.0.0 refuses them. Each one
 // reads the table wrapper (golden fixture 104, the rawfails lines of the
 // differential corpus). When a DuckDB release serves one, this test fails:
-// pin the masked rows then.
+// pin the masked rows then, as TestExecute_StarOfOuterTableReadsTheWrapper
+// does.
 func TestExecute_FormsDuckDBRefusesReadTheWrapper(t *testing.T) {
 	svc, ex, _ := newHelloSluiceService(t)
 	for _, sql := range []string{
 		"SELECT to_json(c.*) AS j FROM shop.main.customers c",
 		"SELECT row(c.*) AS r FROM shop.main.customers c",
 		"SELECT struct_pack(c.*) AS r FROM shop.main.customers c",
-		"SELECT x.email FROM shop.main.customers c, LATERAL (SELECT c.*) x",
 		"SELECT x.email FROM shop.main.customers c, LATERAL (SELECT *) x",
 		"SELECT shop.main.customers.email FROM shop.main.customers c",
 	} {
@@ -1818,6 +1818,26 @@ func TestExecute_FormsDuckDBRefusesReadTheWrapper(t *testing.T) {
 		if ex.calls != before+1 {
 			t.Errorf("%s: executor ran %d times, want 1", sql, ex.calls-before)
 		}
+	}
+}
+
+// DuckDB 2.0 expands a star that names an outer table. It reads the table
+// wrapper, so the null-masked email stays NULL.
+func TestExecute_StarOfOuterTableReadsTheWrapper(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t)
+	rows, err := runRows(svc, "SELECT x.email FROM shop.main.customers c, LATERAL (SELECT c.*) x")
+	if got := fmt.Sprint(rows); err != nil || got != "[[<nil>] [<nil>]]" {
+		t.Errorf("rows = %s, err = %v, want two NULL emails", got, err)
+	}
+}
+
+// DuckDB 2.0 gives the null-masked email the type NULL, so a USING join on
+// it is served and matches no row.
+func TestExecute_UsingOnNullMaskedColumnMatchesNothing(t *testing.T) {
+	svc, _, _ := newHelloSluiceService(t)
+	rows, err := runRows(svc, "SELECT c.id FROM shop.main.customers c JOIN (SELECT 'alice@acme.test' AS email) x USING (email)")
+	if err != nil || len(rows) != 0 {
+		t.Errorf("rows = %v, err = %v, want no rows", rows, err)
 	}
 }
 
@@ -2030,7 +2050,6 @@ func TestExecute_PlainStatementDuckDBCannotParse(t *testing.T) {
 	svc, _, _ := newHelloSluiceService(t, approvalOnAdminUsers)
 	for _, sql := range []string{
 		"SELECT INTERVAL '1 02' DAY TO HOUR FROM shop.main.orders",
-		`SELECT U&'\0041' FROM shop.main.orders`,
 		"SELECT 1 at FROM shop.main.orders",
 		"SELECT id FROM shop.main.orders FOR UPDATE",
 		"SELECT id FROM shop.main.orders WHERE id = 0x1",
@@ -2041,6 +2060,10 @@ func TestExecute_PlainStatementDuckDBCannotParse(t *testing.T) {
 		} else if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeSyntax {
 			t.Errorf("%s: code = %s (%s), want ERR_SYNTAX", sql, ae.Code, ae.Message)
 		}
+	}
+	// DuckDB reads U& as the operator & on a column U, pg_query as a string.
+	if _, err := runRows(svc, `SELECT U&'\0041' FROM shop.main.orders`); pkgerr.FromError(err).Code != pkgerr.CodeUnsupportedSyntax {
+		t.Errorf("U& string: err = %v, want ERR_UNSUPPORTED_SYNTAX", err)
 	}
 }
 
@@ -2129,7 +2152,6 @@ func TestExecute_FormerMaskRefusalsServeMaskedValues(t *testing.T) {
 		{"whole row without a sort key", "SELECT c FROM shop.main.customers c", "", 2},
 		{"whole row expanded by unnest", "SELECT unnest(c) FROM shop.main.customers c", "", 2},
 		{"whole row field by name", "SELECT struct_extract(c, 'email') AS e FROM shop.main.customers c ORDER BY c.id", twoNulls, 0},
-		{"whole row in a lambda", "SELECT list_transform(ARRAY[c], x -> x.email) AS e FROM shop.main.customers c ORDER BY c.id", "[[[<nil>]] [[<nil>]]]", 0},
 		{"whole row in an aggregate", "SELECT max(c) FROM shop.main.customers c", "[[" + bobRow + "]]", 0},
 		{"table alias named like the masked column", "SELECT email FROM shop.main.customers email", twoNulls, 0},
 		{"star in a function that drops it", "SELECT count(c.*) AS n FROM shop.main.customers c", "[[2]]", 0},

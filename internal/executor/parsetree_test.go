@@ -72,12 +72,12 @@ func TestParseTreesTextStaysData(t *testing.T) {
 	}{
 		{"literal breakout", `x')::VARCHAR, getenv('HOME`, []string{`{"error":true`}},
 		{"breakout after a valid statement", `SELECT 1')::VARCHAR, (SELECT getenv('HOME')) --`, []string{`{"error":true`}},
-		{"doubled quote", `SELECT 'it''s' AS q`, []string{`"value":"it's"`}},
-		{"backslash", `SELECT 'a\b' AS q`, []string{`"value":"a\\b"`}},
-		{"escape string", `SELECT E'\x41\'' AS q`, []string{`"value":"A'"`}},
-		{"dollar quote", `SELECT $$it's$$ AS q`, []string{`"value":"it's"`}},
+		{"doubled quote", `SELECT 'it''s' AS q`, []string{`"text":"it's"`}},
+		{"backslash", `SELECT 'a\b' AS q`, []string{`"text":"a\\b"`}},
+		{"escape string", `SELECT E'\x41\'' AS q`, []string{`"text":"A'"`}},
+		{"dollar quote", `SELECT $$it's$$ AS q`, []string{`"text":"it's"`}},
 		{"comments", "SELECT 1 /* ' */ AS q -- '\n", []string{`"alias":"q"`}},
-		{"multibyte", `SELECT 'äöü日本' AS "列"`, []string{`"value":"äöü日本"`, `"alias":"列"`}},
+		{"multibyte", `SELECT 'äöü日本' AS "列"`, []string{`"text":"äöü日本"`, `"alias":"列"`}},
 		{"function not run", `SELECT getenv('HOME') AS h`, []string{`"function_name":"getenv"`}},
 		{"not a SELECT", `ATTACH 'x.db' AS x`, []string{`{"error":true`}},
 	}

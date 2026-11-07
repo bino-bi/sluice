@@ -139,9 +139,11 @@ func TestCheckExpression(t *testing.T) {
 		{"quantity IN (SELECT 1)", "uses a subquery, which is not allowed"},
 		{"row_number() OVER ()", "uses a window function, which is not allowed"},
 		{"list_transform(quantity, x -> x)", "uses a lambda, which is not allowed"},
-		{"[quantity]", "calls function list_value with a schema, which is not allowed"},
 		{"status COLLATE nocase", "uses COLLATE, which is not allowed"},
 		{"CAST(status AS crm.g)", "casts to a named type, which is not allowed"},
+		{"CAST(status AS g)", "casts to a named type, which is not allowed"},
+		{"CAST(status AS g[])", "casts to a named type, which is not allowed"},
+		{"CAST(status AS STRUCT(a g))", "casts to a named type, which is not allowed"},
 		{"o.quantity", "names column o.quantity, which is not a column of the table"},
 		{"nope + 1", "names column nope, which is not a column of the table"},
 		{"quantity + Other", "names column Other, which is an expression column"},
@@ -159,6 +161,8 @@ func TestCheckExpression(t *testing.T) {
 		"coalesce(abs(-quantity), 0) BETWEEN 1 AND 5 AND NOT false": {"quantity"},
 		"status LIKE 'p%' OR status IS NULL":                        {"status"},
 		"round(unit_price::DOUBLE, 1)":                              {"unit_price"},
+		"CAST(quantity AS DECIMAL(12, 2)[])":                        {"quantity"},
+		"[quantity]":                                                {"quantity"},
 		"42":                                                        {},
 	} {
 		refs, err := b.checkExpression(ctx, conn, sql, cols, exprCols)

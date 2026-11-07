@@ -137,16 +137,17 @@ On a table with a row filter or column mask, Sluice refuses these forms. A query
 | A table without alias named `show`, `at`, `by`, `pivot` or a similar DuckDB keyword: `FROM shop.main.show` | `ERR_UNSUPPORTED_SYNTAX` | `FROM shop.main.show s` |
 | `**` or `//` beside another arithmetic operator | `ERR_UNSUPPORTED_SYNTAX` | `pow(a, b)`, `divide(a, b)` |
 | A condition in parentheses before `IS NULL`, `IN`, `BETWEEN`, `= ANY` | `ERR_UNSUPPORTED_SYNTAX` | `coalesce(a OR b) IS NULL` |
-| Lambda with a comparison: `x -> x > 1` | `ERR_UNSUPPORTED_SYNTAX` | `x -> (x > 1)` |
-| `->>` beside `AND`, `OR`, `NOT` | `ERR_UNSUPPORTED_SYNTAX` | `(j ->> 'a') = '1'` |
-| `EXTRACT(days FROM d)` | `ERR_UNSUPPORTED_SYNTAX` | `EXTRACT(day FROM d)` |
+| Type with the `pg_catalog` schema: `'12'::pg_catalog.int4` | `ERR_UNSUPPORTED_SYNTAX` | `'12'::INTEGER` |
+| Integer with `_` or leading zeros: `1_000`, `007` | `ERR_UNSUPPORTED_SYNTAX` | `1000`, `7` |
 | `ARRAY[[1, 2], [3, 4]]` | `ERR_UNSUPPORTED_SYNTAX` | `ARRAY[ARRAY[1, 2], ARRAY[3, 4]]` |
 | Quoted DuckDB keyword: `WITH "at" AS` | `ERR_UNSUPPORTED_SYNTAX` | Another name |
 | Some reserved words as a named argument: `struct_pack("default" := id)` | `ERR_UNSUPPORTED_SYNTAX` | Another name |
 | Bare keyword alias: `SELECT 1 at` | `ERR_SYNTAX` | `SELECT 1 AS "at"` |
 | `0x1f`, `0o17`, `0b11` | `ERR_SYNTAX`. At the end of a select item: `ERR_UNSUPPORTED_SYNTAX` | The decimal number |
 | `INTERVAL '1 02' DAY TO HOUR` | `ERR_SYNTAX` | `INTERVAL '1 day 2 hours'` |
-| `E'\u0041'`, `U&'\0041'` | `ERR_SYNTAX` | The character itself |
+| `E'\u0041'`, `U&'\0041'` | `ERR_UNSUPPORTED_SYNTAX` | The character itself |
+
+DuckDB 2.0 refuses the lambda `x -> x + 1`, and reads `j -> 'a' ->> 0` as a lambda. A query with a lambda fails with `ERR_QUERY_FAILED`. On a filtered or masked table a body like `x -> x > 1` is refused first with `ERR_UNSUPPORTED_SYNTAX`. The new form `lambda x: x + 1` is not PostgreSQL SQL, so Sluice cannot parse it either. Write `(j -> 'a') ->> 0` for the JSON path.
 
 ```bash
 --8<-- "examples/row-filters/steps/03-refused-form.sh"
