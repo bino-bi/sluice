@@ -124,6 +124,9 @@ func (c *ServerConfig) Validate() error {
 	if c.Sample.MaxRows < 1 {
 		errs = append(errs, errors.New("sample.maxRows: must be at least 1"))
 	}
+	if c.Approval.MaxPendingPerSubject < 1 {
+		errs = append(errs, errors.New("approval.maxPendingPerSubject: must be at least 1"))
+	}
 	if c.Sample.MinGroupRows < 0 {
 		errs = append(errs, errors.New("sample.minGroupRows: must not be negative (0 keeps all groups)"))
 	}

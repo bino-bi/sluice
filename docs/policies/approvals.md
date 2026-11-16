@@ -110,6 +110,7 @@ With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --js
 | `approval.requestTtl` | 15m | Life of a pending approval. |
 | `approval.grantTtl` | 5m | Life of a grant. |
 | `approval.maxPending` | 1000 | Maximum pending approvals. A further query gets 429 `ERR_RATE_LIMITED`. |
+| `approval.maxPendingPerSubject` | 10 | Maximum pending approvals of one subject. A further query of that subject gets 429 `ERR_RATE_LIMITED`. |
 | `approval.sqlSampleBytes` | 2048 | Longest `sql` in the webhook. 0 sends none. |
 | `approval.persist` | `false` | Keeps approvals, grants and links in `approval.stateDir`. |
 

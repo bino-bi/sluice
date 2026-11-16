@@ -274,6 +274,10 @@ type ApprovalConfig struct {
 	MaxPending     int               `mapstructure:"maxPending"`     // cap on concurrent pending requests
 	SQLSampleBytes int               `mapstructure:"sqlSampleBytes"` // webhook SQL payload cap
 
+	// MaxPendingPerSubject caps the pending requests of one subject, so
+	// one subject cannot fill the queue.
+	MaxPendingPerSubject int `mapstructure:"maxPendingPerSubject"`
+
 	// Persist stores pending requests and unconsumed grants in SQLite
 	// under StateDir so approvals survive a restart. Default false
 	// (in-memory, dev posture). A store that cannot open fails startup —
@@ -387,6 +391,8 @@ func DefaultServerConfig() ServerConfig {
 			SQLSampleBytes: 2048,
 			Persist:        false,
 			StateDir:       "./state",
+
+			MaxPendingPerSubject: 10,
 		},
 		Budget: BudgetConfig{
 			Enabled:       false,

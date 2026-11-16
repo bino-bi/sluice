@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"strconv"
 	"strings"
@@ -60,8 +61,11 @@ func (s *Service) awaitApproval(
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodeRateLimited)
 		s.emit(ctx, rec, start)
-		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithQueryID(qid).
-			WithMessage("approval queue full; try again later")
+		msg := "approval queue full; try again later"
+		if errors.Is(err, approval.ErrSubjectFull) {
+			msg = "too many pending approvals of this subject; try again later"
+		}
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithQueryID(qid).WithMessage(msg)
 	}
 	if created {
 		// Best-effort lifecycle record; the webhook fired inside Require.

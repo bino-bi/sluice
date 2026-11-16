@@ -39,6 +39,9 @@ type Options struct {
 	RequestTTL time.Duration // how long a pending request lives (default 15m)
 	GrantTTL   time.Duration // how long an unclaimed grant lives (default 5m)
 	MaxPending int           // cap on concurrent pending requests (default 1000)
+	// MaxPendingPerSubject caps the pending requests of one subject
+	// (default 10), so one subject cannot fill the queue.
+	MaxPendingPerSubject int
 }
 
 // Broker is the approval state machine. The in-memory maps stay
@@ -54,6 +57,7 @@ type Broker struct {
 	requestTTL time.Duration
 	grantTTL   time.Duration
 	maxPending int
+	maxPerSubj int
 
 	mu      sync.Mutex
 	byID    map[string]*request
@@ -78,6 +82,7 @@ func New(o Options) (*Broker, error) {
 		requestTTL: o.RequestTTL,
 		grantTTL:   o.GrantTTL,
 		maxPending: o.MaxPending,
+		maxPerSubj: o.MaxPendingPerSubject,
 		byID:       map[string]*request{},
 		byKey:      map[string]*request{},
 		grants:     map[string]grant{},
@@ -96,6 +101,9 @@ func New(o Options) (*Broker, error) {
 	}
 	if b.maxPending <= 0 {
 		b.maxPending = 1000
+	}
+	if b.maxPerSubj <= 0 {
+		b.maxPerSubj = 10
 	}
 	registerMetrics()
 
@@ -138,7 +146,8 @@ func keyOf(subjectKey, sqlHash string) string { return subjectKey + "\x00" + sql
 // Require registers (or dedupes) an approval request. When an existing
 // pending request already covers the same subject + SQL hash, its Ticket
 // is returned with created=false and no second webhook fires. A new
-// request past MaxPending returns ErrBrokerFull (fail-closed).
+// request past MaxPending returns ErrBrokerFull, and one past
+// MaxPendingPerSubject returns ErrSubjectFull (fail-closed).
 func (b *Broker) Require(_ context.Context, in RequireInput) (Ticket, bool, error) {
 	b.mu.Lock()
 	now := b.clock()
@@ -151,9 +160,14 @@ func (b *Broker) Require(_ context.Context, in RequireInput) (Ticket, bool, erro
 		return t, false, nil
 	}
 
-	if b.pendingCountLocked() >= b.maxPending {
+	total, ofSubject := b.pendingCountLocked(in.SubjectKey)
+	if total >= b.maxPending {
 		b.mu.Unlock()
 		return Ticket{}, false, ErrBrokerFull
+	}
+	if ofSubject >= b.maxPerSubj {
+		b.mu.Unlock()
+		return Ticket{}, false, ErrSubjectFull
 	}
 
 	accept, reject := randomToken(), randomToken()
@@ -411,14 +425,18 @@ func SubjectKeyOf(v View) string { return v.Subject.Issuer + "\x00" + v.Subject.
 
 // --- lock-held helpers ---
 
-func (b *Broker) pendingCountLocked() int {
-	n := 0
+// pendingCountLocked returns the number of pending requests, in total and
+// of subjectKey.
+func (b *Broker) pendingCountLocked(subjectKey string) (total, ofSubject int) {
 	for _, r := range b.byID {
 		if r.state == StatePending {
-			n++
+			total++
+			if r.subjectKey == subjectKey {
+				ofSubject++
+			}
 		}
 	}
-	return n
+	return total, ofSubject
 }
 
 // expireLocked transitions timed-out pending requests to expired and drops

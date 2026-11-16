@@ -112,6 +112,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `approval.grantTtl` | `5m` | Lifetime of a grant. |
 | `approval.maxPending` | `1000` | Maximum pending approvals. |
 | `approval.sqlSampleBytes` | `2048` | SQL bytes in the webhook. |
+| `approval.maxPendingPerSubject` | `10` | Maximum pending approvals of one subject. |
 | `approval.persist` | `false` | Keep approvals over a restart. |
 | `approval.stateDir` | `./state` | Directory of the approval store. |
 | `budget.enabled` | `false` | Turn on budgets. |
