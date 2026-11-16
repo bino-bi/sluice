@@ -173,6 +173,23 @@ func TestJWTWrongAudience(t *testing.T) {
 	}
 }
 
+// The JWK names RS256, so a token signed RS384 with the same key fails.
+func TestJWTTokenAlgMustMatchJWKAlg(t *testing.T) {
+	f := newJWTFixture(t)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS384, jwt.MapClaims{
+		"iss": "https://issuer.example", "aud": "sluice-api", "sub": "alice",
+		"iat": f.now.Unix(), "exp": f.now.Add(time.Minute).Unix(),
+	})
+	tok.Header["kid"] = "key-0"
+	raw, err := tok.SignedString(f.priv)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := f.verifier.VerifyToken(context.Background(), raw); !errors.Is(err, identity.ErrJWTAlgNotAllowed) {
+		t.Fatalf("err = %v; want ErrJWTAlgNotAllowed", err)
+	}
+}
+
 // A binding without an audience accepts no token, also one that carries
 // some aud. The decoder refuses such a binding; this is the second line.
 func TestJWTBindingWithoutAudienceFailsClosed(t *testing.T) {

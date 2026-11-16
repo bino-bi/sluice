@@ -29,6 +29,8 @@ type jwksServer struct {
 	*httptest.Server
 	fetchCount atomic.Int32
 	body       atomic.Pointer[[]byte]
+	failing    atomic.Bool                   // answer 503
+	hang       atomic.Pointer[chan struct{}] // block until closed or the client leaves
 }
 
 func newJWKSServer(t *testing.T, keys ...any) *jwksServer {
@@ -37,6 +39,16 @@ func newJWKSServer(t *testing.T, keys ...any) *jwksServer {
 	js.setKeys(t, keys...)
 	js.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		js.fetchCount.Add(1)
+		if h := js.hang.Load(); h != nil {
+			select {
+			case <-*h:
+			case <-r.Context().Done():
+			}
+		}
+		if js.failing.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		body := js.body.Load()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(*body)

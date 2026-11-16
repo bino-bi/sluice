@@ -247,9 +247,13 @@ func (j *JWTIdentifier) keyFor(ctx context.Context, alg, kid string, binding *ap
 		return nil, fmt.Errorf("%w: binding for %q has no jwksUrl", ErrInvalidCredential, binding.Spec.Issuer)
 	}
 	ttl := time.Duration(binding.Spec.JWKSCacheTTL)
-	k, _, err := j.jwks.KeyFor(ctx, binding.Spec.JWKSURL, kid, ttl)
+	k, keyAlg, err := j.jwks.KeyFor(ctx, binding.Spec.JWKSURL, kid, ttl)
 	if err != nil {
 		return nil, fmt.Errorf("%w: jwks: %w", ErrInvalidCredential, err)
+	}
+	// A key that names its alg may only verify tokens of that alg.
+	if keyAlg != "" && keyAlg != alg {
+		return nil, fmt.Errorf("%w: token alg %s, key alg %s", ErrJWTAlgNotAllowed, alg, keyAlg)
 	}
 	return k, nil
 }
