@@ -210,16 +210,17 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 		// Per-table policy kinds (row filter, column mask) evaluate their
 		// Exclude per table in conflict.go so that referencing an excluded
 		// table in a multi-table query does not silently drop the policy's
-		// protection on the *other* tables. Whole-query kinds (access gate,
-		// reject) keep the whole-policy Exclude here.
+		// protection on the *other* tables. The other kinds decide here.
 		if p.Exclude != nil && wholePolicyExclude(p.Kind) && p.Exclude.Match(ctx) {
-			// An access policy's Exclude carves out tables one by one. It
-			// switches the policy off only when it covers every referenced
-			// table (a subject carve-out does); denyOrAllow applies it per
-			// table. An Exclude with an `all` block combines clauses across
-			// tables (e.g. "never join A with B") and does not decompose per
-			// table, so it keeps the whole-statement drop.
-			if p.Kind != apitypes.KindSQLAccessPolicy || !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, ctx) {
+			// An Exclude carves out tables one by one. It switches the
+			// policy off only when it covers every referenced table (a
+			// subject carve-out does), so joining one excluded table does not
+			// lift a gate on the others. denyOrAllow applies an access
+			// policy's Exclude per table. An Exclude with an `all` block
+			// combines clauses across tables (e.g. "never join A with B") and
+			// does not decompose per table, so it keeps the whole-statement
+			// drop.
+			if !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, ctx) {
 				continue
 			}
 		}
@@ -350,9 +351,9 @@ func ActionOf(in Input) apitypes.Action {
 	}
 }
 
-// wholePolicyExclude reports whether an Exclude selector should drop the
-// entire policy when it matches at query scope. True for whole-query kinds
-// (SqlAccess gate, QueryReject); false for per-table kinds (RowFilter,
+// wholePolicyExclude reports whether selectMatching decides if an Exclude
+// drops the entire policy. True for the gate kinds (SqlAccess, QueryReject,
+// QueryRewrite, Approval); false for per-table kinds (RowFilter,
 // ColumnMask) whose Exclude is applied per table during conflict
 // resolution so a carve-out on one table cannot lift protection on others.
 func wholePolicyExclude(k apitypes.Kind) bool {

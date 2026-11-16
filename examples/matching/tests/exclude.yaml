@@ -44,8 +44,15 @@ cases:
       outcome: reject
       rejections: ["reject-select-star/no-select-star"]
 
-  - name: one excluded table drops the reject policy for the whole query
+  - name: a join with the excluded table keeps the reject policy
     identity: { subject: alice, groups: [analysts, support] }
     sql: "SELECT * FROM shop.main.orders o JOIN shop.main.tickets t ON t.order_id = o.id"
+    expect:
+      outcome: reject
+      rejections: ["reject-select-star/no-select-star"]
+
+  - name: the reject policy skips a query on the excluded table only
+    identity: { subject: alice, groups: [analysts, support] }
+    sql: "SELECT * FROM shop.main.tickets"
     expect:
       outcome: allow

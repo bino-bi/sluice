@@ -31,6 +31,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 - **A shadow policy whose condition fails no longer denies live traffic.** A CEL condition or reject rule that fails at run time, for example on a missing claim, denied the whole query also in `Audit` and `DryRun` mode. Now Sluice skips such a policy and lists it under `shadow` with `would: deny`. An `Enforce` policy still denies with `ACL_DENIED`.
 
+### Security
+
+- **Joining an excluded table no longer switches off a gate policy.** On `ApprovalPolicy`, `QueryRejectPolicy` and `QueryRewritePolicy` one table of the query that `exclude` named switched the policy off for the whole query. A client could skip an approval or a reject by adding `JOIN <excluded table> ON true`. Now such an `exclude` switches the policy off only when it covers every table of the query, as on `SqlAccessPolicy`. A subject `exclude` still switches it off. An `exclude` with `all` still works per query. **Behavior change:** a query that joins an excluded table with a matched one now gets the gate.
+
 ## [0.1.0-rc.3] - 2026-10-13
 
 Third release candidate for v0.1.0. It holds the fixes from a security review of the query path and from an audit of the docs against the code. Several changes are marked **Breaking**: read the **Changed** and **Removed** sections before an upgrade from `v0.1.0-rc.2`.
