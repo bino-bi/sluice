@@ -87,9 +87,10 @@ WHERE function_type = 'aggregate' OR function_name IN (`+
 		if err := rows.Scan(&name, &typ); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
-		if typ == "aggregate" {
+		switch typ {
+		case "aggregate":
 			duck = append(duck, name)
-		} else if typ == "macro" {
+		case "macro":
 			macros[name] = true
 		}
 	}
