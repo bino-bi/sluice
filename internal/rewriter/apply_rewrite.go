@@ -45,9 +45,10 @@ func (s *state) applyRewrite(res *pg.ParseResult) error {
 		limitStr := strconv.FormatInt(limitMax, 10)
 		hadLimit := sel.LimitCount != nil
 		changed := capLimit(sel, limitMax, false)
-		if changed && limitMax < math.MaxInt32 {
-			// One row over the limit lets the row iterator see that the
-			// result was cut. It still stops at limitMax.
+		if changed && s.rowCap > 0 && limitMax < math.MaxInt32 {
+			// When the query runs (a row cap is set), one row over the
+			// limit lets the row iterator see that the result was cut. It
+			// still stops at limitMax. A policy test shows the plain limit.
 			sel.LimitCount = intConst(limitMax + 1)
 		}
 		switch {

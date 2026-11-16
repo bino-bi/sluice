@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id FROM pg.public.orders LIMIT 1001",
+  "sql": "SELECT id FROM pg.public.orders LIMIT 1000",
   "changed": true,
   "applied_policies": [
     "QueryRewritePolicy/cap-rows",
