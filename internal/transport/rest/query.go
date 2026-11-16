@@ -93,6 +93,9 @@ func (s *Server) serveResult(w http.ResponseWriter, r *http.Request, format exec
 		if err := renderCSV(w, res); err != nil {
 			s.lg.WarnContext(r.Context(), "rest: csv render failed",
 				"query_id", res.QueryID, "error", err)
+			// Status 200 may be out already, and a cut CSV that ends
+			// cleanly reads like a full one. Abort the connection instead.
+			panic(http.ErrAbortHandler)
 		}
 	default:
 		// Unreachable because negotiateFormat has already filtered.

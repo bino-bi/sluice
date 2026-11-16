@@ -4,6 +4,7 @@ package executor_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -35,5 +36,30 @@ func TestExecutorExecTimeExcludesPoolWait(t *testing.T) {
 	}
 	if second.ExecTime <= 0 || second.ExecTime >= hold {
 		t.Fatalf("ExecTime = %s, want > 0 and without the %s pool wait", second.ExecTime, hold)
+	}
+}
+
+// The query timeout also covers delivery. A stream cut by it ends without
+// a Scan error, so Err must report the deadline.
+func TestExecutorTimeoutDuringDeliveryShowsInErr(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	resp, err := e.Execute(context.Background(), executor.Request{
+		SQL:     "SELECT * FROM range(100) t(x)",
+		Timeout: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	defer func() { _ = resp.Rows.Close() }()
+	if !resp.Rows.Next() {
+		t.Fatalf("no first row: %v", resp.Rows.Err())
+	}
+	time.Sleep(400 * time.Millisecond)
+	n := 0
+	for resp.Rows.Next() {
+		n++
+	}
+	if err := resp.Rows.Err(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Err = %v after %d more rows, want the deadline", err, n)
 	}
 }

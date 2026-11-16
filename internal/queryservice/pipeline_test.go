@@ -4,6 +4,7 @@ package queryservice_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/audit"
@@ -54,4 +55,37 @@ func TestExecute_PanicReleasesSlotAndAudits(t *testing.T) {
 		t.Fatalf("second execute: %v, want the slot free again", err)
 	}
 	_ = res.Rows.Close()
+}
+
+// A stream cut by the query timeout ends without a Scan error. The
+// completion record must still say so, not report a clean allow.
+func TestAuditedRows_TimeoutDuringDeliveryIsAudited(t *testing.T) {
+	a := &fakeAudit{}
+	svc := buildService(t, &fakeParser{},
+		&fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		&fakeRewriter{},
+		&fakeExecutor{
+			columns: []executor.ColumnInfo{{Name: "id"}},
+			rows:    [][]any{{int64(1)}},
+			iterErr: fmt.Errorf("%w: %w", executor.ErrExecute, context.DeadlineExceeded),
+		},
+		a,
+	)
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id FROM pg.public.orders"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for res.Rows.Next() {
+		var v any
+		_ = res.Rows.Scan(&v)
+	}
+	_ = res.Rows.Close()
+	recs := a.all()
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want access and completion", len(recs))
+	}
+	comp := recs[1]
+	if comp.EventType != audit.EventQueryResult || comp.Decision != audit.DecisionError || comp.ErrorCode != string(pkgerr.CodeTimeout) {
+		t.Fatalf("completion record: event %s decision %s code %q, want query-result, error, ERR_TIMEOUT", comp.EventType, comp.Decision, comp.ErrorCode)
+	}
 }

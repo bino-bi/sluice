@@ -108,6 +108,10 @@ func (s *Server) panicRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				if rec == http.ErrAbortHandler {
+					// A deliberate abort of a started response.
+					panic(rec)
+				}
 				s.lg.ErrorContext(r.Context(), "rest: panic recovered",
 					"path", r.URL.Path,
 					"recover", rec,

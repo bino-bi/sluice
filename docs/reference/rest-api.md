@@ -39,7 +39,7 @@ The table has 4 rows, so `truncated` is `true`.
 |---|---|---|
 | `sql` | string | The SQL statement. |
 | `max_rows` | int | Row limit. Default `limits.maxRows`, at most `limits.maxRowsCeiling`. |
-| `timeout_ms` | int | Query timeout. Default `limits.queryTimeout`, at most `limits.maxQueryTimeout`. |
+| `timeout_ms` | int | Query timeout. It also covers sending the result. Default `limits.queryTimeout`, at most `limits.maxQueryTimeout`. |
 | `format` | string | `json` (default) or `csv`. Without it the `Accept` header decides: `text/csv` gives CSV, `application/json` or `*/*` gives JSON. |
 | `meta` | object | String pairs for the audit record (`client_meta`). At most 16 pairs, 64-byte keys, 256-byte values. |
 
@@ -137,6 +137,8 @@ An error is a JSON object. [Error codes](error-codes.md) lists every code with i
 | `query_id` | Query id, if the request got one. |
 | `policy` | Policy that refused the query, if one did. |
 | `details` | Extra data, for example `approval_id`. |
+
+An error after the body started, such as the query timeout while the result is sent, cannot change the status 200. A JSON body then ends without its closing bracket. For CSV, Sluice closes the connection, so the file does not end like a full one. The audit record of the result carries the error code.
 
 A 404 for an unknown path and a 405 are plain text. The approval routes answer 404 as `{"error": "not found"}`.
 
