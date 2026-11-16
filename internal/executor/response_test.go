@@ -63,3 +63,37 @@ func TestExecutorTimeoutDuringDeliveryShowsInErr(t *testing.T) {
 		t.Fatalf("Err = %v after %d more rows, want the deadline", err, n)
 	}
 }
+
+// A result of exactly MaxRows rows is complete, not truncated.
+func TestExecutorExactlyMaxRowsIsNotTruncated(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	resp, err := e.Execute(context.Background(), executor.Request{SQL: "SELECT * FROM range(5) t(x)", MaxRows: 5})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	defer func() { _ = resp.Rows.Close() }()
+	if n := drain(t, resp); n != 5 || resp.Truncated {
+		t.Fatalf("rows %d, truncated %v; want 5, false", n, resp.Truncated)
+	}
+}
+
+// A result cut by the row cap is fully delivered. A deadline that passes
+// before Close is no error of those rows.
+func TestExecutorCappedResultIgnoresLateDeadline(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	resp, err := e.Execute(context.Background(), executor.Request{
+		SQL: "SELECT * FROM range(100) t(x)", MaxRows: 3, Timeout: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	defer func() { _ = resp.Rows.Close() }()
+	n := 0
+	for resp.Rows.Next() {
+		n++
+	}
+	time.Sleep(400 * time.Millisecond)
+	if err := resp.Rows.Err(); err != nil || n != 3 || !resp.Truncated {
+		t.Fatalf("rows %d, truncated %v, Err %v; want 3, true, nil", n, resp.Truncated, err)
+	}
+}

@@ -246,6 +246,10 @@ type sqlRowIterator struct {
 	parent   *Response
 	closed   bool
 	iterErr  error
+	// capped is set when a cap ended the rows before EOF. database/sql
+	// then reports the end of the context as Err, which is no error of
+	// the rows handed out.
+	capped bool
 
 	// With a byte cap, Next reads the row into row to know its size
 	// before it hands the row out.
@@ -304,7 +308,12 @@ func (it *sqlRowIterator) Next() bool {
 		return false
 	}
 	if it.maxRows > 0 && *it.rowCount >= it.maxRows {
-		it.parent.Truncated = true
+		// Only a further row means the result was cut. The SQL carries a
+		// LIMIT of maxRows+1 for this check.
+		if it.rows.Next() {
+			it.parent.Truncated = true
+			it.capped = true
+		}
 		return false
 	}
 	if !it.rows.Next() {
@@ -320,6 +329,7 @@ func (it *sqlRowIterator) Next() bool {
 		}
 		if it.bytes > it.maxBytes {
 			it.parent.Truncated = true
+			it.capped = true
 			return false
 		}
 	}
@@ -356,6 +366,9 @@ func (it *sqlRowIterator) Scan(dest ...any) error {
 func (it *sqlRowIterator) Err() error {
 	if it.iterErr != nil {
 		return it.iterErr
+	}
+	if it.capped {
+		return nil
 	}
 	if err := it.rows.Err(); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecute, err)
