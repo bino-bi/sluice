@@ -184,7 +184,7 @@ func SyncDir(dir string) {
 // and runs retention. It fails with ErrNewerCurrent when current already
 // holds a newer id.
 func (l Layout) Publish(id string) error {
-	unlock, err := lockFile(filepath.Join(l.Root(), "publish.lock"))
+	unlock, err := lockFile(filepath.Join(l.Root(), "publish.lock"), true)
 	if err != nil {
 		return err
 	}
@@ -201,31 +201,64 @@ func (l Layout) Publish(id string) error {
 	}
 	SyncDir(l.Root())
 	l.retain(id, prev)
-	// A build with an older id can no longer publish, so its temp file
-	// is from a killed build or from one that is bound to fail.
-	l.RemoveTemps(func(t string) bool { return t < id })
+	l.RemoveTemps()
 	return nil
 }
 
-// RemoveTemps removes the temp snapshots and their WAL files whose build
-// id passes drop. A killed build leaves them behind. Errors are ignored.
-func (l Layout) RemoveTemps(drop func(id string) bool) {
+// buildLock returns the lock file that a running build holds.
+func (l Layout) buildLock(id string) string {
+	return filepath.Join(l.SnapshotsDir(), "."+id+".duckdb.lock")
+}
+
+// LockBuild takes the lock of build id. The build holds it until its
+// temp files are renamed or removed, so RemoveTemps leaves them alone,
+// also from another process. The returned func releases the lock and
+// removes the lock file.
+func (l Layout) LockBuild(id string) (func(), error) {
+	if !ValidBuildID(id) {
+		return nil, ErrInvalidBuildID
+	}
+	path := l.buildLock(id)
+	unlock, err := lockFile(path, true)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		unlock()
+		_ = os.Remove(path)
+	}, nil
+}
+
+// RemoveTemps removes the temp snapshot, WAL and lock files of every
+// build whose lock it can take without waiting. A killed build leaves
+// them behind; a running build holds its lock. Errors are ignored.
+func (l Layout) RemoveTemps() {
 	entries, err := os.ReadDir(l.SnapshotsDir())
 	if err != nil {
 		return
 	}
+	ids := map[string]bool{}
 	for _, e := range entries {
 		rest, ok := strings.CutPrefix(e.Name(), ".")
 		if !ok || !e.Type().IsRegular() {
 			continue
 		}
-		id, ok := strings.CutSuffix(rest, ".duckdb.tmp")
-		if !ok {
-			id, ok = strings.CutSuffix(rest, ".duckdb.tmp.wal")
+		for _, suffix := range []string{".duckdb.tmp", ".duckdb.tmp.wal", ".duckdb.lock"} {
+			if id, ok := strings.CutSuffix(rest, suffix); ok && ValidBuildID(id) {
+				ids[id] = true
+			}
 		}
-		if ok && ValidBuildID(id) && drop(id) {
-			_ = os.Remove(filepath.Join(l.SnapshotsDir(), e.Name()))
+	}
+	for id := range ids {
+		unlock, err := lockFile(l.buildLock(id), false)
+		if err != nil {
+			continue
 		}
+		tmp := l.TempSnapshot(id)
+		_ = os.Remove(tmp)
+		_ = os.Remove(tmp + ".wal")
+		unlock()
+		_ = os.Remove(l.buildLock(id))
 	}
 }
 

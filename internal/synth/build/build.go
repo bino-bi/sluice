@@ -125,6 +125,13 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 	if err := l.Mkdirs(); err != nil {
 		return nil, fmt.Errorf("synthetic build: %w", err)
 	}
+	// Held until the temp files are renamed or removed, so a cleanup in
+	// another process leaves them alone.
+	unlock, err := l.LockBuild(id)
+	if err != nil {
+		return nil, fmt.Errorf("synthetic build: lock: %w", err)
+	}
+	defer unlock()
 	b := &builder{
 		in:   in,
 		spec: spec,

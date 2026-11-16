@@ -462,17 +462,26 @@ func TestServicePublishedNotAttached(t *testing.T) {
 }
 
 // The temp files of a killed build are removed when the service starts.
+// A build that runs in another process holds its lock, so its temp file
+// stays.
 func TestServiceRemovesKilledTemps(t *testing.T) {
 	dir := t.TempDir()
 	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	if err := l.Mkdirs(); err != nil {
 		t.Fatal(err)
 	}
-	tmp := l.TempSnapshot("20261102T101500Z-a1b2c3")
-	for _, p := range []string{tmp, tmp + ".wal"} {
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
+	const killed, running = "20261102T101500Z-a1b2c3", "20261102T101600Z-a1b2c3"
+	for _, id := range []string{killed, running} {
+		tmp := l.TempSnapshot(id)
+		for _, p := range []string{tmp, tmp + ".wal"} {
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
+	}
+	unlock, err := l.LockBuild(running)
+	if err != nil {
+		t.Fatal(err)
 	}
 	NewService(ServiceOptions{
 		DataSources: []*apitypes.DataSource{{
@@ -482,5 +491,13 @@ func TestServiceRemovesKilledTemps(t *testing.T) {
 		Dir: dir,
 		Log: slog.New(slog.DiscardHandler),
 	})
+	if _, err := os.Stat(l.TempSnapshot(killed)); err == nil {
+		t.Error("the temp file of the killed build is left")
+	}
+	if _, err := os.Stat(l.TempSnapshot(running)); err != nil {
+		t.Errorf("the temp file of the running build is gone: %v", err)
+	}
+	unlock()
+	l.RemoveTemps()
 	assertNoTemp(t, l)
 }

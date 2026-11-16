@@ -151,8 +151,7 @@ type job struct {
 
 // NewService returns a Service. It logs every source whose snapshot was
 // built from another spec, sets the stale and spike gauges, and removes
-// the temp files of builds that were killed. No build of this process
-// runs yet.
+// the temp files of builds that were killed.
 func NewService(opts ServiceOptions) *Service {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
@@ -174,7 +173,7 @@ func NewService(opts ServiceOptions) *Service {
 			continue
 		}
 		name := ds.Metadata.Name
-		layout.Layout{Dir: opts.Dir, Name: name}.RemoveTemps(func(string) bool { return true })
+		layout.Layout{Dir: opts.Dir, Name: name}.RemoveTemps()
 		state := s.state(name)
 		setStale(name, state == layout.StateStale)
 		if state == layout.StateStale {

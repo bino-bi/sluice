@@ -35,9 +35,9 @@ func snapshotNames(t *testing.T, l Layout) []string {
 	return out
 }
 
-// A killed build leaves its temp file; the next publish removes the temp
-// files of older ids and keeps those of newer ones.
-func TestPublishRemovesOlderTemps(t *testing.T) {
+// A publish removes the temp files of killed builds. The temp file of a
+// build that holds its lock survives, whatever its id.
+func TestPublishRemovesUnlockedTemps(t *testing.T) {
 	l := Layout{Dir: t.TempDir(), Name: "crmsynth"}
 	if err := l.Mkdirs(); err != nil {
 		t.Fatal(err)
@@ -46,19 +46,27 @@ func TestPublishRemovesOlderTemps(t *testing.T) {
 		touch(t, l.TempSnapshot(id))
 		touch(t, l.TempSnapshot(id)+".wal")
 	}
+	// A killed build that left only its lock file.
+	touch(t, l.buildLock("20261102T101400Z-a1b2c3"))
 	touch(t, filepath.Join(l.SnapshotsDir(), ".notes.duckdb.tmp"))
+	unlock, err := l.LockBuild(idNew)
+	if err != nil {
+		t.Fatal(err)
+	}
 	touch(t, l.Snapshot(idCur))
 	if err := l.Publish(idCur); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"." + idNew + ".duckdb.tmp", "." + idNew + ".duckdb.tmp.wal", ".notes.duckdb.tmp", idCur + ".duckdb"}
+	want := []string{"." + idNew + ".duckdb.lock", "." + idNew + ".duckdb.tmp", "." + idNew + ".duckdb.tmp.wal",
+		".notes.duckdb.tmp", idCur + ".duckdb"}
 	if got := snapshotNames(t, l); !slices.Equal(got, want) {
 		t.Errorf("snapshots = %v, want %v", got, want)
 	}
 
-	l.RemoveTemps(func(string) bool { return true })
+	unlock()
+	l.RemoveTemps()
 	want = []string{".notes.duckdb.tmp", idCur + ".duckdb"}
 	if got := snapshotNames(t, l); !slices.Equal(got, want) {
-		t.Errorf("after RemoveTemps: %v, want %v", got, want)
+		t.Errorf("after unlock: %v, want %v", got, want)
 	}
 }
