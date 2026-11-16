@@ -28,7 +28,7 @@ const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 Every command accepts ~--help~. A ~bool~ flag takes no value. The binary also has the standard ~help~ and ~completion~ commands.
 
-~--config~ reads only the file you name. A missing file is not an error: the defaults apply.
+~--config~ reads only the file you name. A missing file or an unknown key in it is an error. Without ~--config~ the defaults apply.
 
 ## Exit codes
 

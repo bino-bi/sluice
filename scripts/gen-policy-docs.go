@@ -211,9 +211,9 @@ var docs = map[string]doc{
 	"SyntheticRule.args":          {"", "Arguments of the generator."},
 
 	"SubjectBinding.issuer":                  {"", "Issuer (`iss`) of the JWTs."},
-	"SubjectBinding.audience":                {"", "Expected audience (`aud`)."},
+	"SubjectBinding.audience":                {"", "Expected audience (`aud`). Required with `jwksUrl` or `hmacSecretRef`."},
 	"SubjectBinding.jwksUrl":                 {"", "URL of the signing keys. Needs `issuer` and `audience`."},
-	"SubjectBinding.hmacSecretRef":           {"", "Secret reference to the HMAC key."},
+	"SubjectBinding.hmacSecretRef":           {"", "Secret reference to the HMAC key, at least 32 bytes. Needs `issuer` and `audience`."},
 	"SubjectBinding.jwksCacheTtl":            {"", "Cache time of the signing keys. Default `10m`."},
 	"SubjectBinding.clockSkew":               {"", "Allowed clock difference. Default `60s`."},
 	"SubjectBinding.claims.subjectId":        {"", "JWT: claim path, default `sub`. API key: the subject id."},

@@ -78,11 +78,18 @@ func TestLoadServer_AuditSQLSampleBytesOverride(t *testing.T) {
 	}
 }
 
-func TestLoadServer_MissingFile_NotAnError(t *testing.T) {
+// A path that is set must exist: a typo must not start with the defaults.
+func TestLoadServer_MissingFile_IsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	cfg, err := LoadServer(path, nil)
+	if _, err := LoadServer(path, nil); err == nil {
+		t.Fatal("missing file must be an error")
+	}
+}
+
+func TestLoadServer_EmptyPath_Defaults(t *testing.T) {
+	cfg, err := LoadServer("", nil)
 	if err != nil {
-		t.Fatalf("missing file should not be an error: %v", err)
+		t.Fatalf("LoadServer: %v", err)
 	}
 	if cfg.REST.Listen != ":8080" {
 		t.Errorf("defaults lost: %+v", cfg.REST)

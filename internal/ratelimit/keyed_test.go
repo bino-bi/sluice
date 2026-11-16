@@ -34,6 +34,28 @@ func TestKeyed_BurstAndRefillPerKey(t *testing.T) {
 	}
 }
 
+func TestKeyed_RefundReturnsToken(t *testing.T) {
+	now := time.Unix(1000, 0)
+	k := ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 0, func() time.Time { return now })
+
+	k.Refund("a") // no bucket: no effect
+	if !k.Allow("a") {
+		t.Fatal("first request must be allowed")
+	}
+	k.Refund("a")
+	if !k.Allow("a") {
+		t.Fatal("refunded token must be usable")
+	}
+	if k.Allow("a") {
+		t.Fatal("bucket is empty, want denied")
+	}
+	k.Refund("a")
+	k.Refund("a")
+	if !k.Allow("a") || k.Allow("a") {
+		t.Fatal("refund must not raise the bucket above the burst")
+	}
+}
+
 func TestKeyed_ZeroRPSPermitsEverything(t *testing.T) {
 	k := ratelimit.NewKeyed(ratelimit.Spec{}, 0, func() time.Time { return time.Unix(0, 0) })
 	for range 100 {

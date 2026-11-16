@@ -13,7 +13,7 @@ import json
 import sys
 import time
 
-SECRET = b"subjects-demo-jwt-secret"
+SECRET = b"subjects-demo-jwt-secret-of-at-least-32-bytes"
 
 
 def b64url(raw: bytes) -> str:

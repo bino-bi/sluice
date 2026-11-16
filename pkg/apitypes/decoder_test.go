@@ -201,6 +201,37 @@ func TestDecodeRejectsFieldsWithoutEffect(t *testing.T) {
 	}
 }
 
+// Every JWT binding needs an issuer and an audience, so a token minted
+// for another service with the same key does not pass.
+func TestDecodeJWTBindingNeedsIssuerAndAudience(t *testing.T) {
+	t.Parallel()
+	head := "apiVersion: sluice.bino.bi/v1alpha1\nkind: SubjectBinding\nmetadata:\n  name: b\nspec:\n"
+	cases := []struct {
+		name string
+		spec string
+		ok   bool
+	}{
+		{"hmac complete", "  issuer: i\n  audience: a\n  hmacSecretRef: secret://env/X\n", true},
+		{"hmac without audience", "  issuer: i\n  hmacSecretRef: secret://env/X\n", false},
+		{"hmac without issuer", "  audience: a\n  hmacSecretRef: secret://env/X\n", false},
+		{"jwks without audience", "  issuer: i\n  jwksUrl: https://idp.test/jwks\n", false},
+		{"api key only", "  apiKeys:\n    - id: k\n      hashRef: secret://env/H\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Decode(strings.NewReader(head + tc.spec))
+			if tc.ok && err != nil {
+				t.Fatalf("Decode: %v, want no error", err)
+			}
+			var ve *ValidationError
+			if !tc.ok && (!errors.As(err, &ve) || ve.Field != "spec") {
+				t.Fatalf("err = %v, want a ValidationError on spec", err)
+			}
+		})
+	}
+}
+
 func TestDecodeValidatesFilterExclusivity(t *testing.T) {
 	t.Parallel()
 	// Both predicate and expression set → invalid.

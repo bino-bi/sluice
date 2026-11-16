@@ -53,3 +53,17 @@ func (k *KeyedLimiter) Allow(key string) bool {
 	}
 	return b.take(now, k.spec)
 }
+
+// Refund gives back the token an Allow took, up to the burst. A caller
+// that charges only some outcomes takes the token first and refunds it,
+// so parallel requests cannot all pass a check before any is charged.
+func (k *KeyedLimiter) Refund(key string) {
+	if k.spec.RPS <= 0 {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if b, ok := k.buckets.Peek(key); ok {
+		b.tokens = min(b.tokens+1, float64(k.spec.Burst))
+	}
+}

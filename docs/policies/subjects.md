@@ -39,10 +39,10 @@ Store this value where `hashRef` points. The client sends the key.
 | Field | Type | For a JWT | For an API key |
 |---|---|---|---|
 | `issuer` | string | Required `iss`. One binding per issuer. | Issuer of the subject. Default: binding name. |
-| `audience` | string | Required `aud` entry. Empty: no check. | |
-| `hmacSecretRef` | string | Secret for HS256, HS384. | |
+| `audience` | string | Required `aud` entry. Required with `jwksUrl` or `hmacSecretRef`. | |
+| `hmacSecretRef` | string | Secret for HS256, HS384, at least 32 bytes. Needs `issuer` and `audience`. | |
 | `jwksUrl` | string | Keys for RS256, RS384, ES256, ES384. Needs `issuer` and `audience`. | |
-| `jwksCacheTtl` | duration | Cache time of these keys. Default 10m. | |
+| `jwksCacheTtl` | duration | Cache time of these keys. Default 10m. If a refresh fails, Sluice uses the old keys for at most 24 hours more and tries again every 30 seconds. After that, tokens of the issuer fail. | |
 | `clockSkew` | duration | Tolerance for `exp`, `nbf` and `iat`. Default 60s. | |
 | `claims.subjectId` | string | Path to the id. Default `sub`. | The id. Default: key id. |
 | `claims.email` | string | Path to the email. Default `email`. | The email. |

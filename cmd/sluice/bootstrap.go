@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 
@@ -107,6 +108,12 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	scfg, err := config.LoadServer(serverCfgPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load server config: %w", err)
+	}
+	// A typo such as rest.tsl would otherwise keep the default silently.
+	if serverCfgPath != "" {
+		if err := config.CheckServerKeys(serverCfgPath); err != nil {
+			return nil, err
+		}
 	}
 	if err := scfg.Validate(); err != nil {
 		return nil, fmt.Errorf("server config: %w", err)
@@ -485,6 +492,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		if err != nil {
 			return nil, err
 		}
+		if err := checkAdminAnonymous(scfg.Admin, token); err != nil {
+			return nil, err
+		}
 		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
@@ -742,6 +752,30 @@ func resolveAdminToken(ctx context.Context, r *secrets.Resolver, token string) (
 	return resolved, nil
 }
 
+// checkAdminAnonymous refuses an admin API without a token unless the
+// operator opts in or the listener is loopback only. One missing
+// SLUICE_ADMIN__TOKEN must not open reload and audit to the network.
+func checkAdminAnonymous(a config.AdminConfig, token string) error {
+	if token != "" || a.AllowAnonymous || loopbackOnly(a.Listen) {
+		return nil
+	}
+	return fmt.Errorf("admin: admin.token is empty and admin.listen %q is not loopback only; set admin.token, bind admin.listen to 127.0.0.1, or set admin.allowAnonymous: true", a.Listen)
+}
+
+// loopbackOnly reports whether listen binds to a loopback address only.
+// An empty host binds every interface.
+func loopbackOnly(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // buildIdentity assembles the identity.Composite from server + policy
 // snapshot. JWT lights up when at least one SubjectBinding is present.
 // API-key lights up when scfg.Identity.APIKeyPepper is set; the bindings
@@ -842,11 +876,17 @@ func buildRateSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]ratel
 	return bySubject, byIssuer
 }
 
+// minHMACSecretBytes is the SHA-256 output size, the shortest key HS256
+// should get.
+const minHMACSecretBytes = 32
+
 // buildHMACSecrets resolves each SubjectBinding's hmacSecretRef into the
 // issuer→secret map the JWT identifier uses to verify HS256/HS384 tokens.
 // Without this a binding that advertises an HS* issuer could never
 // authenticate, since RS/ES keys come from JWKS and HMAC has no network
 // path. A trailing newline (common in file-mounted secrets) is trimmed.
+// A secret shorter than minHMACSecretBytes is an error: an empty key lets
+// anyone sign a valid token.
 func buildHMACSecrets(ctx context.Context, r *secrets.Resolver, snap *config.Snapshot) (map[string][]byte, error) {
 	if snap == nil {
 		return nil, nil
@@ -856,15 +896,21 @@ func buildHMACSecrets(ctx context.Context, r *secrets.Resolver, snap *config.Sna
 		if sb == nil || sb.Spec.HMACSecretRef == "" {
 			continue
 		}
+		// The JWT identifier looks the secret up by issuer only.
 		issuer := sb.Spec.Issuer
 		if issuer == "" {
-			issuer = sb.Metadata.Name
+			return nil, fmt.Errorf("binding %q: hmacSecretRef needs an issuer", sb.Metadata.Name)
 		}
 		sec, err := r.Resolve(ctx, sb.Spec.HMACSecretRef)
 		if err != nil {
 			return nil, fmt.Errorf("resolve hmacSecretRef for issuer %q: %w", issuer, err)
 		}
-		out[issuer] = []byte(strings.TrimRight(string(sec), "\r\n"))
+		key := []byte(strings.TrimRight(string(sec), "\r\n"))
+		if len(key) < minHMACSecretBytes {
+			return nil, fmt.Errorf("hmacSecretRef for issuer %q: the secret has %d bytes, at least %d are required",
+				issuer, len(key), minHMACSecretBytes)
+		}
+		out[issuer] = key
 	}
 	if len(out) == 0 {
 		return nil, nil

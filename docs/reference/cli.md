@@ -7,7 +7,7 @@
 
 Every command accepts `--help`. A `bool` flag takes no value. The binary also has the standard `help` and `completion` commands.
 
-`--config` reads only the file you name. A missing file is not an error: the defaults apply.
+`--config` reads only the file you name. A missing file or an unknown key in it is an error. Without `--config` the defaults apply.
 
 ## Exit codes
 
@@ -77,7 +77,7 @@ Validate the server config and the policy directory.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `--config` | string |  | path to the server config (optional) |
-| `--strict` | bool |  | reject unknown fields in policies and unknown keys in the server config |
+| `--strict` | bool |  | reject unknown fields in policies |
 
 The policy directory is optional. `sluice serve` runs the same checks at start.
 

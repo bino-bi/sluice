@@ -53,9 +53,10 @@ Keep the admin port off the public network.
 | Endpoint | Listener | Answer |
 |---|---|---|
 | `GET /v1/health` | REST | `200` while the process runs. |
-| `GET /v1/ready` | REST | `200`, or `503` with status `degraded` while a data source is unhealthy. |
+| `GET /v1/ready` | REST | `200`, or `503` with status `degraded` while a data source is unhealthy. The body counts the healthy sources. It shows no names and no errors. |
 | `GET /v1/version` | REST | The build. |
 | `GET /admin/healthz` | Admin | The same status, plus `config_version`. Needs the token. |
+| `GET /admin/datasources` | Admin | Name, type, health and last error of each data source. Needs the token. |
 
 The REST endpoints need no login.
 

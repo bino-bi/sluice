@@ -99,14 +99,14 @@ The command only reads the files. An invalid file ends it with status 1:
 --8<-- "examples/data-sources/expected/03-check-invalid.txt"
 ```
 
-A running server tests every source at start and then every 30 seconds. `GET /v1/ready` shows the result. See [Deployment](deployment.md).
+A running server tests every source at start and then every 30 seconds. `GET /v1/ready` counts the healthy sources. `GET /admin/datasources` shows each source with its last error. See [Deployment](deployment.md).
 
 ## Limits
 
 - Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
 - Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
 - A source that fails a check of its type stops the start. Examples: a missing `sqlite` or `duckdb_file` file, `s3` without `region`, `motherduck` without `tokenRef`. `datasource check` and `config validate` miss these errors.
-- `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not list it. A source that Sluice cannot attach still stops the start: a database that is down, or a broken `duckdb_file` file.
+- `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not count it. A source that Sluice cannot attach still stops the start: a database that is down, or a broken `duckdb_file` file.
 - The health test checks that a `sqlite` file exists. It does not read the file. A file that is no database stays healthy, and queries on it fail with `ERR_INTERNAL`.
 - A source that goes away is seen by the next health test. Until then, queries on it can fail with `ERR_INTERNAL`.
 

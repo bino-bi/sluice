@@ -9,20 +9,36 @@ import (
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/identity"
+	"github.com/bino-bi/sluice/internal/ratelimit"
 )
+
+// Failed admin logins per client IP: a burst of 10, then one every 10s.
+// An IP over the limit gets 429 before its token is checked.
+var failedAuthSpec = ratelimit.Spec{RPS: 0.1, Burst: 10}
 
 // adminAuth is the middleware applied to every protected endpoint. It
 // matches the Authorization header in constant time against Config.Token.
-// An empty configured token permits anonymous access (dev mode); the
-// boot-time warning in New makes that visible.
+// An empty configured token permits anonymous access; the bootstrap only
+// allows that with admin.allowAnonymous or a loopback listener.
 func (s *Server) adminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Token == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Take the token before the compare and refund it on success, so
+		// parallel guesses cannot all pass before one failure counts.
+		ip := identity.RemoteIP(r)
+		if !s.failedAuth.Allow(ip) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":"ERR_RATE_LIMITED","message":"too many failed admin logins"}`))
+			return
+		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.Token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.Token)) == 1 {
+			s.failedAuth.Refund(ip)
+		} else {
 			s.lg.WarnContext(r.Context(), "admin: auth failed",
 				"remote", r.RemoteAddr, "path", r.URL.Path)
 			if s.deps.AuthFailed != nil {
@@ -30,7 +46,7 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 				if r.Header.Get("Authorization") == "" {
 					reason = "no credential"
 				}
-				s.deps.AuthFailed(identity.RemoteIP(r), reason)
+				s.deps.AuthFailed(ip, reason)
 			}
 			writeAuthError(w)
 			return

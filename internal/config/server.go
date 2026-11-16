@@ -3,9 +3,7 @@
 package config
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -73,6 +71,9 @@ type AdminConfig struct {
 	Listen  string     `mapstructure:"listen"`
 	Token   string     `mapstructure:"token"`
 	TLS     *TLSConfig `mapstructure:"tls"`
+	// AllowAnonymous lets the admin API run without a token on a
+	// listener that is not loopback only. Without it such a start fails.
+	AllowAnonymous bool `mapstructure:"allowAnonymous"`
 }
 
 // DuckDBConfig configures the embedded DuckDB engine. MaxOpen/MaxIdle are
@@ -420,9 +421,10 @@ func DefaultServerConfig() ServerConfig {
 // overrides (SLUICE_REST__LISTEN → rest.listen), and optional pflag overrides,
 // then returns a fully-populated ServerConfig.
 //
-// A missing file is not an error: LoadServer returns DefaultServerConfig +
+// An empty path reads no file: LoadServer returns DefaultServerConfig +
 // env/flag overlays so `sluice` works with zero config on first run. A
-// malformed file is always an error.
+// path that is set must name a readable file: a typo in it would
+// otherwise start the gateway with the defaults.
 func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 	v := viper.New()
 
@@ -433,12 +435,7 @@ func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 	if path != "" {
 		v.SetConfigFile(path)
 		if err := v.ReadInConfig(); err != nil {
-			var notFound viper.ConfigFileNotFoundError
-			// A missing file is not an error: defaults + env + flags still
-			// produce a valid config. Any other error is fatal.
-			if !errors.As(err, &notFound) && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("config: read %s: %w", path, err)
-			}
+			return nil, fmt.Errorf("config: read %s: %w", path, err)
 		}
 	}
 
@@ -460,7 +457,7 @@ func LoadServer(path string, flagSet *pflag.FlagSet) (*ServerConfig, error) {
 // CheckServerKeys reports the keys of the file at path that the server
 // config does not have. LoadServer ignores such a key, so a typo keeps the
 // default without a word. A file that cannot be read is no error here:
-// LoadServer has already reported or accepted that.
+// LoadServer has already reported that.
 func CheckServerKeys(path string) error {
 	v := viper.New()
 	v.SetConfigFile(path)

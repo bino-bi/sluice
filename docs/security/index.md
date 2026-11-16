@@ -11,7 +11,7 @@ Sluice stands between clients you do not trust and your data. This page lists th
 | Access | Default deny. A query runs only when policies allow every table it reads. |
 | Statements | Read-only. Sluice rejects writes and attaches databases `READ_ONLY`. |
 | [Audit log](audit.md) | `audit.failClosed: true`. A client gets rows only after Sluice queued the audit record. |
-| Admin API | Off. Without `admin.token` it accepts every request. |
+| Admin API | Off. Without `admin.token` it starts only on a loopback address or with `admin.allowAnonymous: true`, and then accepts every request. |
 | TLS | Off. REST, MCP over HTTP and admin serve plain HTTP until you set `tls`. |
 | Secrets | Sluice writes no secret value to logs, metrics or the audit log. |
 

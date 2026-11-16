@@ -230,9 +230,9 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `issuer` | string |  | Issuer (`iss`) of the JWTs. |
-| `audience` | string |  | Expected audience (`aud`). |
+| `audience` | string |  | Expected audience (`aud`). Required with `jwksUrl` or `hmacSecretRef`. |
 | `jwksUrl` | string |  | URL of the signing keys. Needs `issuer` and `audience`. |
-| `hmacSecretRef` | string |  | Secret reference to the HMAC key. |
+| `hmacSecretRef` | string |  | Secret reference to the HMAC key, at least 32 bytes. Needs `issuer` and `audience`. |
 | `jwksCacheTtl` | duration |  | Cache time of the signing keys. Default `10m`. |
 | `clockSkew` | duration |  | Allowed clock difference. Default `60s`. |
 | `claims.subjectId` | string |  | JWT: claim path, default `sub`. API key: the subject id. |

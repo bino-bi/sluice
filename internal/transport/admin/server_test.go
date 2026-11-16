@@ -140,6 +140,34 @@ func TestHandlePolicies_AuthSuccess(t *testing.T) {
 	}
 }
 
+// After 10 failed logins an IP gets 429, also with the right token, so it
+// cannot keep guessing. Other IPs are not affected.
+func TestAdminAuth_FailedLoginsLimitedPerIP(t *testing.T) {
+	t.Parallel()
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true, Token: "secret"}, admin.Deps{})
+	call := func(remote, token string) int {
+		r := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
+		r.RemoteAddr = remote
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := range 10 {
+		if got := call("192.0.2.1:1000", "wrong"); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status %d, want 401", i+1, got)
+		}
+	}
+	if got := call("192.0.2.1:1000", "secret"); got != http.StatusTooManyRequests {
+		t.Fatalf("right token after 10 failures: status %d, want 429", got)
+	}
+	if got := call("192.0.2.2:1000", "secret"); got != http.StatusOK {
+		t.Fatalf("other IP: status %d, want 200", got)
+	}
+}
+
 func TestHandleDataSources_NoRegistry200EmptyList(t *testing.T) {
 	t.Parallel()
 	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{})

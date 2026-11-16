@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 )
 
@@ -100,6 +101,8 @@ type Server struct {
 	deps Deps
 	srv  *http.Server
 	lg   *slog.Logger
+
+	failedAuth *ratelimit.KeyedLimiter // failed logins per client IP
 }
 
 // New wires a Server. The server is not listening yet; call
@@ -113,7 +116,7 @@ func New(cfg Config, deps Deps) *Server {
 	if cfg.Token == "" && cfg.Enabled {
 		lg.Warn("admin: running without an auth token — do not expose this port")
 	}
-	s := &Server{cfg: cfg, deps: deps, lg: lg}
+	s := &Server{cfg: cfg, deps: deps, lg: lg, failedAuth: ratelimit.NewKeyed(failedAuthSpec, 0, nil)}
 	s.srv = &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           s.routes(),

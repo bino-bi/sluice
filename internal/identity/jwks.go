@@ -28,26 +28,33 @@ var (
 	ErrUnsupportedKey  = errors.New("identity: unsupported jwk key type")
 )
 
+// MaxJWKSStaleAge is how long after its cache time a key set is still
+// served while refreshes fail. After that the issuer fails closed, so a
+// key the IdP removed does not stay valid while its JWKS URL is blocked.
+const MaxJWKSStaleAge = 24 * time.Hour
+
 // JWKSClient fetches and caches JSON Web Key Sets. One client instance
 // serves many issuers — it maintains per-issuer state keyed on the JWKS
 // URL. TTL controls stale age; an unknown kid triggers a single refresh
-// (coalesced under a per-URL mutex) before giving up.
+// (coalesced under a per-URL lock) before giving up. A failed refresh
+// blocks the next one for minRefresh, and stale keys are served in the
+// meantime for at most MaxJWKSStaleAge.
 type JWKSClient struct {
 	http       *http.Client
 	defaultTTL time.Duration
-	minRefresh time.Duration // rate-limit refreshes triggered by unknown kid
+	minRefresh time.Duration // floor between unknown-kid refreshes and after a failed refresh
 	clock      func() time.Time
 	log        *slog.Logger
 	urlMu      sync.Mutex
-	urlLocks   map[string]*sync.Mutex
-	cache      sync.Map // url → *jwksEntry
+	urlLocks   map[string]chan struct{} // a lock that a waiter can leave on ctx.Done
+	cache      sync.Map                 // url → *jwksEntry
 }
 
 // JWKSClientOptions tunes the client. Zero values pick defaults.
 type JWKSClientOptions struct {
 	HTTPClient *http.Client  // default: &http.Client{Timeout: 5s}
 	DefaultTTL time.Duration // default: 10m
-	MinRefresh time.Duration // default: 30s — floor between unknown-kid refreshes
+	MinRefresh time.Duration // default: 30s — floor between unknown-kid refreshes and after a failed refresh
 	Clock      func() time.Time
 	Logger     *slog.Logger
 }
@@ -61,7 +68,7 @@ func NewJWKSClient(opts JWKSClientOptions) *JWKSClient {
 		minRefresh: opts.MinRefresh,
 		clock:      opts.Clock,
 		log:        opts.Logger,
-		urlLocks:   make(map[string]*sync.Mutex),
+		urlLocks:   make(map[string]chan struct{}),
 	}
 	if c.http == nil {
 		c.http = &http.Client{Timeout: 5 * time.Second}
@@ -102,39 +109,74 @@ func (c *JWKSClient) KeyFor(ctx context.Context, url, kid string, ttl time.Durat
 	}
 
 	// Refresh under a per-URL lock so concurrent unknown-kid misses
-	// collapse into a single HTTP round-trip.
-	mu := c.lockFor(url)
-	mu.Lock()
-	defer mu.Unlock()
+	// collapse into a single HTTP round-trip. While another request
+	// refreshes, a usable stale key is served at once instead.
+	lock := c.lockFor(url)
+	select {
+	case lock <- struct{}{}:
+	default:
+		if prev, ok := c.load(url); ok {
+			if k, alg, ok := c.staleLookup(prev, kid, useTTL); ok {
+				return k, alg, nil
+			}
+		}
+		select {
+		case lock <- struct{}{}:
+		case <-ctx.Done():
+			return nil, "", fmt.Errorf("%w: %w", ErrJWKSUnreachable, ctx.Err())
+		}
+	}
+	defer func() { <-lock }()
 
 	// Track whether this refresh is driven by an unknown-kid miss vs a
 	// TTL expiry so the rate-limit only applies to the former.
 	var missDriven bool
-	if entry, ok := c.load(url); ok && !c.stale(entry, useTTL) {
-		if k, alg, ok := entry.lookup(kid); ok {
-			return k, alg, nil
-		}
-		missDriven = true
-		// Fresh cache + unknown kid: apply the rate-limit so repeated
-		// attacks don't hammer the JWKS endpoint. We check against the
-		// refresh-specific timestamp, which is only set once an
-		// unknown-kid miss has already triggered a refresh — the first
-		// miss after a TTL-driven fetch is always allowed through.
-		if !entry.refreshedForMissAt.IsZero() && c.clock().Sub(entry.refreshedForMissAt) < c.minRefresh {
-			return nil, "", fmt.Errorf("%w: kid=%s (refresh rate-limited)", ErrKeyNotFound, kid)
+	if entry, ok := c.load(url); ok {
+		if !c.stale(entry, useTTL) {
+			if k, alg, ok := entry.lookup(kid); ok {
+				return k, alg, nil
+			}
+			missDriven = true
+			// Fresh cache + unknown kid: apply the rate-limit so repeated
+			// attacks don't hammer the JWKS endpoint. The first miss after
+			// a TTL-driven fetch is always allowed through.
+			if c.recent(entry.refreshedForMissAt) || c.recent(entry.failedAt) {
+				return nil, "", fmt.Errorf("%w: kid=%s (refresh rate-limited)", ErrKeyNotFound, kid)
+			}
+		} else if c.recent(entry.failedAt) {
+			// The last refresh failed a moment ago: no new fetch yet.
+			if k, alg, ok := c.staleLookup(entry, kid, useTTL); ok {
+				return k, alg, nil
+			}
+			return nil, "", fmt.Errorf("%w: the last refresh failed, next try after %s", ErrJWKSUnreachable, c.minRefresh)
 		}
 	}
 
 	entry, err := c.fetch(ctx, url)
 	if err != nil {
+		// A client that left says nothing about the endpoint. A deadline
+		// does: a hanging endpoint must be backed off too.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, "", err
+		}
+		// Record the failure so the next requests do not fetch again. An
+		// empty entry is the negative cache when nothing was fetched yet.
+		next := &jwksEntry{}
+		prev, hadPrev := c.load(url)
+		if hadPrev {
+			cp := *prev
+			next = &cp
+		}
+		next.failedAt = c.clock()
+		c.cache.Store(url, next)
 		// Serve a stale entry on transient failures so one flaky JWKS
 		// fetch doesn't throw out every request.
-		if prev, ok := c.load(url); ok {
-			c.log.WarnContext(ctx, "identity: jwks refresh failed, serving stale",
-				slog.String("url", url),
-				slog.String("error", err.Error()),
-			)
-			if k, alg, ok := prev.lookup(kid); ok {
+		if hadPrev {
+			if k, alg, ok := c.staleLookup(prev, kid, useTTL); ok {
+				c.log.WarnContext(ctx, "identity: jwks refresh failed, serving stale",
+					slog.String("url", url),
+					slog.String("error", err.Error()),
+				)
 				return k, alg, nil
 			}
 		}
@@ -149,6 +191,20 @@ func (c *JWKSClient) KeyFor(ctx context.Context, url, kid string, ttl time.Durat
 		return k, alg, nil
 	}
 	return nil, "", fmt.Errorf("%w: kid=%s", ErrKeyNotFound, kid)
+}
+
+// staleLookup finds kid in e unless the set is more than MaxJWKSStaleAge
+// past its cache time. A fresh entry always qualifies.
+func (c *JWKSClient) staleLookup(e *jwksEntry, kid string, ttl time.Duration) (any, string, bool) {
+	if e.fetchedAt.IsZero() || c.clock().Sub(e.fetchedAt) > ttl+MaxJWKSStaleAge {
+		return nil, "", false
+	}
+	return e.lookup(kid)
+}
+
+// recent reports whether t is set and less than minRefresh ago.
+func (c *JWKSClient) recent(t time.Time) bool {
+	return !t.IsZero() && c.clock().Sub(t) < c.minRefresh
 }
 
 // Invalidate drops the cache entry for url so the next KeyFor forces a
@@ -169,15 +225,15 @@ func (c *JWKSClient) stale(e *jwksEntry, ttl time.Duration) bool {
 	return c.clock().Sub(e.fetchedAt) > ttl
 }
 
-func (c *JWKSClient) lockFor(url string) *sync.Mutex {
+func (c *JWKSClient) lockFor(url string) chan struct{} {
 	c.urlMu.Lock()
 	defer c.urlMu.Unlock()
-	mu, ok := c.urlLocks[url]
+	lock, ok := c.urlLocks[url]
 	if !ok {
-		mu = &sync.Mutex{}
-		c.urlLocks[url] = mu
+		lock = make(chan struct{}, 1)
+		c.urlLocks[url] = lock
 	}
-	return mu
+	return lock
 }
 
 func (c *JWKSClient) fetch(ctx context.Context, url string) (*jwksEntry, error) {
@@ -218,6 +274,9 @@ type jwksEntry struct {
 	// fetch that produced this entry. It paces repeated unknown-kid
 	// attempts so a malicious client can't hammer the JWKS endpoint.
 	refreshedForMissAt time.Time
+	// failedAt is the time of the last failed refresh. It blocks the next
+	// fetch for minRefresh. An entry with only failedAt holds no keys.
+	failedAt time.Time
 }
 
 type jwkParsed struct {
