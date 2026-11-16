@@ -334,6 +334,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rewriteResp, reErr = s.opts.Rewriter.Rewrite(rwCtx, rewriter.RewriteRequest{
 			AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
 			Sample: req.Sample,
+			// One row over the limit shows the result was cut.
+			RowCap: req.MaxRows + 1,
 		})
 		rwSpan.End()
 		if reErr != nil {

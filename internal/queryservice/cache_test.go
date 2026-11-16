@@ -112,3 +112,30 @@ func TestExecute_CacheMissOnDifferentLiteral(t *testing.T) {
 		t.Errorf("Evaluate called %d times, want 2 (different SQL literals must not share a cache entry)", got)
 	}
 }
+
+// The rewritten SQL carries the row limit as a LIMIT, so two row limits
+// must not share a cache entry.
+func TestExecute_CacheKeyHoldsRowLimit(t *testing.T) {
+	pol := &countingPolicy{dec: &policy.Decision{Outcome: policy.OutcomeAllow}}
+	rw := &countingRewriter{}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   pol,
+		Rewriter: rw,
+		Executor: ex,
+		Audit:    &fakeAudit{},
+		Cache:    policycache.New(16, time.Minute),
+		Limits:   queryservice.Limits{MaxRowsCeiling: 100},
+	})
+	for _, maxRows := range []int64{5, 10, 5} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id FROM t", MaxRows: maxRows})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		_ = res.Rows.Close()
+	}
+	if got := rw.calls.Load(); got != 2 {
+		t.Errorf("Rewrite called %d times, want 2 (one per row limit)", got)
+	}
+}

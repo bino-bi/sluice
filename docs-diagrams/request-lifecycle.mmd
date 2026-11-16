@@ -19,7 +19,7 @@ sequenceDiagram
         S->>B: consume grant, or park + sync wait
     end
     S->>R: rewrite (filters, masks, LIMIT, sample)
-    S->>D: execute (read-only, streaming)
+    S->>D: execute (read-only, full result)
     S->>S: attach post-query masks
     S->>A: access record (fail-closed gate)
     S-->>T: stream rows

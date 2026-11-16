@@ -28,6 +28,9 @@ type Key struct {
 	Digest       string
 	SQLHash      [32]byte
 	IdentityHash [32]byte
+	// RowCap is the outer LIMIT the rewritten SQL carries. It follows the
+	// row limit of the request.
+	RowCap int64
 }
 
 // Entry is the cached result. Both fields are treated as immutable by

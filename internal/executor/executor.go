@@ -78,7 +78,7 @@ type Response struct {
 	ExecTime time.Duration
 }
 
-// RowIterator is a streaming result iterator. Callers must call Close
+// RowIterator is a result iterator. Callers must call Close
 // after draining (defer is idiomatic). Scan's dest[] slice must match
 // Columns in count and be compatible types.
 type RowIterator interface {
@@ -99,8 +99,10 @@ type RowIterator interface {
 }
 
 // Execute runs req against a hardened connection drawn from the pool.
-// Rows stream through the returned iterator; the underlying connection
-// is held until Response.Rows.Close is called.
+// The DuckDB driver builds the whole result before QueryContext returns,
+// so the result is in memory before the first row is read; the caller caps
+// it with a LIMIT in the SQL. The connection is held until
+// Response.Rows.Close is called.
 func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) {
 	if req.Format == "" {
 		req.Format = FormatJSON

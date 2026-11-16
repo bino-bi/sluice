@@ -62,8 +62,8 @@ type Executor struct {
 	// attachMu orders catalog swaps against query starts. ATTACH and
 	// DETACH change the whole instance, so Exclusive holds the write
 	// side while it swaps; Execute holds the read side from ensureInit
-	// until QueryContext returns. A result that streams after that keeps
-	// reading even when its catalog is detached.
+	// until QueryContext returns. The result is complete by then, so it
+	// can be read even when its catalog is detached.
 	attachMu sync.RWMutex
 }
 
