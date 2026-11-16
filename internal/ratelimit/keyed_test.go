@@ -34,25 +34,25 @@ func TestKeyed_BurstAndRefillPerKey(t *testing.T) {
 	}
 }
 
-func TestKeyed_ExhaustedTakesNoToken(t *testing.T) {
+func TestKeyed_RefundReturnsToken(t *testing.T) {
 	now := time.Unix(1000, 0)
 	k := ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 0, func() time.Time { return now })
 
-	if k.Exhausted("a") {
-		t.Fatal("a key without a bucket is not exhausted")
-	}
-	k.Allow("a")
-	for range 3 {
-		if !k.Exhausted("a") {
-			t.Fatal("bucket is empty, want exhausted")
-		}
-	}
-	now = now.Add(time.Second)
-	if k.Exhausted("a") {
-		t.Fatal("one token refilled, want not exhausted")
-	}
+	k.Refund("a") // no bucket: no effect
 	if !k.Allow("a") {
-		t.Fatal("Exhausted must not take the refilled token")
+		t.Fatal("first request must be allowed")
+	}
+	k.Refund("a")
+	if !k.Allow("a") {
+		t.Fatal("refunded token must be usable")
+	}
+	if k.Allow("a") {
+		t.Fatal("bucket is empty, want denied")
+	}
+	k.Refund("a")
+	k.Refund("a")
+	if !k.Allow("a") || k.Allow("a") {
+		t.Fatal("refund must not raise the bucket above the burst")
 	}
 }
 

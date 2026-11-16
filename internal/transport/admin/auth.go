@@ -26,16 +26,19 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Take the token before the compare and refund it on success, so
+		// parallel guesses cannot all pass before one failure counts.
 		ip := identity.RemoteIP(r)
-		if s.failedAuth.Exhausted(ip) {
+		if !s.failedAuth.Allow(ip) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"code":"ERR_RATE_LIMITED","message":"too many failed admin logins"}`))
 			return
 		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.Token)) != 1 {
-			s.failedAuth.Allow(ip)
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.Token)) == 1 {
+			s.failedAuth.Refund(ip)
+		} else {
 			s.lg.WarnContext(r.Context(), "admin: auth failed",
 				"remote", r.RemoteAddr, "path", r.URL.Path)
 			if s.deps.AuthFailed != nil {

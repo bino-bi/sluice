@@ -167,6 +167,29 @@ func TestJWKSClientHangingRefreshDoesNotBlockOthers(t *testing.T) {
 	<-done
 }
 
+// A fetch that runs into the request deadline counts as a failure, so a
+// hanging endpoint is backed off like one that answers 503.
+func TestJWKSClientBacksOffAfterDeadline(t *testing.T) {
+	srv := newJWKSServer(t, genRSAPub(t))
+	release := make(chan struct{})
+	srv.hang.Store(&release)
+	t.Cleanup(func() { close(release) })
+	clk := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	client := identity.NewJWKSClient(identity.JWKSClientOptions{Clock: clk.Now})
+
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, _, err := client.KeyFor(short, srv.URL, "key-0", 0); err == nil {
+		t.Fatal("hanging fetch: want an error")
+	}
+	if _, _, err := client.KeyFor(context.Background(), srv.URL, "key-0", 0); !errors.Is(err, identity.ErrJWKSUnreachable) {
+		t.Fatalf("err = %v, want ErrJWKSUnreachable from the backoff", err)
+	}
+	if got := srv.fetchCount.Load(); got != 1 {
+		t.Fatalf("fetchCount = %d, want 1", got)
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

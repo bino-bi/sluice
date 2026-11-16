@@ -154,8 +154,9 @@ func (c *JWKSClient) KeyFor(ctx context.Context, url, kid string, ttl time.Durat
 
 	entry, err := c.fetch(ctx, url)
 	if err != nil {
-		// A canceled request says nothing about the endpoint.
-		if ctx.Err() != nil {
+		// A client that left says nothing about the endpoint. A deadline
+		// does: a hanging endpoint must be backed off too.
+		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, "", err
 		}
 		// Record the failure so the next requests do not fetch again. An
