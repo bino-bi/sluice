@@ -9,10 +9,10 @@ As an operator, you handle these parts of Sluice:
 | REST listener | `rest.listen` | `:8080` | Queries, health endpoints and approval links. See [Deployment](deployment.md). |
 | Admin listener | `admin.listen` | `:9091`, off | The [Admin API](../reference/admin-api.md) and `/metrics`. Turn it on with `admin.enabled: true` and set a [token](server-config.md). |
 | Policy directory | `policies.directory` | `./policies.d` | Policies, subject bindings and [data sources](data-sources.md). Sluice [reloads](hot-reload.md) it. |
-| Audit directory | `audit.file.path` | None | The [audit log](../security/audit.md). Sluice creates it with mode `0750`. |
+| Audit directory | `audit.file.path` | None, required | The [audit log](../security/audit.md). Sluice creates it with mode `0700` and locks it. |
 | State directory | `budget.stateDir`, `approval.stateDir` | `./state` | Budget counters with `budget.enabled: true`, approvals with `approval.persist: true`. Sluice creates it with mode `0700`. |
 
-- Without `audit.file.path`, Sluice writes the audit log to the temp directory of the system and logs a warning.
+- Without `audit.file.path`, `sluice serve` and `sluice mcp` do not start. Sluice refuses an audit directory that is a symlink, that group or others can write, or that another user owns.
 - Every `.yaml` and `.yml` file in the policy directory must be a policy object. Sluice skips hidden directories and the directories `tests` and `testdata`.
 
 ## Pages

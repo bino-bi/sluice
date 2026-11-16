@@ -85,6 +85,8 @@ Sluice reads the tables of a data source on the first call, and again after a re
 
 `execute_sql`, `sample_table` and `explain_access` write audit records with `origin: mcp`. The other tools write none.
 
+`sluice mcp` needs `audit.file.path`, like `sluice serve`. Only one process can use an audit directory: Sluice locks it at start. A second `sluice mcp`, or a `sluice serve`, with the same `audit.file.path` does not start. Give each process its own `audit.file.path`, or run `sluice serve` with `mcp.enabled` and connect all agents to it.
+
 ## See also
 
 - [MCP agents](../cookbook/mcp-agents.md)

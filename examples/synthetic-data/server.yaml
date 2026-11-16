@@ -15,6 +15,10 @@ policies:
 identity:
   apiKeyPepper: "secret://env/SLUICE_APIKEY_PEPPER"
 
+audit:
+  file:
+    path: "./data/audit"
+
 # --8<-- [start:synthetic]
 synthetic:
   dir: "./data/synthetic"

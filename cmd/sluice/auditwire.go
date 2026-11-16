@@ -5,10 +5,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
 	minio "github.com/minio/minio-go/v7"
@@ -21,37 +20,29 @@ import (
 
 // buildAuditSinks constructs the audit sink chain: the file sink first
 // (chain primary — it carries the hash chain and seeds it across
-// restarts), then the optional best-effort syslog and s3 sinks. A missing
-// file config falls back to a temp directory with a loud warning so the
-// server still boots. The concrete *FileSink is returned alongside the
-// chain so the admin audit tailer can read it back.
+// restarts), then the optional best-effort syslog and s3 sinks.
+// audit.file.path is required: a shared temp directory is no place for the
+// audit log. The concrete *FileSink is returned alongside the chain so the
+// admin audit tailer can read it back.
 func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *secrets.Resolver, log *slog.Logger) ([]audit.Sink, *audit.FileSink, error) {
 	var (
 		sinks    []audit.Sink
 		fileSink *audit.FileSink
 	)
 
-	if scfg.Audit.File != nil && scfg.Audit.File.Path != "" {
-		sink, err := audit.NewFileSink(audit.FileOptions{
-			Dir:          scfg.Audit.File.Path,
-			RotateDaily:  scfg.Audit.File.RotateDaily,
-			RotateSizeMB: scfg.Audit.File.RotateSizeMB,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("audit file sink: %w", err)
-		}
-		fileSink = sink
-		sinks = append(sinks, sink)
-	} else {
-		tmp := filepath.Join(os.TempDir(), "sluice-audit")
-		log.Warn("audit: no sink configured; defaulting to temp directory", slog.String("path", tmp))
-		sink, err := audit.NewFileSink(audit.FileOptions{Dir: tmp, RotateDaily: true})
-		if err != nil {
-			return nil, nil, fmt.Errorf("audit fallback sink: %w", err)
-		}
-		fileSink = sink
-		sinks = append(sinks, sink)
+	if scfg.Audit.File == nil || scfg.Audit.File.Path == "" {
+		return nil, nil, errors.New("audit.file.path is required: set it to a directory that only the sluice user can write")
 	}
+	sink, err := audit.NewFileSink(audit.FileOptions{
+		Dir:          scfg.Audit.File.Path,
+		RotateDaily:  scfg.Audit.File.RotateDaily,
+		RotateSizeMB: scfg.Audit.File.RotateSizeMB,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("audit file sink: %w", err)
+	}
+	fileSink = sink
+	sinks = append(sinks, sink)
 
 	if sc := scfg.Audit.Syslog; sc != nil {
 		sink, err := audit.NewSyslogSink(audit.SyslogOptions{

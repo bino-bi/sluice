@@ -53,7 +53,7 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `policies.opa.query` | `data.sluice.main` | Rego query for the decision. |
 | `policies.rebac.cacheTtl` | `10s` | Lifetime of a cached check. |
 | `policies.rebac.cacheSize` | `10000` | Maximum cached checks. |
-| `audit.file.path` |  | Audit log directory. Empty means `sluice-audit` in the temp directory. |
+| `audit.file.path` |  | Required by `serve` and `mcp`. Audit log directory, one per process. |
 | `audit.file.rotateDaily` | `false` | New file each UTC day. Always on when `rotateSizeMB` is `0`. |
 | `audit.file.rotateSizeMB` | `0` | New file after this size. |
 | `audit.file.genesis` |  | Secret reference: genesis. |

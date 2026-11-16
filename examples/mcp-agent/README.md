@@ -19,7 +19,7 @@ sluice policy test policies.d --tests tests
 
 ## Claude Desktop
 
-`manual/claude-desktop.json` starts `sluice mcp` over stdio. Replace `/ABSOLUTE/PATH/TO/sluice` with your checkout path. Run `serve.sh` once to create the data, then stop it. Two Sluice processes must not write to the same `data/audit`.
+`manual/claude-desktop.json` starts `sluice mcp` over stdio. Replace `/ABSOLUTE/PATH/TO/sluice` with your checkout path. Run `serve.sh` once to create the data, then stop it. A second Sluice process on the same `data/audit` does not start.
 
 ## Files
 

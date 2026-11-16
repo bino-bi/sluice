@@ -82,10 +82,13 @@ What happened: the changed record in line 4 no longer matches its hash.
 | `auth-event` | A request fails the login on REST, MCP over HTTP or the admin API |
 | `approval-requested`, `approval-approved`, `approval-rejected`, `approval-expired` | An approval changes state |
 | `synthetic-build` | A synthetic build in the server starts or ends. `sluice synth build` writes none |
+| `audit-gap` | The audit file works again after a failed write |
 
 An `auth-event` record has `origin`, `remote_ip`, the `error_code` `ERR_UNAUTHORIZED` and a `message`: `no credential`, `expired credential` or `invalid credential`. It holds no part of the credential. For each of the three listeners, Sluice writes at most 5 of these records per second, after a burst of 20. `sluice_audit_auth_events_dropped_total` counts the failed logins without a record.
 
 A `synthetic-build` record has `origin` (`admin` or `startup`) and in `extras` the `phase` (`start` or `end`), `build_id`, `spec_hash` and `result`. On the end record, `content_hash`, `source_rows` and `synthetic_rows` hold the result. It holds no value of the source.
+
+An `audit-gap` record has in `extras` the number `lost_records` and `last_written_hash`, the hash of the last record in the file before the gap. See [Write failures](#write-failures).
 
 ## Hash chain
 
@@ -104,6 +107,7 @@ Each `hash` is a SHA-256 over the record and `prior_hash`, the hash of the recor
 | 0 | Chain intact |
 | 1 | Directory or file not readable, or a keyed chain without `--key-ref` |
 | 4 | Chain broken, a line that is not JSON, another anchor, a wrong key, or no record at all. Also `--key-ref` on a chain without a keyed record |
+| 5 | Chain intact, but with `audit-gap` records. Verify prints a `gap:` line for each, `--json` a `gaps` list |
 
 ### Chain key
 
@@ -119,26 +123,49 @@ You can add a key to an existing directory: the first keyed record follows the l
 | Syslog | `audit.syslog`: `network`, `address`, `facility`, `tag` | RFC 5424, no TLS. UDP can lose messages. `tcp` and `unix` must connect when Sluice starts |
 | S3 | `audit.s3`: `endpoint`, `bucket`, `prefix`, `region`, `credentialsRef`, `objectLock`, `retentionDays`, `uploadInterval`, `uploadBytes`, `maxBufferBytes`, `insecure`, `forcePathStyle` | Uploads batches of JSON lines. `objectLock` needs `retentionDays` and a bucket with Object Lock |
 
-Syslog and S3 get copies. Their failures never stop a query. See [Configuration](../reference/configuration.md).
+Syslog and S3 get copies. Their failures never stop a query. Each has its own queue of 10 000 records. A slow syslog or S3 sink does not hold up the file. See [Configuration](../reference/configuration.md).
 
+- File: `audit.file.path` is required. `sluice serve` and `sluice mcp` do not start without it.
 - File: a restart continues the same hash chain.
-- File: Sluice creates the directory with mode `0750` and the files with mode `0640`.
+- File: Sluice creates the directory with mode `0700` and the files with mode `0640`.
+- File: Sluice refuses a directory that is a symlink, that group or others can write, or that another user owns. On Windows, it checks only for a symlink.
+- File: Sluice locks the directory with the file `.sluice.lock`. A second process with the same `audit.file.path` does not start. Give each process its own directory, or run `sluice serve` with `mcp.enabled` in place of a separate `sluice mcp`.
+- File: a crash can leave a last line without a newline. At start, Sluice moves that line to `<file>.torn-<time>`, logs an error and continues the chain from the last full record.
+- Sluice replaces invalid UTF-8 in a record with U+FFFD before it computes the hash. `sql_sample` and `client_meta` are cut at a character boundary.
 - S3: objects are named `<prefix>/YYYY/MM/DD/audit-<id>.jsonl`.
 - S3: an upload starts when the batch reaches `uploadBytes` or is older than `uploadInterval`. Sluice tries a failed upload again.
 - S3: without `credentialsRef`, Sluice takes the credentials from the environment, the AWS credentials file or the IAM role.
 - S3: when the buffer reaches `maxBufferBytes`, Sluice drops new records for this sink.
 - Syslog: Sluice drops a record that it cannot send.
-- `sluice_audit_dropped_total` counts the dropped records per `sink`.
+- Syslog and S3: when the queue of the sink is full, Sluice drops new records for this sink.
+- `sluice_audit_dropped_total` counts the dropped records per `sink` and `reason`.
 
 ## Fail closed
 
-`audit.failClosed: true` checks one thing: the queue in memory takes the `query` record within 200 ms. If not, the query fails with `ERR_AUDIT_UNAVAILABLE`. With `false`, the query runs and `sluice_audit_dropped_total` counts the record.
+`audit.failClosed: true` checks that the queue in memory takes the `query` record. The query fails with `ERR_AUDIT_UNAVAILABLE` in two cases:
+
+- The queue is full. One request waits up to 200 ms for space. Other requests fail at once.
+- The audit file cannot be written. See [Write failures](#write-failures).
+
+With `false`, the query runs and `sluice_audit_dropped_total` counts the record. The check does not wait for the write to the file.
+
+## Write failures
+
+When a write to the audit file fails, Sluice opens the file again and tries once more. When that fails too:
+
+1. Sluice logs an error. Each new record fails, so with `audit.failClosed: true` each query fails with `ERR_AUDIT_UNAVAILABLE`.
+2. Records that were in the queue are lost.
+3. Every second, Sluice tries to write an `audit-gap` record. When that works, new records work again. Sluice tries once more on shutdown.
+
+The `audit-gap` record chains onto the lost records. `sluice audit verify` accepts the break only when `last_written_hash` is the hash of the record before it. It exits with status 5 and lists the gap. A removed record before the gap still breaks the chain.
 
 ## Limits
 
 - No record for a reload, other admin calls, or a request over `limits.globalRps` or `limits.perIpRps`. In a flood of failed logins, only a part gets a record.
 - Without `audit.chainKeyRef`, verify does not detect a change when the later hashes are computed again. With or without a key, it does not detect missing newest records or a replaced directory. The records before the first keyed one are only as safe as a chain without a key. Store each `last_hash` on another host. `--json` prints it in full.
-- A failed disk write does not stop queries. It raises `sluice_audit_write_errors_total`.
+- A failed disk write raises `sluice_audit_write_errors_total`. A record that the queue took is lost when its write fails. With `audit.failClosed: true` its query was already served.
+- A failed fsync is logged and counted. It does not stop new records and writes no `audit-gap` record. When the system then crashes, records can be missing, and verify reports a broken chain.
+- When Sluice stops or crashes before it writes the `audit-gap` record, the next start continues the chain from the last written record. The lost records then leave no trace in the chain.
 - Sluice never deletes audit files. Remove whole files, oldest first. The rest verifies without `--anchor`.
 - On shutdown, Sluice waits up to 10 seconds to write queued records.
 
