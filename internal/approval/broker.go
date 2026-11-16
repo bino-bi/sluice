@@ -190,7 +190,10 @@ func (b *Broker) Require(_ context.Context, in RequireInput) (Ticket, bool, erro
 	// a capability URL must never reference state a restart would lose.
 	// Fail-closed — the query errors rather than parking non-durably.
 	if b.store != nil {
-		if err := b.store.PutRequest(context.Background(), r.toStored()); err != nil {
+		sctx, cancel := storeCtx()
+		err := b.store.PutRequest(sctx, r.toStored())
+		cancel()
+		if err != nil {
 			b.mu.Unlock()
 			return Ticket{}, false, fmt.Errorf("approval: persist request: %w", err)
 		}
@@ -290,13 +293,15 @@ func (b *Broker) decide(id, token string, accept bool, remoteAddr string) (Decis
 			after.State = targetState
 			after.DecidedAt = now
 			after.ApproverIP = remoteAddr
-			if err := b.store.PutRequest(context.Background(), after); err != nil {
+			ctx, cancel := storeCtx()
+			defer cancel()
+			if err := b.store.PutRequest(ctx, after); err != nil {
 				b.mu.Unlock()
 				return DecisionResult{}, fmt.Errorf("approval: persist decision: %w", err)
 			}
 			if accept {
 				sg := StoredGrant{Key: keyOf(r.subjectKey, r.sqlHash), ApprovalID: r.id, ExpiresAt: now.Add(b.grantTTL)}
-				if err := b.store.PutGrant(context.Background(), sg); err != nil {
+				if err := b.store.PutGrant(ctx, sg); err != nil {
 					b.mu.Unlock()
 					return DecisionResult{}, fmt.Errorf("approval: persist grant: %w", err)
 				}
@@ -348,13 +353,20 @@ func (b *Broker) ConsumeGrant(subjectKey, sqlHash string) (string, bool) {
 	b.expireLocked(now)
 	key := keyOf(subjectKey, sqlHash)
 	g, ok := b.grants[key]
-	if !ok || now.After(g.expiresAt) {
+	if !ok {
+		// The normal first query of a gated statement: nothing to delete.
+		return "", false
+	}
+	if now.After(g.expiresAt) {
 		delete(b.grants, key)
 		b.deleteGrantStored(key)
 		return "", false
 	}
 	if b.store != nil {
-		if err := b.store.DeleteGrant(context.Background(), key); err != nil {
+		ctx, cancel := storeCtx()
+		err := b.store.DeleteGrant(ctx, key)
+		cancel()
+		if err != nil {
 			b.logger.Warn("approval: persist grant consumption failed; grant not consumed",
 				slog.String("error", err.Error()))
 			return "", false
@@ -478,7 +490,10 @@ func (b *Broker) gcLocked(now time.Time) {
 		if now.Sub(r.decidedAt) > b.requestTTL {
 			delete(b.byID, id)
 			if b.store != nil {
-				if err := b.store.DeleteRequest(context.Background(), id); err != nil {
+				ctx, cancel := storeCtx()
+				err := b.store.DeleteRequest(ctx, id)
+				cancel()
+				if err != nil {
 					b.logger.Warn("approval: persist request gc failed",
 						slog.String("error", err.Error()))
 				}
@@ -487,13 +502,23 @@ func (b *Broker) gcLocked(now time.Time) {
 	}
 }
 
+// storeTimeout bounds one store call. Store calls run under the broker
+// mutex, so a stuck disk must not block every other approval call for long.
+const storeTimeout = 5 * time.Second
+
+func storeCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), storeTimeout)
+}
+
 // putRequestStored / deleteGrantStored are the best-effort persistence
 // paths: log-and-continue, callers hold the lock.
 func (b *Broker) putRequestStored(r *request) {
 	if b.store == nil {
 		return
 	}
-	if err := b.store.PutRequest(context.Background(), r.toStored()); err != nil {
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := b.store.PutRequest(ctx, r.toStored()); err != nil {
 		b.logger.Warn("approval: persist request state failed",
 			slog.String("error", err.Error()))
 	}
@@ -503,7 +528,9 @@ func (b *Broker) deleteGrantStored(key string) {
 	if b.store == nil {
 		return
 	}
-	if err := b.store.DeleteGrant(context.Background(), key); err != nil {
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := b.store.DeleteGrant(ctx, key); err != nil {
 		b.logger.Warn("approval: persist grant removal failed",
 			slog.String("error", err.Error()))
 	}
