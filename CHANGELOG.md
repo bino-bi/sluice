@@ -33,6 +33,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - **A column mask with several clauses masks only the columns of the clause that matched.** A `ColumnMaskPolicy` with `any: [{tables: [customers], columns: [email]}, {tables: [orders], columns: [note]}]` also masked `customers.note` and `orders.email`, and a subject matched by one clause also got the columns of the other clauses. Such a wrong entry could also hide a lower-priority mask that was meant for that column.
 - **The ReBAC check cache is scoped by backend.** The cache key held only object, relation and subject. Two `RelationshipPolicy` objects on different OpenFGA endpoints, stores or models shared answers, so an allow from one store could answer the same tuple for another store until `policies.rebac.cacheTtl` passed. The key now holds endpoint, store id and model id.
 - **An approval-gated query without a grant no longer writes to the approval store.** With `approval.persist` each such query, the normal first query, ran a SQLite `DELETE` under the single broker lock, with no deadline, so all other approval calls waited. Now the store is touched only when a grant exists, and each store call has a 5 second timeout.
+- **Explain with `policies.engine: composite` evaluates each engine once.** Explain ran each member engine twice, so every explain doubled the OpenFGA calls and the policy metrics.
 
 ### Security
 

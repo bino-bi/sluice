@@ -373,6 +373,11 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 	if err != nil {
 		return nil, err
 	}
+	return e.ExplainDecision(in, dec), nil
+}
+
+// ExplainDecision builds the ExplainResult of a decision Evaluate made for in.
+func (e *Engine) ExplainDecision(in Input, dec *Decision) *apitypes.ExplainResult {
 	out := &apitypes.ExplainResult{
 		Subject:   subjectLabel(in.User),
 		Resource:  resourceLabel(in.Tables),
@@ -397,7 +402,7 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 			Reason: dec.DenyReason.Message,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func effectiveDecision(dec *Decision) apitypes.EffectiveDecision {

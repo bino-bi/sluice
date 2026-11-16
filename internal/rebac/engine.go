@@ -243,11 +243,16 @@ func (e *Engine) Explain(ctx context.Context, in policy.Input) (*apitypes.Explai
 	if err != nil {
 		return nil, err
 	}
+	return e.ExplainDecision(in, dec), nil
+}
+
+// ExplainDecision builds the ExplainResult of a decision Evaluate made.
+func (e *Engine) ExplainDecision(_ policy.Input, dec *policy.Decision) *apitypes.ExplainResult {
 	return &apitypes.ExplainResult{
 		Matched:   dec.Applied,
 		Shadow:    dec.Shadow,
 		Effective: apitypes.EffectiveDecision{Decision: string(dec.Outcome)},
-	}, nil
+	}
 }
 
 func abstain() *policy.Decision {

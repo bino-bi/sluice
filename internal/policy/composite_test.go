@@ -41,6 +41,46 @@ func (s stubEngine) Explain(context.Context, Input) (*apitypes.ExplainResult, er
 func (s stubEngine) ApplySnapshot(context.Context, *config.Snapshot) error { return nil }
 func (s stubEngine) Name() string                                          { return s.name }
 
+// countingEngine counts the evaluations of the YAML engine, also the one
+// inside Explain.
+type countingEngine struct {
+	*Engine
+	evals *int
+}
+
+func (c countingEngine) Evaluate(ctx context.Context, in Input) (*Decision, error) {
+	*c.evals++
+	return c.Engine.Evaluate(ctx, in)
+}
+
+func (c countingEngine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult, error) {
+	*c.evals++
+	return c.Engine.Explain(ctx, in)
+}
+
+// Composite.Explain evaluates each member once and builds both the member
+// output and the effective decision from that one decision.
+func TestComposite_ExplainEvaluatesMembersOnce(t *testing.T) {
+	eng := New(Options{})
+	if err := eng.ApplySnapshot(context.Background(), makeSnapshot(allowAll(0))); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	evals := 0
+	res, err := compositeOf(countingEngine{Engine: eng, evals: &evals}).Explain(context.Background(), Input{
+		User:   &identity.UserCtx{Subject: "u"},
+		Tables: []parser.TableRef{{Catalog: "pg", Schema: "public", Table: "orders"}},
+	})
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	if evals != 1 {
+		t.Errorf("member evaluated %d times, want 1", evals)
+	}
+	if res.Effective.Decision != string(OutcomeAllow) || len(res.Matched) != 1 || res.Matched[0].Name != "allow-all" {
+		t.Errorf("explain = %+v, want allow with allow-all matched", res)
+	}
+}
+
 func compositeOf(members ...PolicyEngine) *Composite {
 	return NewComposite(Options{}, members...)
 }
