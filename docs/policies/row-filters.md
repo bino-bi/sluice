@@ -110,7 +110,7 @@ Filters on one table join as in PostgreSQL row level security:
 - The `permissive` filters join with `OR`. A row must pass at least one.
 - Each `restrictive` filter joins with `AND`. A row must pass all of them.
 
-So the result is `(permissive 1 OR permissive 2) AND restrictive 1 AND restrictive 2`. Priority does not change it. A `permissive` filter never widens a `restrictive` one.
+So the result is `(permissive 1 OR permissive 2) AND restrictive 1 AND restrictive 2`. Priority does not change it. A `permissive` filter never widens a `restrictive` one. With only `restrictive` filters, the result is their `AND`. PostgreSQL returns no rows in that case, Sluice does not: access comes from a `SqlAccessPolicy`.
 
 ```yaml
 --8<-- "examples/row-filters/policies.d/filter-open-orders.yaml:2"
