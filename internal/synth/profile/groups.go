@@ -17,9 +17,9 @@ import (
 // profile queries.
 const MaxGroups = 100
 
-// groupTable holds the rows of one group while it is profiled. The
-// builder's default catalog is memory.
-var groupTable = Table{Catalog: "memory", Schema: "main", Name: "sluice_group"}
+// groupTable names the table that holds the rows of one group while it
+// is profiled. It lives in the default catalog of the builder.
+const groupTable = "sluice_group"
 
 // Group is the profile of one by-group. Key is the length-prefixed list
 // of the group's by values as text, a NULL value marked apart.
@@ -97,10 +97,15 @@ func (r *Runner) Groups(ctx context.Context, t Table, col ColumnInfo, by []Colum
 	if len(keys) == 0 {
 		return nil, stats, nil
 	}
+	gt := Table{Schema: "main", Name: groupTable}
+	if err := r.Conn.QueryRowContext(ctx, "SELECT current_database()").Scan(&gt.Catalog); err != nil {
+		r.logger().Debug("synthetic group catalog failed", "column", col.Name, "error", err)
+		return nil, stats, p.fail(ErrQuery)
+	}
 	defer func() {
-		_, _ = r.Conn.ExecContext(context.WithoutCancel(ctx), "DROP TABLE IF EXISTS "+groupTable.sql())
+		_, _ = r.Conn.ExecContext(context.WithoutCancel(ctx), "DROP TABLE IF EXISTS "+gt.sql())
 	}()
-	create := "CREATE OR REPLACE TABLE " + groupTable.sql() + " AS SELECT " + x + " FROM " + t.sql() +
+	create := "CREATE OR REPLACE TABLE " + gt.sql() + " AS SELECT " + x + " FROM " + t.sql() +
 		" WHERE " + strings.Join(where, " AND ")
 	var out []Group
 	for _, vals := range keys {
@@ -112,12 +117,12 @@ func (r *Runner) Groups(ctx context.Context, t Table, col ColumnInfo, by []Colum
 			r.logger().Debug("synthetic group table failed", "column", col.Name, "error", err)
 			return nil, stats, p.fail(ErrQuery)
 		}
-		counts, err := r.Base(ctx, groupTable, []ColumnInfo{col})
+		counts, err := r.Base(ctx, gt, []ColumnInfo{col})
 		if err != nil {
 			return nil, stats, p.fail(ErrQuery)
 		}
 		key := GroupKey(vals)
-		prof, err := r.Column(ctx, groupTable, col, counts[0], needs, s, jitter(key), nil)
+		prof, err := r.Column(ctx, gt, col, counts[0], needs, s, jitter(key), nil)
 		if errors.Is(err, ErrTooFewRows) || errors.Is(err, ErrGrid) || errors.Is(err, ErrNoGroups) {
 			stats.Dropped++
 			continue

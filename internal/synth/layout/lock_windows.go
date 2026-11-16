@@ -2,7 +2,7 @@
 
 //go:build windows
 
-package build
+package layout
 
 import (
 	"os"
@@ -13,7 +13,7 @@ import (
 // lockFile takes an exclusive lock on path and returns the unlock func.
 // The lock also holds between processes (a CLI build and the server).
 func lockFile(path string) (func(), error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, reportMode)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, ReportMode)
 	if err != nil {
 		return nil, err
 	}

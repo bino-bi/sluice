@@ -20,6 +20,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/synth/generate"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -149,7 +150,7 @@ func TestTemplateColumns(t *testing.T) {
 	})
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: spec, dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	for _, q := range []string{
 		"SELECT count(*) FROM syn.crm.customers WHERE email IS DISTINCT FROM lower(first_name || '.' || last_name || '@example.org')",
@@ -186,7 +187,7 @@ func TestTemplateCastRefs(t *testing.T) {
 	cols["notes"] = apitypes.SyntheticColumn{Generator: apitypes.GenTemplate, Args: map[string]any{"template": "{revenue}|{opened}"}}
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: spec, dir: dir})
-	db := query(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := query(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	q := "SELECT count(*) FROM syn.crm.customers WHERE notes IS DISTINCT FROM CAST(revenue AS VARCHAR) || '|' || CAST(opened AS VARCHAR)"
 	if n := scalar[int64](t, db, q); n != 0 {
 		t.Errorf("%d rows: %s", n, q)
@@ -277,7 +278,7 @@ func TestDateOffsetColumns(t *testing.T) {
 	})
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: spec, dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	if n, m := scalar[int64](t, db, "SELECT count(*) FROM src.crm.orders"), scalar[int64](t, db, "SELECT count(*) FROM syn.crm.orders"); n != 15400 || m != 3080 {
 		t.Fatalf("orders: %d source rows, %d synthetic rows", n, m)

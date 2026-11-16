@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/version"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -27,13 +28,6 @@ var ErrNotFound = errors.New("no synthetic data source with this name")
 // StateRunning is the state of a build that has not finished. A finished
 // build has ResultSucceeded or ResultFailed.
 const StateRunning = "running"
-
-// Driver states, as the synthetic driver reports them. The driver
-// imports this package, so it cannot be imported here.
-const (
-	stateNotBuilt = "not_built"
-	stateStale    = "stale"
-)
 
 // keepBuilds is the number of finished builds kept per name.
 const keepBuilds = 10
@@ -158,13 +152,13 @@ func NewService(opts ServiceOptions) *Service {
 		}
 		name := ds.Metadata.Name
 		state := s.state(name)
-		setStale(name, state == stateStale)
-		if state == stateStale {
+		setStale(name, state == layout.StateStale)
+		if state == layout.StateStale {
 			opts.Log.Warn("synthetic: the current snapshot was built from another spec; run a new build",
 				"name", name)
 		}
 		spikes := 0
-		if state != stateNotBuilt {
+		if state != layout.StateNotBuilt {
 			if rep, err := s.currentReport(name); err == nil && rep != nil {
 				spikes = len(rep.Spikes)
 			}
@@ -225,7 +219,7 @@ func (s *Service) currentID(name string) (string, error) {
 			}
 		}
 	}
-	return Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
+	return layout.Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
 }
 
 func (s *Service) currentReport(name string) (*Report, error) {
@@ -233,7 +227,7 @@ func (s *Service) currentReport(name string) (*Report, error) {
 	if err != nil || id == "" {
 		return nil, err
 	}
-	return Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
+	return ReadReport(layout.Layout{Dir: s.opts.Dir, Name: name}, id)
 }
 
 // Start starts a build of name. When a build of name runs, it returns
@@ -251,14 +245,14 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 	if ds == nil {
 		return nil, BuildView{}, false, ErrNotFound
 	}
-	specHash, err := SpecHash(ds.Spec.Synthetic)
+	specHash, err := layout.SpecHash(ds.Spec.Synthetic)
 	if err != nil {
 		return nil, BuildView{}, false, fmt.Errorf("synthetic %s: spec hash: %w", name, err)
 	}
 	now := s.opts.Clock()
 	// A build that finished in the same second as this one would make
-	// publish fail with ErrNewerCurrent.
-	prev, _ := Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
+	// publish fail with layout.ErrNewerCurrent.
+	prev, _ := layout.Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
 	id, err := newerBuildID(now, prev)
 	if err != nil {
 		return nil, BuildView{}, false, fmt.Errorf("synthetic %s: build id: %w", name, err)
@@ -330,7 +324,7 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 // second resolution, so in the second of prev the id takes the next
 // second.
 func newerBuildID(now time.Time, prev string) (string, error) {
-	id, err := newBuildID(now)
+	id, err := layout.NewBuildID(now)
 	if err != nil || id > prev {
 		return id, err
 	}
@@ -338,7 +332,7 @@ func newerBuildID(now time.Time, prev string) (string, error) {
 	if perr != nil {
 		return id, nil
 	}
-	return newBuildID(t.Add(time.Second))
+	return layout.NewBuildID(t.Add(time.Second))
 }
 
 // audit writes the synthetic-build record of r for phase.
@@ -390,7 +384,7 @@ func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 	if err == nil {
 		setSpikes(name, len(rep.Spikes))
 	}
-	setStale(name, s.state(name) == stateStale)
+	setStale(name, s.state(name) == layout.StateStale)
 
 	// The service context may be canceled already. The dispatcher closes
 	// after the service, so the end record still gets through.
@@ -494,7 +488,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	if ds == nil {
 		return StatusView{}, ErrNotFound
 	}
-	specHash, err := SpecHash(ds.Spec.Synthetic)
+	specHash, err := layout.SpecHash(ds.Spec.Synthetic)
 	if err != nil {
 		return StatusView{}, fmt.Errorf("synthetic %s: spec hash: %w", name, err)
 	}
@@ -512,7 +506,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	v.Builds = append(v.Builds, s.done[name]...)
 	s.mu.Unlock()
 
-	if v.Status == stateNotBuilt {
+	if v.Status == layout.StateNotBuilt {
 		return v, nil
 	}
 	id, err := s.currentID(name)
@@ -522,7 +516,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	if id == "" {
 		return v, nil
 	}
-	rep, err := Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
+	rep, err := ReadReport(layout.Layout{Dir: s.opts.Dir, Name: name}, id)
 	if errors.Is(err, fs.ErrNotExist) {
 		// Retention of later CLI builds removed the report of the
 		// served build.
@@ -543,7 +537,7 @@ func (s *Service) StartMissing() {
 	var names []string
 	for _, ds := range s.opts.DataSources {
 		if isSynthetic(ds) && ds.Spec.Synthetic.Build.OnStart == apitypes.BuildIfMissing &&
-			s.state(ds.Metadata.Name) == stateNotBuilt {
+			s.state(ds.Metadata.Name) == layout.StateNotBuilt {
 			names = append(names, ds.Metadata.Name)
 		}
 	}

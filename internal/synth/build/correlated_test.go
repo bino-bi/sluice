@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -46,7 +47,7 @@ func spearman(t *testing.T, db *sql.DB, table, a, b string) float64 {
 // Test 9.
 func TestCorrelatedBuild(t *testing.T) {
 	rep, dir := mustRun(t, opts{spec: peopleSpec()})
-	db := query(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := query(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	for _, p := range [][2]string{{"age", "income"}, {"age", "risk"}, {"income", "risk"}} {
 		src := spearman(t, db, "src.crm.people", p[0], p[1])
 		syn := spearman(t, db, "syn.crm.people", p[0], p[1])
@@ -115,7 +116,7 @@ func TestCorrelatedDeterminism(t *testing.T) {
 	income.Args = map[string]any{"nullRate": 0.1}
 	spec.Tables[0].Columns["income"] = income
 	nulls, dir2 := mustRun(t, opts{spec: spec})
-	a := rowsOf(t, Layout{Dir: dir1, Name: "crmsynth"}.Snapshot(first.BuildID), "crm.people", "age, risk")
-	b := rowsOf(t, Layout{Dir: dir2, Name: "crmsynth"}.Snapshot(nulls.BuildID), "crm.people", "age, risk")
+	a := rowsOf(t, layout.Layout{Dir: dir1, Name: "crmsynth"}.Snapshot(first.BuildID), "crm.people", "age, risk")
+	b := rowsOf(t, layout.Layout{Dir: dir2, Name: "crmsynth"}.Snapshot(nulls.BuildID), "crm.people", "age, risk")
 	equalRows(t, "income with nulls", a, b)
 }

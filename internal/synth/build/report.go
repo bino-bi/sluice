@@ -3,9 +3,13 @@
 package build
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 )
 
 // ReportVersion is the version of the report format.
@@ -180,4 +184,29 @@ type SpikeReport struct {
 	Column string `json:"column"`
 	Side   string `json:"side"`
 	Rows   int64  `json:"rows"`
+}
+
+// ReadReport reads the report of a build.
+func ReadReport(l layout.Layout, id string) (*Report, error) {
+	if !layout.ValidBuildID(id) {
+		return nil, layout.ErrInvalidBuildID
+	}
+	b, err := os.ReadFile(l.Report(id))
+	if err != nil {
+		return nil, err
+	}
+	var r Report
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("report %s: %w", id, err)
+	}
+	return &r, nil
+}
+
+// writeReport writes the report with mode 0600 through a temp file.
+func writeReport(l layout.Layout, r *Report) error {
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return layout.WriteFileAtomic(l.Report(r.BuildID), append(b, '\n'), layout.ReportMode)
 }

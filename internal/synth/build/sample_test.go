@@ -12,6 +12,7 @@ import (
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -82,7 +83,7 @@ func snapshotDB(t *testing.T, dir string, rep *Report) *sql.DB {
 	db := sql.OpenDB(c)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec("ATTACH '" + Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID) + "' AS syn (READ_ONLY)"); err != nil {
+	if _, err := db.Exec("ATTACH '" + layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID) + "' AS syn (READ_ONLY)"); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -177,7 +178,7 @@ func TestSampleRowsTypes(t *testing.T) {
 	if !nearRows(rep.Tables[0].ProfiledRows, 5000) {
 		t.Fatalf("profiled_rows = %d, want about 5000", rep.Tables[0].ProfiledRows)
 	}
-	db := query(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := query(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	frep, fl := shared(t)
 	fdb := query(t, fl.Snapshot(frep.BuildID))
 	const types = "SELECT string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_catalog = 'syn' AND table_name = 'customers'"
@@ -239,7 +240,7 @@ func TestSampleRowsFanOut(t *testing.T) {
 			t.Errorf("%s profiled_rows = %d, want about %d", tr.Name, tr.ProfiledRows, n)
 		}
 	}
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	if o := scalar[int64](t, db, orphanQuery); o != 0 {
 		t.Errorf("%d orders without a customer", o)
 	}
@@ -259,7 +260,7 @@ func TestSampleRowsExactMatches(t *testing.T) {
 	if em := rep.Tables[0].ExactMatches; em == nil || em.MatchedRows == 0 {
 		t.Fatalf("exact_matches = %+v, the test needs matches", em)
 	}
-	db := query(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := query(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	if m := scalar[int64](t, db, `SELECT count(*) FROM syn.crm.customers s WHERE EXISTS (SELECT 1 FROM src.crm.customers c
   WHERE c.last_name = s.last_name AND c.birth_date = s.birth_date)`); m != 0 {
 		t.Errorf("%d synthetic rows equal a source row", m)

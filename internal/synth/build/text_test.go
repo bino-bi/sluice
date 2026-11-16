@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -20,7 +21,7 @@ func notesBuild(t *testing.T, notes apitypes.SyntheticColumn) (*sql.DB, ColumnRe
 	t.Helper()
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: ordersSpec(map[string]apitypes.SyntheticColumn{"notes": notes}), dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	for _, c := range rep.Tables[0].Columns {
 		if c.Name == "notes" {
 			return db, c

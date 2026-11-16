@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
-	"github.com/bino-bi/sluice/internal/synth/build"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
@@ -21,18 +21,11 @@ import (
 // Type matches apitypes.DSSynthetic.
 const Type = string(apitypes.DSSynthetic)
 
-// Build states reported by State.
-const (
-	StateNotBuilt = "not_built"
-	StateReady    = "ready"
-	StateStale    = "stale"
-)
-
 const memoryDB = ":memory:"
 
 type driver struct {
 	name     string
-	layout   build.Layout
+	layout   layout.Layout
 	specHash string
 
 	mu sync.Mutex
@@ -61,16 +54,16 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("synthetic: synthetic.dir: %w", err)
 	}
-	hash, err := build.SpecHash(syn)
+	hash, err := layout.SpecHash(syn)
 	if err != nil {
 		return nil, fmt.Errorf("synthetic: spec hash: %w", err)
 	}
 	d := &driver{
 		name:     spec.Name,
-		layout:   build.Layout{Dir: abs, Name: spec.Name},
+		layout:   layout.Layout{Dir: abs, Name: spec.Name},
 		specHash: hash,
 		path:     memoryDB,
-		state:    StateNotBuilt,
+		state:    layout.StateNotBuilt,
 	}
 	id, err := d.layout.ReadCurrent()
 	if err != nil {
@@ -84,20 +77,20 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("synthetic %q: snapshot of build %s: %w", spec.Name, id, err)
 	}
-	rep, err := d.layout.ReadReport(id)
+	specHash, err := d.layout.ReportSpecHash(id)
 	if err != nil {
 		return nil, fmt.Errorf("synthetic %q: report of build %s: %w", spec.Name, id, err)
 	}
 	d.path = path
-	d.state = d.stateFor(rep.SpecHash)
+	d.state = d.stateFor(specHash)
 	return d, nil
 }
 
 func (d *driver) stateFor(specHash string) string {
 	if specHash == d.specHash {
-		return StateReady
+		return layout.StateReady
 	}
-	return StateStale
+	return layout.StateStale
 }
 
 // Name implements pkgds.DataSource.
@@ -164,8 +157,8 @@ func attach(ctx context.Context, conn *sql.Conn, name, path string) error {
 // through executor.Exclusive. When the new ATTACH fails, the old
 // database is attached again and the error is returned.
 func (d *driver) Swap(ctx context.Context, conn *sql.Conn, buildID, specHash string) error {
-	if !build.ValidBuildID(buildID) {
-		return fmt.Errorf("synthetic %q: %w", d.name, build.ErrInvalidBuildID)
+	if !layout.ValidBuildID(buildID) {
+		return fmt.Errorf("synthetic %q: %w", d.name, layout.ErrInvalidBuildID)
 	}
 	path := d.layout.Snapshot(buildID)
 	d.mu.Lock()
@@ -179,7 +172,7 @@ func (d *driver) Swap(ctx context.Context, conn *sql.Conn, buildID, specHash str
 			// An empty catalog keeps the name resolvable and the state honest.
 			if merr := attach(ctx, conn, d.name, memoryDB); merr == nil {
 				d.path = memoryDB
-				d.state = StateNotBuilt
+				d.state = layout.StateNotBuilt
 			}
 			return fmt.Errorf("synthetic %q: ATTACH build %s: %w (attach of the old database: %w)", d.name, buildID, err, rerr)
 		}

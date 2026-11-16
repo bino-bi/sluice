@@ -19,6 +19,7 @@ import (
 	"github.com/bino-bi/sluice/internal/parserbackend"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/synth/build"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
 
@@ -441,7 +442,7 @@ func TestSynthServer_ReportsOutsideAllowedPaths(t *testing.T) {
 	if _, stderr, code := runCLI("synth", "build", "crmsynth", "--config", cfg); code != 0 {
 		t.Fatalf("synth build: exit %d, %s", code, stderr)
 	}
-	l := build.Layout{Dir: out, Name: "crmsynth"}
+	l := layout.Layout{Dir: out, Name: "crmsynth"}
 	id, err := l.ReadCurrent()
 	if err != nil {
 		t.Fatal(err)
