@@ -168,20 +168,23 @@ func walkExprMessage(m protoreflect.Message, visit func(protoreflect.Message)) {
 		walkExpr(sl.Testexpr, visit)
 		return
 	}
-	m.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
-		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() {
-			return true
+	// Fields in declaration order: Range has no fixed order, and
+	// where_columns should list the columns the same way each time.
+	fields := m.Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() || !m.Has(fd) {
+			continue
 		}
 		if fd.IsList() {
-			list := val.List()
-			for i := 0; i < list.Len(); i++ {
-				walkExprMessage(list.Get(i).Message(), visit)
+			list := m.Get(fd).List()
+			for j := 0; j < list.Len(); j++ {
+				walkExprMessage(list.Get(j).Message(), visit)
 			}
-			return true
+			continue
 		}
-		walkExprMessage(val.Message(), visit)
-		return true
-	})
+		walkExprMessage(m.Get(fd).Message(), visit)
+	}
 }
 
 // columnRefNames lifts ColumnRef names from a node list. Returns nil if
