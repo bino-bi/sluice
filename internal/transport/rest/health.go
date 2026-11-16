@@ -17,17 +17,17 @@ type liveResponse struct {
 	Version string `json:"version"`
 }
 
+// readyResponse carries counts only. The route needs no login, so names,
+// types and driver errors stay on /admin/datasources.
 type readyResponse struct {
-	Status      string         `json:"status"`
-	Version     string         `json:"version"`
-	DataSources []dsReadyEntry `json:"datasources,omitempty"`
+	Status      string        `json:"status"`
+	Version     string        `json:"version"`
+	DataSources *dsReadyCount `json:"datasources,omitempty"`
 }
 
-type dsReadyEntry struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Healthy bool   `json:"healthy"`
-	Error   string `json:"error,omitempty"`
+type dsReadyCount struct {
+	Healthy int `json:"healthy"`
+	Total   int `json:"total"`
 }
 
 // handleHealth is a liveness probe. Always 200 so long as the process is
@@ -40,7 +40,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleReady reports readiness. 200 when every data source is healthy;
-// 503 with the unhealthy set otherwise. When Registry is nil we only
+// 503 with status degraded otherwise. When Registry is nil we only
 // report the process version.
 func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
 	resp := readyResponse{
@@ -49,20 +49,14 @@ func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
 	}
 	if s.deps.Registry != nil {
 		statuses := s.deps.Registry.Statuses()
-		unhealthy := 0
+		count := &dsReadyCount{Total: len(statuses)}
 		for _, st := range statuses {
-			entry := dsReadyEntry{
-				Name:    st.Name,
-				Type:    st.Type,
-				Healthy: st.Healthy,
-				Error:   st.LastError,
-			}
-			resp.DataSources = append(resp.DataSources, entry)
-			if !st.Healthy {
-				unhealthy++
+			if st.Healthy {
+				count.Healthy++
 			}
 		}
-		if unhealthy > 0 {
+		resp.DataSources = count
+		if count.Healthy < count.Total {
 			resp.Status = "degraded"
 			writeJSON(w, http.StatusServiceUnavailable, resp)
 			return

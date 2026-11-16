@@ -97,17 +97,22 @@ func TestHandleReady_DegradedThenHealthy(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("pre-probe status: got %d want 503", w.Code)
 	}
+	// The route needs no login: it must not name a source or show an error.
+	if strings.Contains(w.Body.String(), "ready-ds") || strings.Contains(w.Body.String(), "error") {
+		t.Fatalf("ready body leaks source detail: %s", w.Body.String())
+	}
 	var body struct {
 		Status      string `json:"status"`
-		DataSources []struct {
-			Healthy bool `json:"healthy"`
+		DataSources struct {
+			Healthy int `json:"healthy"`
+			Total   int `json:"total"`
 		} `json:"datasources"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Status != "degraded" {
-		t.Fatalf("pre-probe status field: got %q want degraded", body.Status)
+	if body.Status != "degraded" || body.DataSources.Healthy != 0 || body.DataSources.Total != 1 {
+		t.Fatalf("pre-probe body: got %+v want degraded 0/1", body)
 	}
 
 	// After a successful probe: ready.

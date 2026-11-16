@@ -1,11 +1,8 @@
 {
   "status": "ok",
   "version": "<version>",
-  "datasources": [
-    {
-      "name": "shop",
-      "type": "sqlite",
-      "healthy": true
-    }
-  ]
+  "datasources": {
+    "healthy": 1,
+    "total": 1
+  }
 }

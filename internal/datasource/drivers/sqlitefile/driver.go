@@ -170,7 +170,7 @@ ORDER BY table_schema, table_name, ordinal_position
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
 	// The query below reads DuckDB's own catalog and passes without the
 	// file. DuckDB opens the file again for each statement on it.
-	// The error does not name the path: GET /v1/ready shows it.
+	// The error does not name the path: GET /admin/datasources shows it.
 	if _, err := os.Stat(d.path); err != nil {
 		d.mu.Lock()
 		d.lastProbeOK = false

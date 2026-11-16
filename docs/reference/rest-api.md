@@ -14,7 +14,7 @@ Clients send SQL to Sluice over HTTP. The default address is `:8080`, set by `re
 | `POST` | `/v1/approvals/{id}/accept` | approval token | Accepts the approval. A `GET` returns an HTML page with a button that sends the `POST`. |
 | `POST` | `/v1/approvals/{id}/reject` | approval token | Rejects the approval. A `GET` returns such a page too. |
 | `GET` | `/v1/health` | none | Returns 200 with `status` and `version` while the server runs. |
-| `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. |
+| `GET` | `/v1/ready` | none | Returns 503 when a data source is unhealthy. The body has `status`, `version` and `datasources` with the counts `healthy` and `total`. Names and errors are on [`/admin/datasources`](admin-api.md). |
 | `GET` | `/v1/version` | none | Returns `version`, `commit`, `build_time`, `go` and `parser_version` of the build. |
 
 Send an API key as `X-Api-Key: <id>.<secret>` or a JWT as `Authorization: Bearer <jwt>`. See [Subjects](../policies/subjects.md).
