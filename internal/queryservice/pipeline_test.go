@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
@@ -55,6 +56,36 @@ func TestExecute_PanicReleasesSlotAndAudits(t *testing.T) {
 		t.Fatalf("second execute: %v, want the slot free again", err)
 	}
 	_ = res.Rows.Close()
+}
+
+// A wait that ends with an error, for example because the client went
+// away, still leaves the decision record of the request.
+func TestApproval_WaitErrorIsAudited(t *testing.T) {
+	a := &fakeAudit{}
+	fb := &fakeBroker{waitErr: context.Canceled}
+	svc := queryservice.New(queryservice.Options{
+		Parser:           &fakeParser{},
+		Policy:           &fakePolicy{decision: approvalDecision()},
+		Rewriter:         &fakeRewriter{},
+		Executor:         &fakeExecutor{},
+		Audit:            a,
+		Approvals:        fb,
+		ApprovalSyncWait: 10 * time.Millisecond,
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
+	ae := pkgerr.FromError(err)
+	if ae == nil || ae.Code != pkgerr.CodeApprovalPending {
+		t.Fatalf("err = %v, want ERR_APPROVAL_PENDING", err)
+	}
+	var decision []*audit.Record
+	for _, r := range a.all() {
+		if r.EventType == audit.EventQuery {
+			decision = append(decision, r)
+		}
+	}
+	if len(decision) != 1 || decision[0].ErrorCode != string(pkgerr.CodeApprovalPending) || decision[0].QueryID != ae.QueryID {
+		t.Fatalf("decision records = %+v, want one with ERR_APPROVAL_PENDING", decision)
+	}
 }
 
 // A stream cut by the query timeout ends without a Scan error. The

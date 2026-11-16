@@ -108,6 +108,11 @@ func (s *Service) awaitApproval(
 
 	state, werr := s.opts.Approvals.Wait(ctx, ticket.ID, wait)
 	if werr != nil {
+		// Like the other pending exits. The wait ends mostly because ctx
+		// did, so the record must not depend on it.
+		rec.Decision = audit.DecisionError
+		rec.ErrorCode = string(pkgerr.CodeApprovalPending)
+		s.emit(context.WithoutCancel(ctx), rec, start)
 		return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid).
 			WithDetail("approval_id", ticket.ID).WithMessage(approvalGuidance)
 	}
