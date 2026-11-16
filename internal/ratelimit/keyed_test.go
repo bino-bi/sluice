@@ -34,6 +34,28 @@ func TestKeyed_BurstAndRefillPerKey(t *testing.T) {
 	}
 }
 
+func TestKeyed_ExhaustedTakesNoToken(t *testing.T) {
+	now := time.Unix(1000, 0)
+	k := ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 0, func() time.Time { return now })
+
+	if k.Exhausted("a") {
+		t.Fatal("a key without a bucket is not exhausted")
+	}
+	k.Allow("a")
+	for range 3 {
+		if !k.Exhausted("a") {
+			t.Fatal("bucket is empty, want exhausted")
+		}
+	}
+	now = now.Add(time.Second)
+	if k.Exhausted("a") {
+		t.Fatal("one token refilled, want not exhausted")
+	}
+	if !k.Allow("a") {
+		t.Fatal("Exhausted must not take the refilled token")
+	}
+}
+
 func TestKeyed_ZeroRPSPermitsEverything(t *testing.T) {
 	k := ratelimit.NewKeyed(ratelimit.Spec{}, 0, func() time.Time { return time.Unix(0, 0) })
 	for range 100 {

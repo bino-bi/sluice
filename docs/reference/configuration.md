@@ -33,11 +33,12 @@ A key with an empty default is a string. Write a time like its default: `30s`, `
 | `mcp.allowAnonymous` | `false` | Accept clients without a credential. |
 | `admin.enabled` | `false` | Start the admin API. |
 | `admin.listen` | `:9091` | Admin API address. |
-| `admin.token` |  | Bearer token, as plain text or a secret reference. Empty means no check. |
+| `admin.token` |  | Bearer token, as plain text or a secret reference. Empty means no check, and needs a loopback `listen` or `allowAnonymous`. |
 | `admin.tls.certFile` |  | Certificate file. Needs `keyFile`. |
 | `admin.tls.keyFile` |  | Key file. Needs `certFile`. |
 | `admin.tls.clientCA` |  | CA file. Clients must send a certificate. |
 | `admin.tls.clientAuth` |  | Only `require_and_verify`. Needs `clientCA`. |
+| `admin.allowAnonymous` | `false` | Start without `token` on a listener that is not loopback only. |
 | `duckdb.memoryLimit` | `4GB` | DuckDB `memory_limit`. |
 | `duckdb.threads` | `0` | DuckDB `threads`. `0` means the DuckDB default. |
 | `duckdb.tempDir` |  | DuckDB `temp_directory`. |

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 
@@ -491,6 +492,9 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		if err != nil {
 			return nil, err
 		}
+		if err := checkAdminAnonymous(scfg.Admin, token); err != nil {
+			return nil, err
+		}
 		adminCfg := admin.Config{
 			Enabled: true,
 			Listen:  scfg.Admin.Listen,
@@ -746,6 +750,30 @@ func resolveAdminToken(ctx context.Context, r *secrets.Resolver, token string) (
 		return "", fmt.Errorf("admin.token: the secret is empty")
 	}
 	return resolved, nil
+}
+
+// checkAdminAnonymous refuses an admin API without a token unless the
+// operator opts in or the listener is loopback only. One missing
+// SLUICE_ADMIN__TOKEN must not open reload and audit to the network.
+func checkAdminAnonymous(a config.AdminConfig, token string) error {
+	if token != "" || a.AllowAnonymous || loopbackOnly(a.Listen) {
+		return nil
+	}
+	return fmt.Errorf("admin: admin.token is empty and admin.listen %q is not loopback only; set admin.token, bind admin.listen to 127.0.0.1, or set admin.allowAnonymous: true", a.Listen)
+}
+
+// loopbackOnly reports whether listen binds to a loopback address only.
+// An empty host binds every interface.
+func loopbackOnly(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // buildIdentity assembles the identity.Composite from server + policy

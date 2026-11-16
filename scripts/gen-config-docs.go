@@ -69,7 +69,8 @@ var meaning = map[string]string{
 
 	"admin.enabled":        "Start the admin API.",
 	"admin.listen":         "Admin API address.",
-	"admin.token":          "Bearer token, as plain text or a secret reference. Empty means no check.",
+	"admin.token":          "Bearer token, as plain text or a secret reference. Empty means no check, and needs a loopback `listen` or `allowAnonymous`.",
+	"admin.allowAnonymous": "Start without `token` on a listener that is not loopback only.",
 	"admin.tls.certFile":   "Certificate file. Needs `keyFile`.",
 	"admin.tls.keyFile":    "Key file. Needs `certFile`.",
 	"admin.tls.clientCA":   "CA file. Clients must send a certificate.",

@@ -9,8 +9,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/parserbackend"
 )
+
+// An admin API without a token starts only on loopback or with the
+// explicit opt-in.
+func TestCheckAdminAnonymous(t *testing.T) {
+	cases := []struct {
+		listen, token string
+		allowAnon     bool
+		ok            bool
+	}{
+		{":9091", "", false, false},
+		{"0.0.0.0:9091", "", false, false},
+		{"10.0.0.5:9091", "", false, false},
+		{":9091", "tok", false, true},
+		{":9091", "", true, true},
+		{"127.0.0.1:9091", "", false, true},
+		{"127.1.2.3:9091", "", false, true},
+		{"[::1]:9091", "", false, true},
+		{"localhost:9091", "", false, true},
+	}
+	for _, tc := range cases {
+		err := checkAdminAnonymous(config.AdminConfig{Listen: tc.listen, AllowAnonymous: tc.allowAnon}, tc.token)
+		if (err == nil) != tc.ok {
+			t.Errorf("listen %q token %q allowAnonymous %v: err = %v, want ok = %v", tc.listen, tc.token, tc.allowAnon, err, tc.ok)
+		}
+	}
+}
 
 // A typo in a key or in the --config path must stop the start, not run
 // with the defaults. Both checks run before anything is built.

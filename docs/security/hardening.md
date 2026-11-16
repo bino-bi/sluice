@@ -34,7 +34,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 
 | Setting | Why | Value |
 |---|---|---|
-| `admin.token` | Without it the admin API accepts every request | Set it in the server config or with `SLUICE_ADMIN__TOKEN` |
+| `admin.token` | Without it Sluice does not start, unless `admin.listen` is loopback only or `admin.allowAnonymous: true` is set. Then the admin API accepts every request | Set it in the server config or with `SLUICE_ADMIN__TOKEN`. Leave `admin.allowAnonymous` off |
 | `admin.listen` | Serves the admin API and `/metrics` | A private address |
 | `rest.tls`, `mcp.tls`, `admin.tls` | REST, MCP over HTTP and admin serve plain HTTP by default | See [Deployment](../operations/deployment.md) |
 | `rest.tls.clientCA` | Adds a client certificate check. Login stays required | Your CA bundle |

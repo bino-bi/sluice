@@ -97,8 +97,9 @@ Every response has an `X-Admin-Request-Id` header.
 ## Limits
 
 - Set `admin.token` in the server config or with `SLUICE_ADMIN__TOKEN`. See [Server config](../operations/server-config.md).
-- With an empty token, every route is open. Sluice logs a warning at start.
+- Without a token, Sluice does not start, unless `admin.listen` binds to loopback only (`127.0.0.1`, `::1` or `localhost`) or `admin.allowAnonymous: true` is set. Then every route is open, and Sluice logs a warning at start.
 - A wrong token gives 401 `ERR_UNAUTHORIZED` and a `WWW-Authenticate` header.
+- After 10 wrong or missing tokens from one client IP, Sluice answers 429 `ERR_RATE_LIMITED` to that IP, also with the right token. The IP gets one new try every 10 seconds.
 - A missing `user` or `table`, or `n` below 1, gives 400 `ERR_SYNTAX`.
 - A failed reload gives 400 `ERR_POLICY_INVALID` or `ERR_CONFIG_INVALID`. The old policies stay active.
 

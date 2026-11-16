@@ -53,3 +53,19 @@ func (k *KeyedLimiter) Allow(key string) bool {
 	}
 	return b.take(now, k.spec)
 }
+
+// Exhausted reports whether key has no token left, without taking one.
+// A key without a bucket is not exhausted.
+func (k *KeyedLimiter) Exhausted(key string) bool {
+	if k.spec.RPS <= 0 {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	b, ok := k.buckets.Peek(key)
+	if !ok {
+		return false
+	}
+	tokens := b.tokens + k.clock().Sub(b.last).Seconds()*k.spec.RPS
+	return min(tokens, float64(k.spec.Burst)) < 1
+}

@@ -71,6 +71,9 @@ type AdminConfig struct {
 	Listen  string     `mapstructure:"listen"`
 	Token   string     `mapstructure:"token"`
 	TLS     *TLSConfig `mapstructure:"tls"`
+	// AllowAnonymous lets the admin API run without a token on a
+	// listener that is not loopback only. Without it such a start fails.
+	AllowAnonymous bool `mapstructure:"allowAnonymous"`
 }
 
 // DuckDBConfig configures the embedded DuckDB engine. MaxOpen/MaxIdle are
