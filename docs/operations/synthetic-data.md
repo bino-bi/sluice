@@ -219,7 +219,7 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 
 ### Range
 
-The range of a number, `TIME` or date column is its lowest and highest value. The generators write no value outside it.
+The range of a number, `TIME` or date column is its lowest and highest value. Most generators write no value outside it. `normal` and `lognormal` with `truncate: false` and `age` can, but their values do not come from a single row.
 
 - Without `clipOutliers`, the range goes from the `minGroupSize`-th lowest to the `minGroupSize`-th highest source value. A source value outside counts as the nearest end. So no single row sets an end, and one far value does not stretch the range.
 - Sluice checks two things: at least `minGroupSize` non-null rows, and a `minGroupSize`-th lowest value that is not above the `minGroupSize`-th highest. Without many equal values, the second check needs about `2 x minGroupSize - 1` rows. When a check fails, a column entry fails the build, a default column is written as `NULL`, and a `by` group is dropped.
