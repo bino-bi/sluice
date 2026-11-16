@@ -164,24 +164,25 @@ spec:
 	}
 }
 
-func TestConfigValidate_BadServerConfig_ExitCode1(t *testing.T) {
+func TestConfigValidate_MissingServerConfig_ExitCode1(t *testing.T) {
 	root := newRootCmd()
-	root.SetArgs([]string{"config", "validate", "--config", "/tmp/sluice-no-such-file.yaml"})
+	root.SetArgs([]string{"config", "validate", "--config", filepath.Join(t.TempDir(), "no-such-file.yaml")})
 
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
 
-	// A missing server config is not an error (LoadServer treats it as
-	// defaults-only). This call should therefore succeed.
-	if err := root.Execute(); err != nil {
-		t.Fatalf("missing server config should not fail: %v", err)
+	// A path that is set must exist, as in `sluice serve`.
+	err := root.Execute()
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("err = %v, want exit status 1", err)
 	}
 }
 
-// --strict also refuses a key the server config does not know. Without the
-// flag such a key is ignored, as `sluice serve` does.
-func TestConfigValidate_StrictChecksServerConfigKeys(t *testing.T) {
+// A key the server config does not know is refused, also without
+// --strict, as `sluice serve` does.
+func TestConfigValidate_ChecksServerConfigKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.yaml")
 	if err := os.WriteFile(path, []byte("rest:\n  listen: \":8080\"\npolicies:\n  dir: ./policies.d\nlimitz:\n  maxRows: 5\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -196,18 +197,16 @@ func TestConfigValidate_StrictChecksServerConfigKeys(t *testing.T) {
 		return out.String(), err
 	}
 
-	if out, err := run("--config", path); err != nil || !strings.Contains(out, "server config OK") {
-		t.Fatalf("without --strict: %v, output %q", err, out)
-	}
-
-	out, err := run("--config", path, "--strict")
-	var exit *exitError
-	if !errors.As(err, &exit) || exit.Code != 3 {
-		t.Fatalf("with --strict: err = %v, want exit status 3; output %q", err, out)
-	}
-	for _, key := range []string{"dir", "limitz"} {
-		if !strings.Contains(out, key) {
-			t.Errorf("output %q does not name the unknown key %q", out, key)
+	for _, args := range [][]string{{"--config", path}, {"--config", path, "--strict"}} {
+		out, err := run(args...)
+		var exit *exitError
+		if !errors.As(err, &exit) || exit.Code != 3 {
+			t.Fatalf("%v: err = %v, want exit status 3; output %q", args, err, out)
+		}
+		for _, key := range []string{"dir", "limitz"} {
+			if !strings.Contains(out, key) {
+				t.Errorf("output %q does not name the unknown key %q", out, key)
+			}
 		}
 	}
 

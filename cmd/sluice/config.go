@@ -56,11 +56,10 @@ Exit codes:
 					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), verr.Error())
 					return &exitError{Code: 3}
 				}
-				if strict {
-					if kerr := config.CheckServerKeys(serverPath); kerr != nil {
-						_, _ = fmt.Fprintln(cmd.ErrOrStderr(), kerr.Error())
-						return &exitError{Code: 3}
-					}
+				// serve refuses unknown keys, so validate does too.
+				if kerr := config.CheckServerKeys(serverPath); kerr != nil {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), kerr.Error())
+					return &exitError{Code: 3}
 				}
 				scfg = loaded
 				_, _ = fmt.Fprintf(out, "server config OK: %s\n", serverPath)
@@ -111,7 +110,7 @@ Exit codes:
 	}
 
 	cmd.Flags().StringVar(&serverPath, "config", "", "path to sluice.yaml (optional)")
-	cmd.Flags().BoolVar(&strict, "strict", false, "reject unknown fields in policies and unknown keys in the server config")
+	cmd.Flags().BoolVar(&strict, "strict", false, "reject unknown fields in policies")
 
 	return cmd
 }

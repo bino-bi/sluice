@@ -108,6 +108,12 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	if err != nil {
 		return nil, fmt.Errorf("load server config: %w", err)
 	}
+	// A typo such as rest.tsl would otherwise keep the default silently.
+	if serverCfgPath != "" {
+		if err := config.CheckServerKeys(serverCfgPath); err != nil {
+			return nil, err
+		}
+	}
 	if err := scfg.Validate(); err != nil {
 		return nil, fmt.Errorf("server config: %w", err)
 	}

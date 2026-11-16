@@ -37,7 +37,7 @@ func TestBuildRuntime_LoggedErrorCut(t *testing.T) {
 				t.Fatalf("mkdir policies: %v", err)
 			}
 			cfgPath := filepath.Join(dir, "sluice.yaml")
-			cfg := "policies:\n  dir: " + policyDir + "\naudit:\n  file:\n    path: " + filepath.Join(dir, "audit") + "\n" + tc.logging
+			cfg := "policies:\n  directory: " + policyDir + "\naudit:\n  file:\n    path: " + filepath.Join(dir, "audit") + "\n" + tc.logging
 			if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 				t.Fatalf("write config: %v", err)
 			}

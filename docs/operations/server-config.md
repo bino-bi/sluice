@@ -94,8 +94,8 @@ An invalid file ends the command with status 3:
 
 ## Limits
 
-- A wrong `--config` path is no error. Sluice then uses the defaults.
-- Without `--strict`, an unknown key in the server config is no error. Sluice ignores it, also at start.
+- A `--config` path that names no file stops the start, and `config validate` ends with status 1. Without `--config`, Sluice reads no file and uses the defaults.
+- An unknown key in the server config file stops the start, and `config validate` ends with status 3. An environment variable with an unknown name is ignored.
 - `config validate` does not read secrets. A missing secret of the server config stops `sluice serve`.
 - `budget.failClosed` matters only at start. If the budget store does not open, `true` stops Sluice and `false` turns budgets off.
 

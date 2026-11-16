@@ -33,7 +33,7 @@ func TestBuildRuntime_ReloadDisabled_ManualReloadStillWired(t *testing.T) {
 	cfgPath := filepath.Join(dir, "sluice.yaml")
 	cfg := `
 policies:
-  dir: ` + policyDir + `
+  directory: ` + policyDir + `
   reload: false
 audit:
   file:

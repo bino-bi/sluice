@@ -34,7 +34,7 @@ func newParseCheckRuntime(t *testing.T) *runtimeDeps {
 	cfgPath := filepath.Join(dir, "sluice.yaml")
 	cfg := `
 policies:
-  dir: ` + policyDir + `
+  directory: ` + policyDir + `
 audit:
   file:
     path: ` + filepath.Join(dir, "audit") + `
