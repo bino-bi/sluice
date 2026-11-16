@@ -213,12 +213,10 @@ func (j *JWTIdentifier) VerifyToken(ctx context.Context, raw string) (*UserCtx, 
 		return nil, fmt.Errorf("%w: token not valid", ErrInvalidCredential)
 	}
 
-	// Audience check: when binding specifies one, at least one aud entry
-	// must match. jwt.RegisteredClaims already normalises aud to []string.
-	if want := binding.Spec.Audience; want != "" {
-		if !audienceMatches(claims, want) {
-			return nil, fmt.Errorf("%w: want=%s", ErrJWTWrongAudience, want)
-		}
+	// At least one aud entry must match. The decoder requires an audience
+	// on every JWT binding; a binding without one accepts no token.
+	if want := binding.Spec.Audience; want == "" || !audienceMatches(claims, want) {
+		return nil, fmt.Errorf("%w: want=%s", ErrJWTWrongAudience, want)
 	}
 
 	uc, err := j.buildUserCtx(claims, binding)

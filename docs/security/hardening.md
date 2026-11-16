@@ -42,7 +42,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 | Secret files | Sluice refuses files that group or others can write | `chmod 0600` |
 | `audit.chainKeyRef` | Without a key, a writer of the audit files can compute the hash chain again | A `secret://` reference to 32 bytes or more, stored away from the log |
 | `audit.file.path`, `audit.file.genesis` | The path is required. Sluice refuses a directory that is a symlink or that every user can write. The genesis default is built from host name and build commit | A directory only the Sluice user or its group can write, a `secret://` reference for the [genesis](../reference/glossary.md) |
-| JWT subject binding: `issuer`, `audience`, `jwksUrl` | The audience is checked only when set | Set all three |
+| JWT subject binding: `issuer`, `audience`, `jwksUrl` or `hmacSecretRef` | A binding without `issuer` and `audience` does not load. An HMAC secret needs 32 bytes or more | Prefer `jwksUrl`. Keep an HMAC secret for Sluice only |
 | Subject binding: `rateLimit`, `budget` | Both need `claims.subjectId` or `issuer`. Budgets also need `budget.enabled: true` | See the example |
 | `resources` in every allow policy | Without `resources`, an allow policy covers every table of every data source. The catalog views of DuckDB, such as `information_schema.tables`, are refused whatever the policies say | List catalog, schema and table, the catalog without a wildcard |
 | `QueryRewritePolicy` on `tables: ["**"]` | Caps result rows and run time of every query. One aggregate row can hold a whole table | See [Rejects and rewrites](../policies/guardrails.md) |

@@ -539,6 +539,14 @@ func validateSubjectBinding(b *SubjectBinding) error {
 			Reason: "jwksUrl requires both issuer and audience",
 		}
 	}
+	// Without an audience a token minted for another service that shares
+	// the secret would pass.
+	if s.HMACSecretRef != "" && (s.Issuer == "" || s.Audience == "") {
+		return &ValidationError{
+			Kind: b.GetKind(), Name: b.Metadata.Name, Field: "spec",
+			Reason: "hmacSecretRef requires both issuer and audience",
+		}
+	}
 	return nil
 }
 
