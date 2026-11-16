@@ -13,8 +13,7 @@ import (
 )
 
 // Tail returns up to n of the most recent records in chronological order
-// (oldest → newest), reading rotated files newest-first. Buffered writes
-// are flushed first so just-recorded entries are visible; a partial
+// (oldest → newest), reading rotated files newest-first. A partial
 // trailing line in the newest file (a write racing this read) is
 // skipped. A malformed line anywhere else is reported as an error —
 // that is chain corruption, not a race. n <= 0 returns nil.
@@ -27,12 +26,6 @@ func (s *FileSink) Tail(ctx context.Context, n int) ([]*Record, error) {
 	if s.closed {
 		s.mu.Unlock()
 		return nil, ErrClosed
-	}
-	if s.writer != nil {
-		if err := s.writer.Flush(); err != nil {
-			s.mu.Unlock()
-			return nil, fmt.Errorf("audit: tail flush: %w", err)
-		}
 	}
 	dir, prefix := s.dir, s.prefix
 	s.mu.Unlock()

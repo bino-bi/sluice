@@ -15,7 +15,7 @@ import (
 )
 
 func TestVerify_HappyPathAcrossRotations(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 
 	// Write day 1.
 	times := []time.Time{
@@ -67,7 +67,7 @@ func TestVerify_HappyPathAcrossRotations(t *testing.T) {
 }
 
 func TestVerify_DetectsTamperedRecord(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	fs, err := audit.NewFileSink(audit.FileOptions{Dir: dir})
 	if err != nil {
 		t.Fatalf("file sink: %v", err)
@@ -124,7 +124,7 @@ func TestVerify_DetectsTamperedRecord(t *testing.T) {
 }
 
 func TestVerify_DetectsAnchorMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	fs, err := audit.NewFileSink(audit.FileOptions{Dir: dir})
 	if err != nil {
 		t.Fatalf("sink: %v", err)

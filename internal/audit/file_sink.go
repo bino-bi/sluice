@@ -3,13 +3,14 @@
 package audit
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,7 +59,7 @@ func sortAuditNames(names []string) {
 
 // FileOptions configures a FileSink.
 type FileOptions struct {
-	// Dir is the audit directory. Created with permission 0750 if missing.
+	// Dir is the audit directory. Created with permission 0700 if missing.
 	Dir string
 
 	// FilePrefix overrides the default "audit-" prefix used in filenames
@@ -72,13 +73,10 @@ type FileOptions struct {
 	// many mebibytes. 0 disables size rotation.
 	RotateSizeMB int
 
-	// BufferBytes sizes the bufio.Writer. Default 256 KiB.
-	BufferBytes int
-
 	// FileMode is the permission set on created audit files. Default 0640.
 	FileMode os.FileMode
 
-	// DirMode is the permission set on the audit directory. Default 0750.
+	// DirMode is the permission of a new audit directory. Default 0700.
 	DirMode os.FileMode
 
 	// Clock overrides time.Now for deterministic tests.
@@ -86,8 +84,10 @@ type FileOptions struct {
 }
 
 // FileSink is the default audit sink: append-only JSONL with daily + size
-// rotation and periodic fsync. The caller (Dispatcher) is responsible for
-// invoking Flush on a cadence; FileSink itself does not spawn goroutines.
+// rotation and periodic fsync. Each record is one write call, so a record
+// is never split over two writes and a failed write loses no other record.
+// The caller (Dispatcher) is responsible for invoking Flush on a cadence;
+// FileSink itself does not spawn goroutines.
 type FileSink struct {
 	mu sync.Mutex
 
@@ -95,13 +95,13 @@ type FileSink struct {
 	prefix   string
 	rotateMB int64
 	daily    bool
-	bufSize  int
 	fileMode os.FileMode
 	clock    func() time.Time
 	closed   bool
 
+	// lock holds the exclusive lock of the directory until Close.
+	lock    *os.File
 	file    *os.File
-	writer  *bufio.Writer
 	written int64
 	// day is the UTC date of the currently-open file (midnight). Used to
 	// detect daily rotation.
@@ -119,23 +119,22 @@ type FileSink struct {
 }
 
 const (
-	defaultBuffer  = 256 * 1024
 	defaultMode    = os.FileMode(0o640)
-	defaultDirMode = os.FileMode(0o750)
+	defaultDirMode = os.FileMode(0o700)
 	defaultPrefix  = "audit-"
+	lockFileName   = ".sluice.lock"
 )
 
 // NewFileSink opens (or creates) the latest audit file in opts.Dir and
-// primes the hash chain from it. The returned sink is ready to Record.
+// primes the hash chain from it. The returned sink is ready to Record. It
+// holds an exclusive lock on the directory until Close: two processes that
+// append to one chain would fork it.
 func NewFileSink(opts FileOptions) (*FileSink, error) {
 	if opts.Dir == "" {
 		return nil, fmt.Errorf("audit: FileOptions.Dir required")
 	}
 	if opts.FilePrefix == "" {
 		opts.FilePrefix = defaultPrefix
-	}
-	if opts.BufferBytes == 0 {
-		opts.BufferBytes = defaultBuffer
 	}
 	if opts.FileMode == 0 {
 		opts.FileMode = defaultMode
@@ -147,27 +146,68 @@ func NewFileSink(opts FileOptions) (*FileSink, error) {
 		opts.Clock = time.Now
 	}
 
-	if err := os.MkdirAll(opts.Dir, opts.DirMode); err != nil {
-		return nil, fmt.Errorf("audit: mkdir %s: %w", opts.Dir, err)
+	dir := filepath.Clean(opts.Dir)
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(dir, opts.DirMode); err != nil {
+			return nil, fmt.Errorf("audit: mkdir %s: %w", dir, err)
+		}
+	}
+	if err := checkDir(dir); err != nil {
+		return nil, err
+	}
+	lock, err := lockDir(dir)
+	if err != nil {
+		return nil, err
 	}
 
 	s := &FileSink{
-		dir:      opts.Dir,
+		dir:      dir,
 		prefix:   opts.FilePrefix,
 		rotateMB: int64(opts.RotateSizeMB) * 1024 * 1024,
-		daily:    opts.RotateDaily || !opts.RotateDaily && opts.RotateSizeMB == 0, // default daily
-		bufSize:  opts.BufferBytes,
+		// Daily by default. RotateDaily false with RotateSizeMB > 0 keeps
+		// daily rotation off.
+		daily:    opts.RotateDaily || opts.RotateSizeMB == 0,
 		fileMode: opts.FileMode,
 		clock:    opts.Clock,
+		lock:     lock,
 	}
-	// Honour the caller's explicit choice: if RotateDaily is false but
-	// RotateSizeMB > 0, we keep daily=false.
-	s.daily = opts.RotateDaily || opts.RotateSizeMB == 0
-
 	if err := s.openLatest(); err != nil {
+		_ = lock.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// checkDir refuses an audit directory that another user could change or
+// redirect.
+func checkDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("audit: %w", err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("audit: the audit directory %s is a symlink, use the real path", dir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("audit: the audit directory %s is not a directory", dir)
+	}
+	return checkDirOwner(dir, info)
+}
+
+// lockDir takes the exclusive lock of dir without waiting.
+func lockDir(dir string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(dir, lockFileName), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("audit: open the lock file in %s: %w", dir, err)
+	}
+	if err := tryLock(f); err != nil {
+		_ = f.Close()
+		if errors.Is(err, errLocked) {
+			return nil, fmt.Errorf("audit: the audit directory %s is in use by another sluice process: give each process its own audit.file.path, or run `sluice serve` with mcp.enabled instead of a separate `sluice mcp`", dir)
+		}
+		return nil, fmt.Errorf("audit: lock %s: %w", dir, err)
+	}
+	return f, nil
 }
 
 // Name satisfies Sink.
@@ -183,7 +223,8 @@ func (s *FileSink) LastHash() string {
 }
 
 // Record appends r to the active file. r.PriorHash and r.Hash must be set
-// by the caller; FileSink never mutates them.
+// by the caller; FileSink never mutates them. After a failed write it
+// reopens the file and tries once more.
 func (s *FileSink) Record(_ context.Context, r *Record) error {
 	line, err := MarshalLine(r)
 	if err != nil {
@@ -195,28 +236,62 @@ func (s *FileSink) Record(_ context.Context, r *Record) error {
 	if s.closed {
 		return ErrClosed
 	}
-
+	if s.file == nil {
+		if err := s.reopen(); err != nil {
+			return err
+		}
+	}
 	if err := s.rotateIfNeeded(int64(len(line))); err != nil {
 		return err
 	}
-	n, err := s.writer.Write(line)
-	if err != nil {
-		return fmt.Errorf("audit: write: %w", err)
+	if err := s.writeLine(line); err != nil {
+		// The reopen cuts off the part of the line that reached the file.
+		if rerr := s.reopen(); rerr != nil {
+			return fmt.Errorf("audit: write: %w, reopen: %w", err, rerr)
+		}
+		if err := s.writeLine(line); err != nil {
+			s.dropFile()
+			return fmt.Errorf("audit: write: %w", err)
+		}
 	}
-	s.written += int64(n)
 	s.lastHash = r.Hash
 	return nil
 }
 
-// Flush persists buffered writes to disk.
+// writeLine writes line in one call. Must be called with s.mu held.
+func (s *FileSink) writeLine(line []byte) error {
+	n, err := s.file.Write(line)
+	s.written += int64(n)
+	return err
+}
+
+// reopen closes the active file without a sync and opens the file of the
+// current day and seq again. Must be called with s.mu held.
+func (s *FileSink) reopen() error {
+	s.dropFile()
+	f, size, err := s.openForDay(s.day, s.seq)
+	if err != nil {
+		return err
+	}
+	s.file, s.written = f, size
+	return nil
+}
+
+// dropFile closes the active file and forgets it. Must be called with s.mu
+// held.
+func (s *FileSink) dropFile() {
+	if s.file != nil {
+		_ = s.file.Close()
+		s.file = nil
+	}
+}
+
+// Flush persists the written records to disk.
 func (s *FileSink) Flush(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.writer == nil {
+	if s.closed || s.file == nil {
 		return nil
-	}
-	if err := s.writer.Flush(); err != nil {
-		return fmt.Errorf("audit: flush: %w", err)
 	}
 	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("audit: fsync: %w", err)
@@ -224,34 +299,40 @@ func (s *FileSink) Flush(_ context.Context) error {
 	return nil
 }
 
-// Close flushes and closes the active file. Idempotent.
-func (s *FileSink) Close(ctx context.Context) error {
+// Close syncs and closes the active file and releases the directory lock.
+// Idempotent.
+func (s *FileSink) Close(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil
 	}
 	s.closed = true
-	if s.writer == nil {
-		return nil
+	var err error
+	if s.file != nil {
+		err = closeFile(s.file)
+		s.file = nil
 	}
+	_ = s.lock.Close()
+	return err
+}
+
+// closeFile syncs and closes f.
+func closeFile(f *os.File) error {
 	var firstErr error
-	if err := s.writer.Flush(); err != nil {
-		firstErr = fmt.Errorf("audit: flush on close: %w", err)
+	if err := f.Sync(); err != nil {
+		firstErr = fmt.Errorf("audit: fsync: %w", err)
 	}
-	if err := s.file.Sync(); err != nil && firstErr == nil {
-		firstErr = fmt.Errorf("audit: fsync on close: %w", err)
-	}
-	if err := s.file.Close(); err != nil && firstErr == nil {
+	if err := f.Close(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("audit: close: %w", err)
 	}
-	_ = ctx
 	return firstErr
 }
 
-// rotateIfNeeded flushes + closes the current file and opens a new one
-// when either the UTC day changed or the upcoming write would exceed the
-// size cap. Must be called with s.mu held.
+// rotateIfNeeded opens a new file when either the UTC day changed or the
+// upcoming write would exceed the size cap. The state changes only after
+// the new file is open, so a failed open is tried again on the next
+// record. Must be called with s.mu held.
 func (s *FileSink) rotateIfNeeded(upcoming int64) error {
 	now := s.clock().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -263,18 +344,23 @@ func (s *FileSink) rotateIfNeeded(upcoming int64) error {
 		return nil
 	}
 	start := time.Now()
-	if err := s.closeActive(); err != nil {
+	day, seq := s.day, s.seq+1
+	if dailyCrossed {
+		day, seq = today, 0
+	}
+	f, size, err := s.openForDay(day, seq)
+	metricsShared().RotateDuration.WithLabelValues(s.Name()).Observe(time.Since(start).Seconds())
+	if err != nil {
 		return err
 	}
-	if dailyCrossed {
-		s.day = today
-		s.seq = 0
-	} else {
-		s.seq++
+	if s.file != nil {
+		// The records of the old file are written, only the sync failed.
+		if err := closeFile(s.file); err != nil {
+			metricsShared().WriteErrors.WithLabelValues(s.Name()).Inc()
+		}
 	}
-	err := s.openForDay(s.day, s.seq)
-	metricsShared().RotateDuration.WithLabelValues(s.Name()).Observe(time.Since(start).Seconds())
-	return err
+	s.file, s.written, s.day, s.seq = f, size, day, seq
+	return nil
 }
 
 // openLatest chooses the newest file in the directory (or opens today's
@@ -300,99 +386,120 @@ func (s *FileSink) openLatest() error {
 	now := s.clock().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	if len(picks) == 0 {
-		s.day = today
-		s.seq = 0
-		return s.openForDay(today, 0)
-	}
-
-	latest := picks[len(picks)-1]
-	day, seq, err := parseName(s.prefix, latest)
-	if err != nil {
-		return fmt.Errorf("audit: parse existing file %q: %w", latest, err)
-	}
-	// If the newest file is from an earlier UTC day, start a new file for
-	// today; otherwise append to the same one.
-	if s.daily && !day.Equal(today) {
-		// Prime lastHash from the files before, then open today's 0-seq.
+	day, seq := today, 0
+	if len(picks) > 0 {
+		latest := picks[len(picks)-1]
+		d, n, err := parseName(s.prefix, latest)
+		if err != nil {
+			return fmt.Errorf("audit: parse existing file %q: %w", latest, err)
+		}
 		if err := s.primeLastHash(picks); err != nil {
 			return err
 		}
-		s.day = today
-		s.seq = 0
-		return s.openForDay(today, 0)
+		// A newest file of an earlier UTC day gets a new file for today.
+		// Otherwise append to it, or to the next seq when it is over the
+		// size cap.
+		if !s.daily || d.Equal(today) {
+			day, seq = d, n
+			info, err := os.Stat(filepath.Join(s.dir, latest))
+			if err != nil {
+				return fmt.Errorf("audit: stat %s: %w", latest, err)
+			}
+			if s.rotateMB > 0 && info.Size() >= s.rotateMB {
+				seq++
+			}
+		}
 	}
-
-	// Reopen the existing file. If it exceeds the size cap, bump seq.
-	path := filepath.Join(s.dir, latest)
-	info, err := os.Stat(path)
+	f, size, err := s.openForDay(day, seq)
 	if err != nil {
-		return fmt.Errorf("audit: stat %s: %w", path, err)
-	}
-	if err := s.primeLastHash(picks); err != nil {
 		return err
 	}
-	if s.rotateMB > 0 && info.Size() >= s.rotateMB {
-		s.day = day
-		s.seq = seq + 1
-		return s.openForDay(s.day, s.seq)
-	}
-	s.day = day
-	s.seq = seq
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, s.fileMode)
-	if err != nil {
-		return fmt.Errorf("audit: reopen %s: %w", path, err)
-	}
-	s.file = f
-	s.writer = bufio.NewWriterSize(f, s.bufSize)
-	s.written = info.Size()
+	s.file, s.written, s.day, s.seq = f, size, day, seq
 	return nil
 }
 
-// openForDay opens audit-YYYY-MM-DD[-seq].jsonl fresh (O_CREATE|O_APPEND).
-// Must be called with s.mu held.
-func (s *FileSink) openForDay(day time.Time, seq int) error {
-	name := formatName(s.prefix, day, seq)
-	path := filepath.Join(s.dir, name)
+// openForDay opens audit-YYYY-MM-DD[-seq].jsonl for append, creates it
+// when missing, and returns it with its size. It moves a torn last line
+// aside first. It does not change the state of s.
+func (s *FileSink) openForDay(day time.Time, seq int) (*os.File, int64, error) {
+	path := filepath.Join(s.dir, formatName(s.prefix, day, seq))
+	if err := s.repairTornTail(path); err != nil {
+		return nil, 0, err
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, s.fileMode)
 	if err != nil {
-		return fmt.Errorf("audit: open %s: %w", path, err)
+		return nil, 0, fmt.Errorf("audit: open %s: %w", path, err)
 	}
 	// Tighten mode on platforms where O_CREATE ignored it.
 	if err := os.Chmod(path, s.fileMode); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("audit: chmod %s: %w", path, err)
+		return nil, 0, fmt.Errorf("audit: chmod %s: %w", path, err)
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return fmt.Errorf("audit: stat %s: %w", path, err)
+		return nil, 0, fmt.Errorf("audit: stat %s: %w", path, err)
 	}
-	s.file = f
-	s.writer = bufio.NewWriterSize(f, s.bufSize)
-	s.written = info.Size()
+	return f, info.Size(), nil
+}
+
+// repairTornTail moves a last line without newline, left by a crash or a
+// failed write, to <path>.torn-<time> and cuts it from path. That line was
+// never a complete record, so the chain stays intact. A missing file is
+// fine.
+func (s *FileSink) repairTornTail(path string) error {
+	torn, err := endsTorn(path)
+	if err != nil || !torn {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("audit: read %s: %w", path, err)
+	}
+	keep := bytes.LastIndexByte(data, '\n') + 1
+	side := path + ".torn-" + s.clock().UTC().Format("20060102T150405.000000000Z")
+	if err := os.WriteFile(side, data[keep:], s.fileMode); err != nil {
+		return fmt.Errorf("audit: save the torn last line of %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("audit: open %s: %w", path, err)
+	}
+	if err := f.Truncate(int64(keep)); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("audit: cut the torn last line of %s: %w", path, err)
+	}
+	if err := closeFile(f); err != nil {
+		return err
+	}
+	slog.Default().Error("audit: the audit file ended in a torn line, moved it aside",
+		slog.String("file", path), slog.String("moved_to", side), slog.Int("bytes", len(data)-keep))
 	return nil
 }
 
-// closeActive flushes + closes the current file. Must be called with s.mu held.
-func (s *FileSink) closeActive() error {
-	if s.writer == nil {
-		return nil
+// endsTorn reports whether path is not empty and its last byte is not a
+// newline. It reads one byte, files can be large. A missing file is fine.
+func endsTorn(path string) (bool, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
 	}
-	var firstErr error
-	if err := s.writer.Flush(); err != nil {
-		firstErr = fmt.Errorf("audit: flush: %w", err)
+	if err != nil {
+		return false, fmt.Errorf("audit: open %s: %w", path, err)
 	}
-	if err := s.file.Sync(); err != nil && firstErr == nil {
-		firstErr = fmt.Errorf("audit: fsync: %w", err)
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false, fmt.Errorf("audit: stat %s: %w", path, err)
 	}
-	if err := s.file.Close(); err != nil && firstErr == nil {
-		firstErr = fmt.Errorf("audit: close: %w", err)
+	if info.Size() == 0 {
+		return false, nil
 	}
-	s.writer = nil
-	s.file = nil
-	s.written = 0
-	return firstErr
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return false, fmt.Errorf("audit: read %s: %w", path, err)
+	}
+	return last[0] != '\n', nil
 }
 
 // primeLastHash takes the chain tip from the newest record in names, which
@@ -403,7 +510,11 @@ func (s *FileSink) primeLastHash(names []string) error {
 	// the file, or a rotation without a record yet. The chain tip is then
 	// in a file before it.
 	for i := len(names) - 1; i >= 0; i-- {
-		last, err := readLastRecord(filepath.Join(s.dir, names[i]))
+		path := filepath.Join(s.dir, names[i])
+		if err := s.repairTornTail(path); err != nil {
+			return err
+		}
+		last, err := readLastRecord(path)
 		if err != nil {
 			return err
 		}
@@ -457,9 +568,8 @@ func formatName(prefix string, day time.Time, seq int) string {
 }
 
 // readLastRecord reads the last JSON line of path and decodes it into a
-// Record. An empty file returns (nil, nil). Partial trailing lines (no
-// newline) are treated as empty; the dispatcher will chain from the last
-// complete record.
+// Record. An empty file returns (nil, nil). A last line that is not a
+// complete record is an error: callers repair a torn tail first.
 func readLastRecord(path string) (*Record, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

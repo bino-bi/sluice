@@ -36,7 +36,7 @@ func chain(t *testing.T, prior string, tweak func(*audit.Record)) *audit.Record 
 }
 
 func TestFileSink_AppendAndRotateDaily(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	// Give explicit times per call so the sequencing is unambiguous:
 	//   openLatest → 23:55 (opens 04-19 file)
 	//   Record r1  → 23:58 (still 04-19)
@@ -80,11 +80,7 @@ func TestFileSink_AppendAndRotateDaily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readdir: %v", err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
+	names := fileNames(entries)
 	want := []string{"audit-2026-04-19.jsonl", "audit-2026-04-20.jsonl"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("unexpected files: %v", names)
@@ -102,7 +98,7 @@ func TestFileSink_AppendAndRotateDaily(t *testing.T) {
 }
 
 func TestFileSink_SizeRotation(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	sink, err := audit.NewFileSink(audit.FileOptions{
 		Dir:          dir,
 		RotateDaily:  false,
@@ -135,13 +131,13 @@ func TestFileSink_SizeRotation(t *testing.T) {
 	}
 	// Expect two files.
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 files after size rotation, got %d: %v", len(entries), fileNames(entries))
+	if len(fileNames(entries)) != 2 {
+		t.Fatalf("expected 2 files after size rotation, got %d: %v", len(fileNames(entries)), fileNames(entries))
 	}
 }
 
 func TestFileSink_PermissionsAndRestart(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	sink1, err := audit.NewFileSink(audit.FileOptions{
 		Dir:   dir,
 		Clock: func() time.Time { return time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC) },
@@ -203,7 +199,7 @@ func TestFileSink_PermissionsAndRestart(t *testing.T) {
 // prime lastHash from the wrong file. Chronological (day, seq) ordering
 // fixes both.
 func TestFileSink_SameDaySizeRotationOrdering(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	clock := func() time.Time { return time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC) }
 	sink, err := audit.NewFileSink(audit.FileOptions{Dir: dir, RotateSizeMB: 1, Clock: clock})
 	if err != nil {
@@ -225,7 +221,7 @@ func TestFileSink_SameDaySizeRotationOrdering(t *testing.T) {
 
 	// Sanity: two files, seq-0 and seq-1 within the same day.
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 2 {
+	if len(fileNames(entries)) != 2 {
 		t.Fatalf("expected 2 files, got %v", fileNames(entries))
 	}
 
@@ -278,10 +274,13 @@ func readAll(t *testing.T, path string) []map[string]any {
 	return out
 }
 
+// fileNames returns the sorted names of the audit files, without the lock file.
 func fileNames(entries []os.DirEntry) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, e.Name())
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			out = append(out, e.Name())
+		}
 	}
 	sort.Strings(out)
 	return out

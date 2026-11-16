@@ -16,7 +16,7 @@ import (
 // q-1, q-2 land in 2026-04-19, q-3..q-5 in 2026-04-20.
 func tailSink(t *testing.T) (*audit.FileSink, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := auditDir(t)
 	times := []time.Time{
 		time.Date(2026, 4, 19, 23, 50, 0, 0, time.UTC), // openLatest
 		time.Date(2026, 4, 19, 23, 55, 0, 0, time.UTC), // q-1

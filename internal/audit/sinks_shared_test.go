@@ -7,10 +7,24 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/audit"
 )
+
+// auditDir returns a new, empty audit directory with mode 0700. t.TempDir
+// follows the umask, and the file sink refuses a directory that the group
+// can write.
+func auditDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "audit")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
 
 func testLogger(t *testing.T) *slog.Logger {
 	t.Helper()
@@ -38,7 +52,7 @@ func (*failingSink) Close(context.Context) error { return nil }
 // fan-out isolation stance: a permanently failing secondary sink neither
 // blocks the file sink nor breaks its hash chain.
 func TestDispatcher_SecondarySinkFailure_FileChainStillVerifies(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	fs, err := audit.NewFileSink(audit.FileOptions{Dir: dir})
 	if err != nil {
 		t.Fatalf("file sink: %v", err)
