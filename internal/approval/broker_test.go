@@ -94,8 +94,10 @@ func TestBroker_AcceptFlow(t *testing.T) {
 
 	// Grant is consumable exactly once. HasGrant does not consume it.
 	in := requireInput("alice", "SELECT 1")
-	if !b.HasGrant(in.SubjectKey, in.SQLHash) || !b.HasGrant(in.SubjectKey, in.SQLHash) {
-		t.Fatal("HasGrant miss")
+	for range 2 {
+		if !b.HasGrant(in.SubjectKey, in.SQLHash) {
+			t.Fatal("HasGrant miss")
+		}
 	}
 	id, ok := b.ConsumeGrant(in.SubjectKey, in.SQLHash)
 	if !ok || id != ticket.ID {

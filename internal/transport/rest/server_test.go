@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -276,7 +277,8 @@ func TestHandleQuery_CSVErrorAbortsConnection(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "text/csv")
 	defer func() {
-		if got := recover(); got != http.ErrAbortHandler {
+		got := recover()
+		if err, _ := got.(error); !errors.Is(err, http.ErrAbortHandler) {
 			t.Fatalf("recover() = %v, want http.ErrAbortHandler", got)
 		}
 	}()

@@ -306,15 +306,15 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 		sqlHash = approvalHash(req)
 		subjectKey = subjectKeyOf(req.User)
-		if s.opts.Approvals.HasGrant(subjectKey, sqlHash) {
-			// Fall through to rewrite. A rewrite error must not use up
-			// the approval, so the grant is consumed before step 5.
-		} else if resumed {
-			// Resumed pass but the grant vanished (expired/raced). Do not
-			// re-park — that would recurse. Surface pending.
-			s.emit(ctx, rec, start)
-			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
-		} else {
+		// With a grant, fall through to rewrite. A rewrite error must not
+		// use up the approval, so the grant is consumed before step 5.
+		if !s.opts.Approvals.HasGrant(subjectKey, sqlHash) {
+			if resumed {
+				// Resumed pass but the grant vanished (expired/raced). Do
+				// not re-park — that would recurse. Surface pending.
+				s.emit(ctx, rec, start)
+				return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
+			}
 			releaseSlot() // never hold the admission slot while parked
 			// The wait is no usage. The resumed pass charges its own run.
 			budgetDone = true
