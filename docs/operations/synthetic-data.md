@@ -332,7 +332,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 - When the table sizes do not fit the source fan-out, Sluice scales it. The report warns when the scale is below 0.5 or above 2.
 - Orphan keys are new values, not source keys.
 - After the write, Sluice checks that every key except the orphans finds its parent. The snapshot has no `FOREIGN KEY` constraint.
-- Sluice keeps the parent keys in memory during the build, about 50 bytes per parent row.
+- Sluice keeps the parent keys in memory during the build, about 50 bytes per parent row. See [Memory](#memory).
 
 ### Groups with by
 
@@ -380,7 +380,7 @@ Three things start a build:
 - `POST /admin/synthetic/<name>/build` on the [admin API](../reference/admin-api.md#synthetic-builds) builds in the running server.
 - `build.onStart: ifMissing` builds at server start when no snapshot exists. The server serves queries during the build.
 
-A server build runs in the server process. It opens a second DuckDB instance next to the query pool, with the same `duckdb.memoryLimit` and `duckdb.threads`. So a build can use up to twice the memory and threads of the query pool, and more Go memory on top. To keep this bounded:
+A server build runs in the server process. It opens a second DuckDB instance next to the query pool, with the same `duckdb.memoryLimit` and `duckdb.threads`. So a build can use up to twice the memory and threads of the query pool, and more Go memory on top. See [Memory](#memory). To keep this bounded:
 
 - One build runs at a time in the server. A build of another name during a build gives 409 `ERR_CONFLICT`. Builds at start wait for a running build.
 - A build that runs longer than `synthetic.buildTimeout` of the server config (default `1h`) is canceled and fails.
@@ -418,6 +418,18 @@ Some reads are outside the transaction of a table and can see another state:
 For a fixed state, build from a copy or a snapshot of the source, or build when the source does not change.
 
 The same spec, seed and source data give the same rows on the same CPU architecture. With `noise`, the DuckDB version must be the same too. The report holds a `content_hash` of the rows to compare builds.
+
+### Memory
+
+`duckdb.memoryLimit` bounds the DuckDB part of a build. Sluice writes rows in batches of 10000. Some generators keep data for each row in the Go memory of the build, outside this limit. Rough numbers, measured on amd64:
+
+| What | Go memory |
+|---|---|
+| `unique: true` | About 64 bytes per synthetic row for numbers, and about 70 bytes plus the text length for text. Held for the whole table. |
+| `foreignKey` | 8 bytes per child row, and about 32 bytes per parent row while the table is drawn. |
+| Parent keys of a `foreignKey` | About 50 bytes per parent row, for the whole build. |
+
+Example: a table of 100 million synthetic rows with a `unique` text column of 24 characters holds about 10 GB. With a server build, this memory is in the server process. Build such a table with `sluice synth build`, or choose a generator such as `sequence` or `uuid` that does not need `unique`.
 
 ## Status
 
