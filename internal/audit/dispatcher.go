@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bino-bi/sluice/internal/ratelimit"
@@ -26,10 +27,13 @@ const (
 // DispatcherOptions configures a new Dispatcher.
 type DispatcherOptions struct {
 	// Sinks receive every enqueued record. The first sink in the slice is
-	// the "primary" — its LastHash (if any) is used to seed the chain.
+	// the primary: its LastHash (if any) is used to seed the chain, and
+	// Enqueue fails while it cannot write. The other sinks get copies
+	// through their own queue, which drops records when it is full.
 	Sinks []Sink
 
-	// QueueSize bounds the buffered channel. Default 10_000.
+	// QueueSize bounds the buffered channel, and the queue of each
+	// secondary sink. Default 10_000.
 	QueueSize int
 
 	// EnqueueDeadline caps how long Enqueue blocks before returning
@@ -39,6 +43,10 @@ type DispatcherOptions struct {
 	// FlushInterval spawns a periodic flusher goroutine. Default 200 ms.
 	// Set to zero to disable automatic flushing.
 	FlushInterval time.Duration
+
+	// RecoverInterval is how often the dispatcher tries the primary sink
+	// again after a failed write. Default 1 s.
+	RecoverInterval time.Duration
 
 	// DrainTimeout caps how long Close waits for the queue to drain.
 	// Default 10s.
@@ -62,24 +70,45 @@ type DispatcherOptions struct {
 }
 
 // Dispatcher owns a bounded queue, a background worker that drains into
-// sinks, and a periodic flusher. A single Dispatcher is shared across
+// the primary sink, one goroutine with its own queue per secondary sink,
+// and a periodic flusher. So a slow secondary sink never holds up the
+// primary sink or Enqueue. A single Dispatcher is shared across
 // transports; each call to Enqueue serialises through the queue.
 type Dispatcher struct {
-	opts   DispatcherOptions
-	queue  chan *Record
-	quit   chan struct{}
-	doneWg sync.WaitGroup
+	opts        DispatcherOptions
+	primary     Sink
+	secondaries []*secondary
+	queue       chan *Record
+	quit        chan struct{}
+	doneWg      sync.WaitGroup
+	secWg       sync.WaitGroup
 	// pending tracks records that have been enqueued but not yet handed
 	// to a sink. Flush waits on this to make "drained" a real property
 	// of the sinks, not just of the queue channel.
-	pending sync.WaitGroup
+	pending atomic.Int64
+	// space gets a token when the worker takes a record from the queue.
+	space chan struct{}
+	// waitSlot admits one Enqueue at a time to wait for a full queue.
+	waitSlot chan struct{}
 
 	mu       sync.Mutex
 	closed   bool
 	lastHash string
 	metrics  *metricsSet
 
+	// down is set while the primary sink cannot write. lost counts the
+	// sealed records it did not get since then. lost is owned by the
+	// worker goroutine.
+	down atomic.Bool
+	lost int
+
 	authEvents *ratelimit.KeyedLimiter
+}
+
+// secondary is a best-effort sink with its own queue and goroutine.
+type secondary struct {
+	sink  Sink
+	queue chan *Record
 }
 
 // NewDispatcher builds a Dispatcher, emits the genesis record if needed,
@@ -99,6 +128,9 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 	} else if opts.FlushInterval == 0 {
 		opts.FlushInterval = 200 * time.Millisecond
 	}
+	if opts.RecoverInterval <= 0 {
+		opts.RecoverInterval = time.Second
+	}
 	if opts.DrainTimeout <= 0 {
 		opts.DrainTimeout = 10 * time.Second
 	}
@@ -117,10 +149,13 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 	}
 
 	d := &Dispatcher{
-		opts:    opts,
-		queue:   make(chan *Record, opts.QueueSize),
-		quit:    make(chan struct{}),
-		metrics: metricsShared(),
+		opts:     opts,
+		primary:  opts.Sinks[0],
+		queue:    make(chan *Record, opts.QueueSize),
+		quit:     make(chan struct{}),
+		space:    make(chan struct{}, 1),
+		waitSlot: make(chan struct{}, 1),
+		metrics:  metricsShared(),
 		authEvents: ratelimit.NewKeyed(
 			ratelimit.Spec{RPS: AuthEventRate, Burst: AuthEventBurst}, 8, opts.Clock),
 	}
@@ -154,6 +189,12 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 		d.lastHash = seed
 	}
 
+	for _, s := range opts.Sinks[1:] {
+		sec := &secondary{sink: s, queue: make(chan *Record, opts.QueueSize)}
+		d.secondaries = append(d.secondaries, sec)
+		d.secWg.Add(1)
+		go d.runSecondary(sec)
+	}
 	d.doneWg.Add(1)
 	go d.run()
 	if d.opts.FlushInterval > 0 {
@@ -165,6 +206,7 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 
 // sealRecord computes the hash of a new record, keyed when key is set.
 func sealRecord(key []byte, prior string, r *Record) (string, error) {
+	sanitizeRecord(r)
 	if len(key) > 0 {
 		r.HashAlg = HashAlgHMAC
 	}
@@ -268,29 +310,84 @@ func (d *Dispatcher) AuthFailure(origin, remoteIP, reason string) {
 }
 
 // enqueue is Enqueue. With wait false it gives up at once when the queue
-// is full or the lock is held, and counts no drop. A record that waits
-// for the queue holds the lock for up to EnqueueDeadline.
+// is full or the lock is held, and counts no drop.
+//
+// Records enter the queue in strict chain order, and the chain tip
+// (lastHash) advances only once a record is queued: seal, send and tip
+// update run under mu. A dropped record therefore never leaves a gap. mu
+// is never held across a wait. When the queue is full, one caller waits up
+// to EnqueueDeadline for space and seals again on each try. Every other
+// caller fails at once, so an audit stall gives fast errors, not a line of
+// callers that wait one after the other.
 func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	if r == nil {
 		return fmt.Errorf("audit: nil record")
 	}
-	// The whole operation is serialised under mu so records enter the queue
-	// in strict chain order AND so the chain tip (lastHash) advances only
-	// once the record is safely queued. A dropped record therefore never
-	// leaves a gap: the next record chains onto the same prior hash. In
-	// normal operation the non-blocking send succeeds immediately, so mu is
-	// held only briefly; it is held across the bounded wait only when the
-	// queue is already full (i.e. the gateway is overloaded), which is
-	// exactly when serialising enqueues is acceptable. Sink I/O still runs
-	// off-lock on the worker goroutine.
 	if wait {
 		d.mu.Lock()
 	} else if !d.mu.TryLock() {
 		return ErrQueueFull
 	}
-	defer d.mu.Unlock()
+	sent, err := d.trySendLocked(r)
+	d.mu.Unlock()
+	if sent || !wait {
+		if err == nil && !sent {
+			err = ErrQueueFull
+		}
+		return err
+	}
+	if err != nil {
+		return d.refused(err)
+	}
+
+	select {
+	case d.waitSlot <- struct{}{}:
+		defer func() { <-d.waitSlot }()
+	default:
+		d.recordDrop("queue_full")
+		return ErrQueueFull
+	}
+	timer := time.NewTimer(d.opts.EnqueueDeadline)
+	defer timer.Stop()
+	for {
+		select {
+		case <-d.space:
+		case <-ctx.Done():
+			d.recordDrop("context")
+			return ctx.Err()
+		case <-timer.C:
+			d.recordDrop("queue_full")
+			return ErrQueueFull
+		}
+		d.mu.Lock()
+		sent, err := d.trySendLocked(r)
+		d.mu.Unlock()
+		if err != nil {
+			return d.refused(err)
+		}
+		if sent {
+			return nil
+		}
+	}
+}
+
+// refused counts a record that Enqueue refused because the primary sink
+// is down, and returns err.
+func (d *Dispatcher) refused(err error) error {
+	if errors.Is(err, ErrSinkDown) {
+		d.recordDrop("sink_down")
+	}
+	return err
+}
+
+// trySendLocked seals r onto the chain tip and queues it without waiting.
+// It reports false when the queue is full. Must be called with d.mu held.
+func (d *Dispatcher) trySendLocked(r *Record) (bool, error) {
 	if d.closed {
-		return ErrClosed
+		return false, ErrClosed
+	}
+	if d.down.Load() {
+		return false, ErrSinkDown
 	}
 	if r.Timestamp.IsZero() {
 		r.Timestamp = d.opts.Clock().UTC()
@@ -301,41 +398,20 @@ func (d *Dispatcher) enqueue(ctx context.Context, r *Record, wait bool) error {
 	r.PriorHash = d.lastHash
 	h, err := sealRecord(d.opts.ChainKey, d.lastHash, r)
 	if err != nil {
-		return err
+		return false, err
 	}
 	r.Hash = h
 
 	d.pending.Add(1)
-
-	// Non-blocking fast path.
 	select {
 	case d.queue <- r:
 		d.lastHash = h
 		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
-		return nil
+		d.metrics.QueueDepth.WithLabelValues(d.primary.Name()).Set(float64(len(d.queue)))
+		return true, nil
 	default:
-	}
-	if !wait {
-		d.pending.Done()
-		return ErrQueueFull
-	}
-
-	// Bounded blocking path.
-	timer := time.NewTimer(d.opts.EnqueueDeadline)
-	defer timer.Stop()
-	select {
-	case d.queue <- r:
-		d.lastHash = h
-		d.metrics.Enqueued.WithLabelValues(string(r.EventType)).Inc()
-		return nil
-	case <-ctx.Done():
-		d.pending.Done()
-		d.recordDrop("context")
-		return ctx.Err()
-	case <-timer.C:
-		d.pending.Done()
-		d.recordDrop("queue_full")
-		return ErrQueueFull
+		d.pending.Add(-1)
+		return false, nil
 	}
 }
 
@@ -345,17 +421,26 @@ func (d *Dispatcher) recordDrop(reason string) {
 	}
 }
 
-// run is the single writer goroutine. It preserves chain order because
-// channel sends preserve insertion order.
+// run is the single writer goroutine of the primary sink. It preserves
+// chain order because channel sends preserve insertion order. It is the
+// only sender on the secondary queues and closes them when it ends.
 func (d *Dispatcher) run() {
 	defer d.doneWg.Done()
+	defer func() {
+		for _, s := range d.secondaries {
+			close(s.queue)
+		}
+	}()
+	retry := time.NewTicker(d.opts.RecoverInterval)
+	defer retry.Stop()
 	for {
 		select {
-		case r, ok := <-d.queue:
-			if !ok {
-				return
-			}
+		case r := <-d.queue:
 			d.dispatch(r)
+		case <-retry.C:
+			if d.down.Load() {
+				d.recover()
+			}
 		case <-d.quit:
 			// Drain anything that remains in the queue before exiting.
 			for {
@@ -363,6 +448,11 @@ func (d *Dispatcher) run() {
 				case r := <-d.queue:
 					d.dispatch(r)
 				default:
+					// A restart chains onto the last written record, so
+					// only a gap record written now marks the loss.
+					if d.down.Load() {
+						d.recover()
+					}
 					return
 				}
 			}
@@ -370,24 +460,137 @@ func (d *Dispatcher) run() {
 	}
 }
 
+// dispatch writes r to the primary sink and hands copies to the
+// secondary queues.
 func (d *Dispatcher) dispatch(r *Record) {
-	defer d.pending.Done()
-	for _, s := range d.opts.Sinks {
-		if err := s.Record(context.Background(), r); err != nil {
-			d.metrics.WriteErrors.WithLabelValues(s.Name()).Inc()
-			d.opts.Logger.Error("audit: sink write failed",
-				slog.String("sink", s.Name()),
-				slog.String("event_type", string(r.EventType)),
-				slog.String("error", err.Error()),
-			)
+	defer d.pending.Add(-1)
+	select {
+	case d.space <- struct{}{}:
+	default:
+	}
+	name := d.primary.Name()
+	d.metrics.QueueDepth.WithLabelValues(name).Set(float64(len(d.queue)))
+	if d.down.Load() {
+		// r chains onto a record that the primary sink did not get. The
+		// gap record covers it.
+		d.lost++
+		d.metrics.DroppedTotal.WithLabelValues(name, "sink_down").Inc()
+	} else if err := d.primary.Record(context.Background(), r); err != nil {
+		d.lost++
+		d.down.Store(true)
+		d.metrics.WriteErrors.WithLabelValues(name).Inc()
+		d.metrics.DroppedTotal.WithLabelValues(name, "write_error").Inc()
+		d.opts.Logger.Error("audit: the primary sink cannot write, new records fail until it works again",
+			slog.String("sink", name),
+			slog.String("event_type", string(r.EventType)),
+			slog.String("error", err.Error()),
+		)
+	}
+	d.offer(r)
+}
+
+// recover writes a gap record once the primary sink works again. The gap
+// record chains onto the last sealed record and names the last record the
+// sink wrote, so verify can tell the lost records from a removal. It runs
+// on the worker goroutine.
+func (d *Dispatcher) recover() {
+	// While down no record is sealed or queued, so the tip is stable and
+	// the write runs without mu: a hanging disk must not block Enqueue.
+	d.mu.Lock()
+	// The records still in the queue chain onto lost records.
+	for drained := false; !drained; {
+		select {
+		case r := <-d.queue:
+			d.dispatch(r)
+		default:
+			drained = true
 		}
 	}
-	for _, s := range d.opts.Sinks {
-		d.metrics.QueueDepth.WithLabelValues(s.Name()).Set(float64(len(d.queue)))
+	tip := d.lastHash
+	d.mu.Unlock()
+
+	lastWritten := ""
+	if lh, ok := d.primary.(interface{ LastHash() string }); ok {
+		lastWritten = lh.LastHash()
+	}
+	gap := &Record{
+		Timestamp:     d.opts.Clock().UTC(),
+		EventType:     EventAuditGap,
+		SluiceVersion: version.Current().Version,
+		Message:       "audit records lost, the audit file could not be written",
+		Extras: map[string]any{
+			GapLostRecords: d.lost,
+			GapLastWritten: lastWritten,
+		},
+		PriorHash: tip,
+	}
+	h, err := sealRecord(d.opts.ChainKey, tip, gap)
+	if err != nil {
+		return
+	}
+	gap.Hash = h
+	if err := d.primary.Record(context.Background(), gap); err != nil {
+		return
+	}
+	d.opts.Logger.Warn("audit: the primary sink works again, wrote a gap record",
+		slog.String("sink", d.primary.Name()), slog.Int("lost_records", d.lost))
+	d.mu.Lock()
+	d.lastHash = h
+	d.lost = 0
+	d.down.Store(false)
+	d.mu.Unlock()
+	d.offer(gap)
+}
+
+// offer queues a copy of r for each secondary sink. A full queue drops the
+// copy for that sink only.
+func (d *Dispatcher) offer(r *Record) {
+	for _, s := range d.secondaries {
+		d.pending.Add(1)
+		select {
+		case s.queue <- r:
+			d.metrics.QueueDepth.WithLabelValues(s.sink.Name()).Set(float64(len(s.queue)))
+		default:
+			d.pending.Add(-1)
+			d.metrics.DroppedTotal.WithLabelValues(s.sink.Name(), "queue_full").Inc()
+		}
 	}
 }
 
-// flushLoop invokes Flush on every sink periodically.
+// runSecondary writes and flushes one secondary sink until its queue is
+// closed.
+func (d *Dispatcher) runSecondary(s *secondary) {
+	defer d.secWg.Done()
+	var tick <-chan time.Time
+	if d.opts.FlushInterval > 0 {
+		t := time.NewTicker(d.opts.FlushInterval)
+		defer t.Stop()
+		tick = t.C
+	}
+	for {
+		select {
+		case r, ok := <-s.queue:
+			if !ok {
+				return
+			}
+			d.metrics.QueueDepth.WithLabelValues(s.sink.Name()).Set(float64(len(s.queue)))
+			if err := s.sink.Record(context.Background(), r); err != nil {
+				d.metrics.WriteErrors.WithLabelValues(s.sink.Name()).Inc()
+				d.opts.Logger.Error("audit: sink write failed",
+					slog.String("sink", s.sink.Name()),
+					slog.String("event_type", string(r.EventType)),
+					slog.String("error", err.Error()),
+				)
+			}
+			d.pending.Add(-1)
+		case <-tick:
+			d.flushSink(s.sink)
+		}
+	}
+}
+
+// flushLoop flushes the primary sink periodically. Secondary sinks flush
+// on their own goroutines, so a slow upload does not delay the fsync.
 func (d *Dispatcher) flushLoop() {
 	defer d.doneWg.Done()
 	t := time.NewTicker(d.opts.FlushInterval)
@@ -395,24 +598,22 @@ func (d *Dispatcher) flushLoop() {
 	for {
 		select {
 		case <-t.C:
-			d.flushAll()
+			d.flushSink(d.primary)
 		case <-d.quit:
 			return
 		}
 	}
 }
 
-func (d *Dispatcher) flushAll() {
+func (d *Dispatcher) flushSink(s Sink) {
 	ctx, cancel := context.WithTimeout(context.Background(), d.opts.DrainTimeout)
 	defer cancel()
-	for _, s := range d.opts.Sinks {
-		if err := s.Flush(ctx); err != nil {
-			d.metrics.WriteErrors.WithLabelValues(s.Name()).Inc()
-			d.opts.Logger.Error("audit: sink flush failed",
-				slog.String("sink", s.Name()),
-				slog.String("error", err.Error()),
-			)
-		}
+	if err := s.Flush(ctx); err != nil {
+		d.metrics.WriteErrors.WithLabelValues(s.Name()).Inc()
+		d.opts.Logger.Error("audit: sink flush failed",
+			slog.String("sink", s.Name()),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
@@ -430,17 +631,18 @@ func (d *Dispatcher) Flush(ctx context.Context) error {
 // the worker consumes from the channel before writing to sinks, so an
 // empty queue does not imply an empty sink write queue.
 func (d *Dispatcher) drain(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		d.pending.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	// A counter and not a WaitGroup: the worker adds records from zero
+	// while Flush may wait, which a WaitGroup does not allow.
+	t := time.NewTicker(time.Millisecond)
+	defer t.Stop()
+	for d.pending.Load() > 0 {
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 
 func (d *Dispatcher) flushWithCtx(ctx context.Context) error {
@@ -473,6 +675,7 @@ func (d *Dispatcher) Close(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		d.doneWg.Wait()
+		d.secWg.Wait()
 		close(done)
 	}()
 	drainCtx, cancel := context.WithTimeout(ctx, d.opts.DrainTimeout)

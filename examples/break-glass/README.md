@@ -24,8 +24,8 @@ The script creates `data/shop.db` from `seed.sql` and starts Sluice on `http://l
 
 ```bash
 python3 ../seed.py seed.sql data/shop.db
-# The container runs as another user and writes the audit log to data/.
-chmod -R a+rwX data
+# The container runs as user 65532 and writes the audit log to data/.
+sudo chown -R 65532:65532 data
 docker compose up
 ```
 

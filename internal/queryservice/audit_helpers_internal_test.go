@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClientMetaFor_NilAndEmpty(t *testing.T) {
@@ -50,5 +51,28 @@ func TestClientMetaFor_TruncatesOversizes(t *testing.T) {
 	}
 	if len(v) != maxClientMetaValueBytes {
 		t.Fatalf("value len = %d want %d", len(v), maxClientMetaValueBytes)
+	}
+}
+
+// A cut inside a multi-byte rune would leave invalid UTF-8 in the record.
+func TestCutUTF8_KeepsRunes(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"abc", 5, "abc"},
+		{"abc", 2, "ab"},
+		{"aü", 2, "a"},
+		{"aü", 3, "aü"},
+		{"€x", 2, ""},
+	} {
+		if got := cutUTF8(tc.in, tc.n); got != tc.want {
+			t.Errorf("cutUTF8(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+		}
+	}
+	got := clientMetaFor(map[string]string{"k": strings.Repeat("a", maxClientMetaValueBytes-1) + "ü"})
+	if v := got["k"]; !utf8.ValidString(v) || len(v) != maxClientMetaValueBytes-1 {
+		t.Errorf("value = %q, want it cut before the rune", v)
 	}
 }

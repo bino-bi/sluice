@@ -101,6 +101,7 @@ Without a `tls` block, a listener serves plain HTTP and logs a warning. The exam
 - The tag has no leading `v`: release `v0.1.0-rc.3` is tag `0.1.0-rc.3`.
 - The images are signed with cosign. See [Install](../getting-started/install.md).
 - The image has no shell and runs as user `65532` in `/var/lib/sluice`. This user must read the mounted files and write the audit log. For the compose file below, run `serve.sh` once, then `sudo chown -R 65532:65532 data` in `examples/deployment`.
+- On a volume, set `audit.file.path` to a subdirectory of the mount, or to a directory that not every user can write. Sluice refuses a world-writable audit directory.
 - The image declares `8080`, `8081` and `9090`. Publish the ports that you configured.
 - `docker build -t sluice:dev .` builds your own image. `SLUICE_IMAGE=sluice:dev` makes the example compose files use it.
 - `--build-arg LIBDUCKDB_JOBS=8` raises the 4 jobs of its DuckDB compile.

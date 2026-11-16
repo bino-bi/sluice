@@ -100,7 +100,7 @@ func TestVerify_LegacyChain(t *testing.T) {
 }
 
 func TestKeyedChain_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, chainKey, 3); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestKeyedChain_DetectsARecomputedChain(t *testing.T) {
 		key  []byte
 	}{{"plain", nil}, {"keyed", chainKey}} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := auditDir(t)
 			if err := writeChain(t, dir, tc.key, 3); err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestKeyedChain_DetectsARecomputedChain(t *testing.T) {
 // A writer without the key could also drop hash_alg and continue as a
 // plain chain. A plain record after a keyed one breaks the chain.
 func TestKeyedChain_PlainRecordAfterKeyed(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, chainKey, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestKeyedChain_PlainRecordAfterKeyed(t *testing.T) {
 
 // A plain chain may get a key. After that the key must stay.
 func TestKeyedChain_SwitchAndStartGuard(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, nil, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestKeyedChain_SwitchAndStartGuard(t *testing.T) {
 	if err := writeChain(t, dir, chainKey, 1); err != nil {
 		t.Errorf("start with the right key: %v", err)
 	}
-	if err := writeChain(t, t.TempDir(), []byte("short"), 1); err == nil {
+	if err := writeChain(t, auditDir(t), []byte("short"), 1); err == nil {
 		t.Error("a key under 32 bytes was accepted")
 	}
 }
@@ -217,7 +217,7 @@ func TestVerify_NoRecordIsABrokenChain(t *testing.T) {
 // A writer without the key can strip hash_alg from every record and
 // compute a plain chain. With a key, verify must not call that intact.
 func TestKeyedChain_FullDowngradeFailsWithAKey(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, chainKey, 3); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestKeyedChain_FullDowngradeFailsWithAKey(t *testing.T) {
 }
 
 func TestVerify_UnknownHashAlg(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, chainKey, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestVerify_UnknownHashAlg(t *testing.T) {
 // The first refused start leaves an empty file for the new day. The
 // second start must still find the keyed record in the file before it.
 func TestKeyedChain_StartGuardSurvivesAnEmptyNewestFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	if err := writeChain(t, dir, chainKey, 2); err != nil {
 		t.Fatal(err)
 	}

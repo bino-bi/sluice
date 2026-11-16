@@ -24,6 +24,7 @@ Every command accepts `--help`. A `bool` flag takes no value. The binary also ha
 | 1 | `synth build`, `synth report` | The name is unknown or not a `synthetic` data source, or there is no report. |
 | 4 | `synth build` | The build failed: a check such as size or `strictTags`, or an error while reading the source. |
 | 4 | `audit verify` | The hash chain is broken, a line is not JSON, the anchor or the key differs, or the directory has no record. |
+| 5 | `audit verify` | The chain is intact, but it has `audit-gap` records: records were lost to a failed write. |
 
 ## apikey hash
 

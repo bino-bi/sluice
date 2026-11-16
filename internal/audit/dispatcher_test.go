@@ -213,7 +213,7 @@ func TestDispatcher_CloseIsIdempotent(t *testing.T) {
 }
 
 func TestDispatcher_FileSinkIntegration(t *testing.T) {
-	dir := t.TempDir()
+	dir := auditDir(t)
 	fs, err := audit.NewFileSink(audit.FileOptions{Dir: dir})
 	if err != nil {
 		t.Fatalf("file sink: %v", err)
@@ -379,8 +379,8 @@ func TestDispatcher_AuthFailureDoesNotWaitForAFullQueue(t *testing.T) {
 	}
 }
 
-// Query records that wait for a full queue hold the dispatcher lock. An
-// auth event must not queue behind them: the 401 would be late.
+// A query record can wait for a full queue. An auth event must not queue
+// behind it: the 401 would be late.
 func TestDispatcher_AuthFailureDoesNotWaitBehindQueryRecords(t *testing.T) {
 	sink := &gateSink{entered: make(chan string, 8), gate: make(chan struct{}), seed: "seedtip"}
 	d, err := audit.NewDispatcher(audit.DispatcherOptions{
@@ -398,7 +398,7 @@ func TestDispatcher_AuthFailureDoesNotWaitBehindQueryRecords(t *testing.T) {
 		}
 	}
 	<-sink.entered
-	// This record finds the queue full and waits, with the lock held.
+	// This record finds the queue full and waits.
 	waiting := make(chan struct{})
 	go func() {
 		defer close(waiting)

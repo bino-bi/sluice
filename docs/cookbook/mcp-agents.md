@@ -80,7 +80,7 @@ A query on `customers` is denied. The agent gets `ACL_DENIED` as a tool error.
 
 ### Claude Desktop
 
-Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` checks the key once at start. Replace the path. Run `serve.sh` once to create the data, then stop it. `make docs-check` does not run this file.
+Claude Desktop starts `sluice mcp` over stdio with this config. `sluice mcp` checks the key once at start. Replace the path. Run `serve.sh` once to create the data, then stop it. A second Sluice process on the same audit directory does not start, see [MCP](../reference/mcp.md#audit-records). `make docs-check` does not run this file.
 
 ```json
 --8<-- "examples/mcp-agent/manual/claude-desktop.json"

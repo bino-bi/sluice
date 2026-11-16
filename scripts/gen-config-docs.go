@@ -93,7 +93,7 @@ var meaning = map[string]string{
 	"policies.rebac.cacheTtl":    "Lifetime of a cached check.",
 	"policies.rebac.cacheSize":   "Maximum cached checks.",
 
-	"audit.file.path":         "Audit log directory. Empty means `sluice-audit` in the temp directory.",
+	"audit.file.path":         "Required by `serve` and `mcp`. Audit log directory, one per process.",
 	"audit.file.rotateDaily":  "New file each UTC day. Always on when `rotateSizeMB` is `0`.",
 	"audit.file.rotateSizeMB": "New file after this size.",
 	"audit.file.genesis":      "Secret reference: genesis.",

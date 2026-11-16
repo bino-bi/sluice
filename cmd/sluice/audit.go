@@ -44,12 +44,18 @@ A chain written with audit.chainKeyRef has keyed hashes. Pass the same
 secret reference as --key-ref. A chain without a key verifies as before,
 and the output says "not keyed".
 
+An audit-gap record marks records that Sluice lost because it could not
+write the audit file. The chain may break at such a record when the
+record names the hash of the record before it. Verify lists each gap.
+
 Exit codes:
   0  chain intact
   1  I/O error (directory unreadable), or a keyed chain without --key-ref
   4  chain broken (tampering, missing record, a line that is not JSON,
      anchor mismatch, wrong key, a record without a key after a keyed one,
-     or no record at all)`,
+     or no record at all)
+  5  chain intact, but it has audit-gap records: records were lost to a
+     failed write`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var key []byte
@@ -80,22 +86,37 @@ Exit codes:
 			}
 
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+				gaps := make([]map[string]any, 0, len(rep.Gaps))
+				for _, g := range rep.Gaps {
+					gaps = append(gaps, map[string]any{"file": g.File, "line": g.Line, "lost_records": g.Lost})
+				}
+				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 					"ok":        true,
 					"files":     rep.Files,
 					"records":   rep.Records,
 					"last_hash": rep.LastHash,
 					"keyed":     rep.Keyed,
-				})
+					"gaps":      gaps,
+				}); err != nil {
+					return err
+				}
+			} else {
+				keyed := "not keyed"
+				if rep.Keyed > 0 {
+					keyed = fmt.Sprintf("%d keyed", rep.Keyed)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"chain OK (%d file(s), %d record(s), %s, last_hash=%s)\n",
+					rep.Files, rep.Records, keyed, short(rep.LastHash),
+				)
+				for _, g := range rep.Gaps {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+						"gap: %s:%d: %d record(s) lost to a failed write\n", g.File, g.Line, g.Lost)
+				}
 			}
-			keyed := "not keyed"
-			if rep.Keyed > 0 {
-				keyed = fmt.Sprintf("%d keyed", rep.Keyed)
+			if len(rep.Gaps) > 0 {
+				return &exitError{Code: 5}
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"chain OK (%d file(s), %d record(s), %s, last_hash=%s)\n",
-				rep.Files, rep.Records, keyed, short(rep.LastHash),
-			)
 			return nil
 		},
 	}

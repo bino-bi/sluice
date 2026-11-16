@@ -133,8 +133,9 @@ type AuditConfig struct {
 	S3     *S3SinkConfig     `mapstructure:"s3"`     // nil = disabled
 
 	// FailClosed refuses to serve a query when its access audit record
-	// cannot be durably enqueued. Default true — audit-first posture. Set
-	// to false to fall back to best-effort auditing (serve on audit drop).
+	// cannot be queued: the queue stays full, or the file sink cannot
+	// write. It does not wait for the file write or the fsync. Default
+	// true. Set to false to serve on an audit drop.
 	FailClosed bool `mapstructure:"failClosed"`
 
 	// SQLSampleBytes caps the leading bytes of request SQL copied into
