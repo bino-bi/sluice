@@ -222,7 +222,7 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 The range of a number, `TIME` or date column is its lowest and highest value. The generators write no value outside it.
 
 - Without `clipOutliers`, the range goes from the `minGroupSize`-th lowest to the `minGroupSize`-th highest source value. A source value outside counts as the nearest end. So no single row sets an end, and one far value does not stretch the range.
-- Such a range needs `2 x minGroupSize - 1` non-null rows. With fewer rows a column entry fails the build, a default column is written as `NULL`, and a `by` group is dropped.
+- Sluice checks two things: at least `minGroupSize` non-null rows, and a `minGroupSize`-th lowest value that is not above the `minGroupSize`-th highest. Without many equal values, the second check needs about `2 x minGroupSize - 1` rows. When a check fails, a column entry fails the build, a default column is written as `NULL`, and a `by` group is dropped.
 - With `clipOutliers`, the range goes from the `lower` to the `upper` quantile. Source values outside are left out of the profile. Quantiles near 0 and 1 can put the value of a single row at an end. Then `spikeWarning` warns.
 - With `noise` and `bounds`, the range comes from the bounds. See [Min and max](#min-and-max).
 - `extremeJitter` then moves both ends.
@@ -341,7 +341,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 - A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
 - Values compare as text. The `by` column needs a generator that keeps source labels: `categorical`, `uniformCategory`, `shuffleLabels`, `weighted`, `boolean` or `constant`. Other generators are refused, also when a default falls back to one. The report warns when most rows find no group.
 - `minGroupSize` counts rows, not people. Do not group by a column that holds one value per person, such as a customer id.
-- A group needs `minGroupSize` rows, and `2 x minGroupSize - 1` for a number or date range. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
+- A group needs `minGroupSize` rows. For a number or date range it must also pass the check in [Range](#range). Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
 - `NULL` is a group value of its own.
 - The spike check runs per group. The report counts groups with a spike, but names none.
 
@@ -384,7 +384,7 @@ A server build runs in the server process. It opens a second DuckDB instance nex
 
 - One build runs at a time in the server. A build of another name during a build gives 409 `ERR_CONFLICT`. Builds at start wait for a running build.
 - A build that runs longer than `synthetic.buildTimeout` of the server config (default `1h`) is canceled and fails.
-- `POST /admin/synthetic/<name>/cancel` cancels a running build. See the [admin API](../reference/admin-api.md#synthetic-builds).
+- `POST /admin/synthetic/<name>/cancel` asks a running build to stop. See the [admin API](../reference/admin-api.md#synthetic-builds).
 
 `sluice synth build` runs in its own process and has none of these limits.
 
@@ -493,6 +493,7 @@ The JSON has these fields for relations, correlated columns and noise. Each one 
 - `rejectExactMatches` stops exact copies, not near copies. `sourceVocabulary` keeps a name that many rows hold. `by` uses at most 100 groups.
 - `sluice synth build` writes no record to the audit log. It prints the record on stderr and stores it in the report.
 - A running server picks up a snapshot from `sluice synth build` only after a restart. Each build keeps only the current and the previous snapshot, so two CLI builds delete the file a running server serves. Use the admin API to build in the server.
+- `synthetic.buildTimeout` and the cancel route stop a build only when the running DuckDB query reacts to the interrupt. A query that waits on a remote source can run on until it returns.
 - Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec. The seed value is not part of the `stale` check, so build again after you change it.
 
 ## See also
