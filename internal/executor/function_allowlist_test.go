@@ -67,6 +67,47 @@ WHERE database_name = 'system' AND schema_name = 'main'`)
 	}
 }
 
+// TestAggregateFunctionsMatchDuckDB checks the aggregate list behind
+// QueryShape.IsAggregate against the embedded DuckDB, in both directions.
+func TestAggregateFunctionsMatchDuckDB(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	rows, err := e.DB().QueryContext(context.Background(), `
+SELECT DISTINCT function_name, function_type
+FROM duckdb_functions()
+WHERE function_type = 'aggregate' OR function_name IN (`+
+		"'"+strings.Join(parser.AggregateMacros(), "', '")+"'"+`)`)
+	if err != nil {
+		t.Fatalf("duckdb_functions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var duck []string
+	macros := map[string]bool{}
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if typ == "aggregate" {
+			duck = append(duck, name)
+		} else if typ == "macro" {
+			macros[name] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	slices.Sort(duck)
+	duck = slices.Compact(duck)
+	if got := parser.AggregateFunctions(); !slices.Equal(got, duck) {
+		t.Errorf("aggregate list differs from DuckDB.\nlist:   %v\nduckdb: %v", got, duck)
+	}
+	for _, name := range parser.AggregateMacros() {
+		if !macros[name] {
+			t.Errorf("aggregate macro %q is not a macro in DuckDB", name)
+		}
+	}
+}
+
 // TestWrapperAliasKeywords checks the unsafe alias list against DuckDB.
 // For every word of duckdb_keywords() it deparses a subquery aliased with
 // that word and joined to a table, the shape a row-filter wrapper takes,

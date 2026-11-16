@@ -3,7 +3,6 @@
 package pgquery
 
 import (
-	"slices"
 	"strconv"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -128,78 +127,61 @@ func hasSelectStar(targets []*pg.Node) bool {
 	return false
 }
 
-// hasAggFunc reports whether any expression in targets uses a FuncCall
-// with AggFilter or AggStar set (best-effort detection).
+// hasAggFunc reports whether an expression in targets calls an aggregate,
+// at any depth: in a function argument, a cast or CASE. A window call such
+// as count(*) OVER () does not count, and neither does a subquery.
 func hasAggFunc(targets []*pg.Node) bool {
+	found := false
 	for _, t := range targets {
-		res, ok := t.Node.(*pg.Node_ResTarget)
-		if !ok || res.ResTarget == nil {
-			continue
-		}
-		if containsAgg(res.ResTarget.Val) {
-			return true
-		}
-	}
-	return false
-}
-
-// containsAgg recurses into an expression looking for aggregate-like
-// FuncCall nodes. This is heuristic: COUNT(*), SUM(x), AVG(x) all match.
-func containsAgg(n *pg.Node) bool {
-	if n == nil {
-		return false
-	}
-	switch v := n.Node.(type) {
-	case *pg.Node_FuncCall:
-		if v.FuncCall == nil {
-			return false
-		}
-		if v.FuncCall.AggStar || v.FuncCall.AggDistinct {
-			return true
-		}
-		if name := funcCallName(v.FuncCall); isAggregateFunc(name) {
-			return true
-		}
-	case *pg.Node_AExpr:
-		if v.AExpr != nil {
-			return containsAgg(v.AExpr.Lexpr) || containsAgg(v.AExpr.Rexpr)
-		}
-	case *pg.Node_BoolExpr:
-		if v.BoolExpr != nil {
-			if slices.ContainsFunc(v.BoolExpr.Args, containsAgg) {
-				return true
+		walkExpr(t, func(m protoreflect.Message) {
+			if fc, ok := m.Interface().(*pg.FuncCall); ok && fc.Over == nil && isAggregateCall(fc) {
+				found = true
 			}
-		}
+		})
 	}
-	return false
+	return found
 }
 
-// funcCallName returns the lowercased last-segment name of a FuncCall's
-// Funcname list.
-func funcCallName(fc *pg.FuncCall) string {
-	if fc == nil || len(fc.Funcname) == 0 {
-		return ""
-	}
-	last := fc.Funcname[len(fc.Funcname)-1]
-	if last == nil {
-		return ""
-	}
-	if s, ok := last.Node.(*pg.Node_String_); ok && s.String_ != nil {
-		return s.String_.Sval
-	}
-	return ""
-}
-
-// isAggregateFunc reports whether name is a well-known aggregate. DuckDB
-// supports additional aggregates (list, arg_max, …); v1 extends this set.
-func isAggregateFunc(name string) bool {
-	switch name {
-	case "count", "sum", "avg", "min", "max",
-		"bit_and", "bit_or", "bit_xor",
-		"string_agg", "array_agg", "json_agg", "jsonb_agg":
+// isAggregateCall reports whether fc is an aggregate call: a DuckDB
+// aggregate by name, or a call with *, DISTINCT, FILTER or WITHIN GROUP.
+func isAggregateCall(fc *pg.FuncCall) bool {
+	if fc.AggStar || fc.AggDistinct || fc.AggFilter != nil || fc.AggWithinGroup {
 		return true
 	}
+	if n := len(fc.Funcname); n > 0 {
+		return parser.IsAggregateFunction(fc.Funcname[n-1].GetString_().GetSval())
+	}
 	return false
+}
+
+// walkExpr visits n and every message below it. It does not enter the
+// body of a subquery: that is another SELECT with its own shape.
+func walkExpr(n *pg.Node, visit func(protoreflect.Message)) {
+	if n != nil {
+		walkExprMessage(n.ProtoReflect(), visit)
+	}
+}
+
+func walkExprMessage(m protoreflect.Message, visit func(protoreflect.Message)) {
+	visit(m)
+	if sl, ok := m.Interface().(*pg.SubLink); ok {
+		walkExpr(sl.Testexpr, visit)
+		return
+	}
+	m.Range(func(fd protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind || fd.IsMap() {
+			return true
+		}
+		if fd.IsList() {
+			list := val.List()
+			for i := 0; i < list.Len(); i++ {
+				walkExprMessage(list.Get(i).Message(), visit)
+			}
+			return true
+		}
+		walkExprMessage(val.Message(), visit)
+		return true
+	})
 }
 
 // columnRefNames lifts ColumnRef names from a node list. Returns nil if
@@ -265,43 +247,18 @@ func joinDotted(parts []string) string {
 	return string(out)
 }
 
-// whereColumnNames walks the top-level WHERE tree and returns every
-// column reference it finds. Best-effort — QueryRejectPolicy uses this
-// for simple "no-where-clause" / "where-on-pii" checks.
+// whereColumnNames returns every column reference of the WHERE tree, at
+// any depth, but not those in the body of a subquery. QueryRejectPolicy
+// reads it as query.where_columns.
 func whereColumnNames(where *pg.Node) []string {
-	if where == nil {
-		return nil
-	}
 	var out []string
-	var walk func(n *pg.Node)
-	walk = func(n *pg.Node) {
-		if n == nil {
-			return
-		}
-		switch v := n.Node.(type) {
-		case *pg.Node_ColumnRef:
-			if name := columnRefName(n); name != "" {
+	walkExpr(where, func(m protoreflect.Message) {
+		if cr, ok := m.Interface().(*pg.ColumnRef); ok {
+			if name := columnRefNameOf(cr); name != "" {
 				out = append(out, name)
 			}
-			_ = v
-		case *pg.Node_AExpr:
-			if v.AExpr != nil {
-				walk(v.AExpr.Lexpr)
-				walk(v.AExpr.Rexpr)
-			}
-		case *pg.Node_BoolExpr:
-			if v.BoolExpr != nil {
-				for _, a := range v.BoolExpr.Args {
-					walk(a)
-				}
-			}
-		case *pg.Node_NullTest:
-			if v.NullTest != nil {
-				walk(v.NullTest.Arg)
-			}
 		}
-	}
-	walk(where)
+	})
 	return out
 }
 

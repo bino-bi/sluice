@@ -57,7 +57,7 @@ Goal: an agent gets at most three rows and five seconds.
 | `message` | string | | Text for the client. |
 | `code` | string | `ACL_REJECTED` | Error code for the client. The HTTP status stays 403. |
 
-An expression reads `subject.*`, as in [conditions](conditions.md), and these values. Some are partial checks:
+An expression reads `subject.*`, as in [conditions](conditions.md), and these values. They describe the outer query: a subquery counts only for `has_cte`, `is_recursive_cte`, `joins`, `catalogs` and `tables`. Some are partial checks:
 
 | Value | Type | Notes |
 |---|---|---|
@@ -66,10 +66,10 @@ An expression reads `subject.*`, as in [conditions](conditions.md), and these va
 | `query.has_order_by`, `query.has_limit` | boolean | The `ORDER BY` and `LIMIT` of the whole statement. One in a subquery or in one SELECT of a `UNION` does not count. |
 | `query.has_cte`, `query.is_recursive_cte` | boolean | A `WITH` anywhere in the statement. |
 | `query.has_union` | boolean | Also true for `INTERSECT` and `EXCEPT`. |
-| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and these functions: `count`, `sum`, `avg`, `min`, `max`, `bit_and`, `bit_or`, `bit_xor`, `string_agg`, `array_agg`, `json_agg`, `jsonb_agg`. False for other functions, such as `median(x)`, and inside a call, a cast or `CASE`: `round(avg(x))`, `sum(x)::INT`. Any function with `DISTINCT` counts as an aggregate. In a `UNION`, every SELECT must aggregate. |
+| `query.is_aggregate` | boolean | True for `GROUP BY`, `HAVING` and a DuckDB aggregate function in a select item. The call can be inside a call, a cast or `CASE`: `median(x)`, `round(avg(x))`, `sum(x)::INT`. The name is matched in any letter case. A call with `*`, `DISTINCT`, `FILTER` or `WITHIN GROUP` counts too. A window call such as `count(*) OVER ()` does not count, and neither does an aggregate in a subquery. In a `UNION`, every SELECT must aggregate. |
 | `query.limit` | int | 0 when the `LIMIT` is not a plain number, such as `500 + 1` or `'500'`. |
 | `query.joins` | int | Counts each `JOIN` keyword and each comma between `FROM` items, also in subqueries. |
-| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. `where_columns` lists a column that is an operand of an operator, `AND`, `OR`, `NOT` or `IS NULL` of the outer `WHERE`. Operators are comparisons, arithmetic, text joining and `NULLIF`. A column in any other form is missing: a function call, a cast, `CASE`, `IS TRUE`, a value list, a row or a subquery. A bound of `BETWEEN` and a column before `IN (SELECT ...)` are missing too. `group_by_columns` lists only plain column names, not `ROLLUP (x)` or a position such as `1`. In a `UNION`, both lists hold the columns of all its SELECTs. |
+| `query.where_columns`, `query.group_by_columns` | list of text | Names as written: `o.status` is not `status`. `where_columns` lists every column of the outer `WHERE` at any depth. That includes a function call, a cast, `CASE`, a value list and the column before `IN (SELECT ...)`. It does not list a column of a subquery. It does not tell how a column is used: `lower(ssn) = 'x'` and `ssn IS NULL` both list `ssn`. `group_by_columns` lists only plain column names, not `ROLLUP (x)` or a position such as `1`. In a `UNION`, both lists hold the columns of all its SELECTs. |
 | `query.catalogs` | list of text | |
 | `query.tables` | list of text | Lower case, `catalog.schema.table`. |
 

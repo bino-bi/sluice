@@ -13,9 +13,8 @@ import (
 )
 
 // collectAccess walks every node of the statement for the ApprovalPolicy
-// triggers. Unlike whereColumnNames (used by QueryRejectPolicy), no
-// expression form is skipped: a column in a subquery, a CTE, a
-// set-operation arm or any function counts. Names are folded to lower
+// triggers. Unlike whereColumnNames (used by QueryRejectPolicy), nothing
+// is skipped: a column in a subquery or a CTE counts. Names are folded to lower
 // case, since DuckDB resolves them without regard to case, also when
 // quoted.
 func collectAccess(raw *pg.RawStmt, shape *parser.QueryShape) {
