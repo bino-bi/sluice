@@ -242,3 +242,41 @@ func keys(m map[string]*CompiledMask) []string {
 	}
 	return out
 }
+
+// A mask takes its columns only from the clauses that match the table and
+// the subject, not from every clause of the policy.
+func TestColumnMask_ColumnsFromMatchingClauseOnly(t *testing.T) {
+	customers := parser.TableRef{Catalog: "pg", Schema: "public", Table: "customers"}
+	orders := parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"}
+	mask := func(clauses ...apitypes.Clause) *apitypes.ColumnMaskPolicy {
+		return &apitypes.ColumnMaskPolicy{
+			TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindColumnMaskPolicy},
+			Metadata: apitypes.ObjectMeta{Name: "mask"},
+			Spec: apitypes.ColumnMaskSpec{
+				Match: apitypes.Selector{Any: clauses},
+				Mask:  apitypes.MaskSpec{Type: apitypes.MaskNull},
+			},
+		}
+	}
+	twoTables := mask(
+		apitypes.Clause{Resources: &apitypes.ResourceSelector{Tables: []string{"customers"}, Columns: []string{"email"}}},
+		apitypes.Clause{Resources: &apitypes.ResourceSelector{Tables: []string{"orders"}, Columns: []string{"note"}}},
+	)
+	dec := evalTables(t, &identity.UserCtx{Subject: "u"}, []apitypes.Object{allowAll(0), twoTables}, customers, orders)
+	got := map[string]bool{}
+	for _, k := range keys(dec.ColumnMasks) {
+		got[k] = true
+	}
+	if len(got) != 2 || !got["pg.public.customers.email"] || !got["pg.public.orders.note"] {
+		t.Errorf("two tables: masks = %v, want customers.email and orders.note", keys(dec.ColumnMasks))
+	}
+
+	twoSubjects := mask(
+		apitypes.Clause{Subjects: &apitypes.SubjectSelector{Groups: []string{"analysts"}}, Resources: &apitypes.ResourceSelector{Tables: []string{"customers"}, Columns: []string{"email"}}},
+		apitypes.Clause{Subjects: &apitypes.SubjectSelector{Groups: []string{"support"}}, Resources: &apitypes.ResourceSelector{Tables: []string{"customers"}, Columns: []string{"phone"}}},
+	)
+	dec = evalTables(t, &identity.UserCtx{Subject: "a", Groups: []string{"analysts"}}, []apitypes.Object{allowAll(0), twoSubjects}, customers)
+	if ks := keys(dec.ColumnMasks); len(ks) != 1 || ks[0] != "pg.public.customers.email" {
+		t.Errorf("two subjects: masks = %v, want only customers.email", ks)
+	}
+}

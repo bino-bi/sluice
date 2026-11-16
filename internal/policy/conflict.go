@@ -352,7 +352,7 @@ func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, use
 			// audit. Use the selector's column patterns verbatim (plus any
 			// tag-derived columns for this table) so the rewriter can
 			// resolve them against the actual columns.
-			cols = rawColumns(c.policy, c.table)
+			cols = rawColumns(c.policy, MatchContext{User: user, Tables: []parser.TableRef{c.table}, Action: action})
 		}
 		for _, col := range cols {
 			key := c.tableKey + "." + col
@@ -402,12 +402,15 @@ func collectRewrites(matched []*CompiledPolicy, dec *Decision) {
 // rewriter layer); return nil so the rawColumns fallback takes over.
 func knownColumns(_ parser.TableRef) []string { return nil }
 
-// rawColumns returns the column patterns the policy masks on table t: the
-// explicit resources.columns patterns plus, for tag-referencing selectors,
-// the column patterns of classification rules whose table part matches t.
-// Wildcard patterns are returned verbatim so the rewriter can expand them
-// against the schema cache.
-func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
+// rawColumns returns the column patterns the policy masks on the one table
+// of ctx: the explicit resources.columns patterns plus, for tag-referencing
+// selectors, the column patterns of classification rules whose table part
+// matches it. Only clauses that match ctx (table and subject) count; the
+// `all` clauses count only when all of them match. Wildcard patterns are
+// returned verbatim so the rewriter can expand them against the schema
+// cache.
+func rawColumns(p *CompiledPolicy, ctx MatchContext) []string {
+	t := ctx.Tables[0]
 	seen := map[string]struct{}{}
 	var out []string
 	add := func(pat string) {
@@ -430,8 +433,20 @@ func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
 			}
 		}
 	}
-	collect(p.Match.Any)
-	collect(p.Match.All)
+	var anyHit []CompiledClause
+	for _, c := range p.Match.Any {
+		if c.Match(ctx) {
+			anyHit = append(anyHit, c)
+		}
+	}
+	collect(anyHit)
+	allHit := len(p.Match.All) > 0
+	for _, c := range p.Match.All {
+		allHit = allHit && c.Match(ctx)
+	}
+	if allHit {
+		collect(p.Match.All)
+	}
 	return out
 }
 

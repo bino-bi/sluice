@@ -30,6 +30,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 ### Fixed
 
 - **A shadow policy whose condition fails no longer denies live traffic.** A CEL condition or reject rule that fails at run time, for example on a missing claim, denied the whole query also in `Audit` and `DryRun` mode. Now Sluice skips such a policy and lists it under `shadow` with `would: deny`. An `Enforce` policy still denies with `ACL_DENIED`.
+- **A column mask with several clauses masks only the columns of the clause that matched.** A `ColumnMaskPolicy` with `any: [{tables: [customers], columns: [email]}, {tables: [orders], columns: [note]}]` also masked `customers.note` and `orders.email`, and a subject matched by one clause also got the columns of the other clauses. Such a wrong entry could also hide a lower-priority mask that was meant for that column.
 
 ### Security
 
