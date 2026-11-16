@@ -44,7 +44,7 @@ Goal: an agent gets at most three rows and five seconds.
 --8<-- "examples/guardrails/tests/guardrails.yaml:limit"
 ```
 
-**What happened:** Sluice added `LIMIT 3` to the SQL. The result reached the limit, so the response says `truncated: true`.
+**What happened:** Sluice added `LIMIT 4` to the SQL: the limit plus one, to see if more rows exist. It returned 3 rows. A fourth row existed, so the response says `truncated: true`.
 
 ## Fields
 
@@ -77,7 +77,7 @@ An expression reads `subject.*`, as in [conditions](conditions.md), and these va
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `limit.max` | int | | Row limit, 1 to 2147483647. Sluice adds a `LIMIT` or lowers a larger one. A whole number from 0 to `max` stays. Any other `LIMIT`, such as `LIMIT -1` or `LIMIT 1 + 1`, becomes `max`. |
+| `limit.max` | int | | Row limit, 1 to 2147483647. Sluice adds a `LIMIT` of `max` plus one or lowers a larger one to it. A whole number from 0 to `max` stays. Any other `LIMIT`, such as `LIMIT -1` or `LIMIT 1 + 1`, becomes `max` plus one. The extra row only shows that the result was cut: Sluice returns at most `max` rows. |
 | `sample.rate` | number | | Share of rows to return, above 0 and at most 1. |
 | `sample.method` | string | `reservoir` | `reservoir`, `bernoulli` or `system`. |
 | `timeout` | duration | | Longest run time, `"10s"` or seconds as a number. Then the client gets `ERR_TIMEOUT`. |

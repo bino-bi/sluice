@@ -3,6 +3,7 @@
 package rewriter
 
 import (
+	"math"
 	"strconv"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -43,8 +44,14 @@ func (s *state) applyRewrite(res *pg.ParseResult) error {
 	if limitMax > 0 {
 		limitStr := strconv.FormatInt(limitMax, 10)
 		hadLimit := sel.LimitCount != nil
+		changed := capLimit(sel, limitMax, false)
+		if changed && limitMax < math.MaxInt32 {
+			// One row over the limit lets the row iterator see that the
+			// result was cut. It still stops at limitMax.
+			sel.LimitCount = intConst(limitMax + 1)
+		}
 		switch {
-		case !capLimit(sel, limitMax, false):
+		case !changed:
 		case hadLimit:
 			s.rewrites = append(s.rewrites, "limit-clamped:"+limitStr)
 		default:

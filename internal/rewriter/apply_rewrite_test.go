@@ -62,8 +62,8 @@ func TestRewriter_RewriteLimitClampsNegative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	if !strings.HasSuffix(res.SQL, "LIMIT 1000") || !slices.Contains(res.Rewrites, "limit-clamped:1000") {
-		t.Errorf("SQL = %q, rewrites = %v, want LIMIT 1000 clamped", res.SQL, res.Rewrites)
+	if !strings.HasSuffix(res.SQL, "LIMIT 1001") || !slices.Contains(res.Rewrites, "limit-clamped:1000") {
+		t.Errorf("SQL = %q, rewrites = %v, want LIMIT 1001 (the limit plus one) clamped", res.SQL, res.Rewrites)
 	}
 }
 

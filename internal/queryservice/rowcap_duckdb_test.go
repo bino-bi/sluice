@@ -86,3 +86,48 @@ func TestExecute_RowCapReachesDuckDB(t *testing.T) {
 		})
 	}
 }
+
+const limitMaxPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: QueryRewritePolicy
+metadata:
+  name: limit-logs
+  priority: 100
+spec:
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+  rewrite:
+    limit:
+      max: 3
+`
+
+// A result cut by a rewrite policy limit is marked truncated. The policy
+// LIMIT is limit.max+1, so the iterator sees the row past the limit.
+func TestExecute_PolicyLimitMarksTruncated(t *testing.T) {
+	svc, ex, _ := newSeededHelloSluiceServiceOpts(t, nil, rowCapSeed, nil, rowCapPolicy, limitMaxPolicy)
+	cases := []struct {
+		sql       string
+		rows      int
+		truncated bool
+	}{
+		{"SELECT id FROM shop.main.logs ORDER BY id", 3, true},
+		{"SELECT id FROM shop.main.logs ORDER BY id LIMIT 100", 3, true},
+		{"SELECT id FROM shop.main.logs ORDER BY id LIMIT 3", 3, false},
+		{"SELECT id FROM shop.main.logs ORDER BY id LIMIT 2", 2, false},
+	}
+	for _, tc := range cases {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: tc.sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err != nil {
+			t.Fatalf("%s: execute: %v", tc.sql, err)
+		}
+		rows := drainRows(t, res)
+		if len(rows) != tc.rows || res.Truncated != tc.truncated {
+			t.Errorf("%s: got %d rows, truncated %v; want %d, %v (DuckDB ran %q)",
+				tc.sql, len(rows), res.Truncated, tc.rows, tc.truncated, ex.last.SQL)
+		}
+	}
+}
