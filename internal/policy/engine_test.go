@@ -346,3 +346,78 @@ func TestEngine_ApplyNilSnapshot(t *testing.T) {
 		t.Error("no snapshot after ApplySnapshot(nil)")
 	}
 }
+
+// Row filters on one table combine like PostgreSQL RLS: the permissive
+// filters OR together, and every restrictive filter ANDs on top. Priority
+// does not change the result, so a permissive filter never widens a
+// restrictive one.
+func TestEngine_RowFilterRLSCombine(t *testing.T) {
+	filter := func(name string, prio int32, combine apitypes.Combine, col string) *apitypes.RowFilterPolicy {
+		return &apitypes.RowFilterPolicy{
+			TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindRowFilterPolicy},
+			Metadata: apitypes.ObjectMeta{Name: name, Priority: prio},
+			Spec: apitypes.RowFilterSpec{
+				Match:   apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"orders"}}}}},
+				Filter:  apitypes.FilterSpec{Predicate: &apitypes.Predicate{Column: col, Op: apitypes.PredOpEquals, Value: "x"}},
+				Combine: combine,
+			},
+		}
+	}
+	// render prints the tree with leaves as column names.
+	var render func(p *CompiledPredicate) string
+	render = func(p *CompiledPredicate) string {
+		join := func(ps []*CompiledPredicate, op string) string {
+			out := "("
+			for i, c := range ps {
+				if i > 0 {
+					out += " " + op + " "
+				}
+				out += render(c)
+			}
+			return out + ")"
+		}
+		switch {
+		case p == nil:
+			return "<nil>"
+		case len(p.All) > 0:
+			return join(p.All, "AND")
+		case len(p.Any) > 0:
+			return join(p.Any, "OR")
+		}
+		return p.Column
+	}
+	const r, pm = apitypes.CombineRestrictive, apitypes.CombinePermissive
+	cases := []struct {
+		name string
+		pols []*apitypes.RowFilterPolicy
+		want string
+	}{
+		{"restrictive only", []*apitypes.RowFilterPolicy{filter("t", 900, r, "tenant"), filter("u", 100, r, "region")}, "(tenant AND region)"},
+		{"permissive only", []*apitypes.RowFilterPolicy{filter("a", 900, pm, "own"), filter("b", 100, pm, "open")}, "(own OR open)"},
+		{"low permissive after high restrictive", []*apitypes.RowFilterPolicy{filter("t", 900, r, "tenant"), filter("p", 100, pm, "open")}, "(open AND tenant)"},
+		{"high permissive before low restrictive", []*apitypes.RowFilterPolicy{filter("p", 900, pm, "open"), filter("t", 100, r, "tenant")}, "(open AND tenant)"},
+		{"mixed", []*apitypes.RowFilterPolicy{
+			filter("t", 900, r, "tenant"), filter("a", 500, pm, "own"), filter("u", 300, r, "region"), filter("b", 100, pm, "open"),
+		}, "((own OR open) AND tenant AND region)"},
+		{"single permissive", []*apitypes.RowFilterPolicy{filter("a", 1, pm, "own")}, "own"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := []apitypes.Object{allowAll(0)}
+			for _, p := range tc.pols {
+				objs = append(objs, p)
+			}
+			dec := evalTables(t, &identity.UserCtx{Subject: "u"}, objs, parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"})
+			f := dec.RowFilters["pg.public.orders"]
+			if f == nil {
+				t.Fatalf("no filter: %v", dec.RowFilters)
+			}
+			if got := render(f.Predicate); got != tc.want {
+				t.Errorf("predicate = %s, want %s", got, tc.want)
+			}
+			if len(f.Policies) != len(tc.pols) {
+				t.Errorf("policies = %v", f.Policies)
+			}
+		})
+	}
+}

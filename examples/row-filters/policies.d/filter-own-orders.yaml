@@ -13,6 +13,8 @@ spec:
           catalogs: ["shop"]
           schemas: ["main"]
           tables: ["orders"]
+  # OR with the other permissive filters on the table.
+  combine: permissive
   filter:
     predicate:
       column: owner

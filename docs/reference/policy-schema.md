@@ -138,7 +138,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 |---|---|---|---|
 | `filter.predicate` | [Predicate](#predicate) | one of two | Filter as a tree. |
 | `filter.expression` | string | one of two | Filter in CEL. |
-| `combine` | string |  | `restrictive`, `permissive`. Default `restrictive`: all filters must hold. |
+| `combine` | string |  | `restrictive`, `permissive`. Default `restrictive`: the filter must always hold. At least one `permissive` filter must hold. |
 
 ## ColumnMaskPolicy
 

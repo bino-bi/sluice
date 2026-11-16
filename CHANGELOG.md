@@ -34,6 +34,7 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 ### Security
 
 - **Joining an excluded table no longer switches off a gate policy.** On `ApprovalPolicy`, `QueryRejectPolicy` and `QueryRewritePolicy` one table of the query that `exclude` named switched the policy off for the whole query. A client could skip an approval or a reject by adding `JOIN <excluded table> ON true`. Now such an `exclude` switches the policy off only when it covers every table of the query, as on `SqlAccessPolicy`. A subject `exclude` still switches it off. An `exclude` with `all` still works per query. **Behavior change:** a query that joins an excluded table with a matched one now gets the gate.
+- **A permissive row filter can no longer widen a restrictive one.** Filters on one table were folded in order of priority, and each filter joined the earlier ones with its own `combine`. So a `permissive` filter with a low priority turned a high-priority tenant filter `T` into `T OR P`, and one wrong field in an unrelated policy broke tenant isolation. Now filters join as in PostgreSQL row level security: `(permissive 1 OR permissive 2 ...) AND restrictive 1 AND restrictive 2 ...`. **Breaking:** the fold by priority is gone. A setup that used a `permissive` filter to widen a `restrictive` one now gets fewer rows: mark both filters `permissive` to OR them.
 
 ## [0.1.0-rc.3] - 2026-10-13
 

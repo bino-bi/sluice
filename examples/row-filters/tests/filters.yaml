@@ -57,7 +57,7 @@ cases:
         SELECT id FROM (SELECT * FROM shop.main.orders sluice_src
         WHERE sluice_src.owner = $1 AND (sluice_src.region = $2 AND sluice_src.status <> $3)) orders
 
-  - name: filters are joined in order of priority
+  - name: a restrictive filter is joined with AND to the permissive filters
     identity: { subject: rita, groups: [sales, leads, regional], claims: { region: eu } }
     sql: "SELECT id FROM shop.main.orders"
     expect:
