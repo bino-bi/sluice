@@ -135,6 +135,9 @@ The third run:
 ## Limits
 
 - A rate limit or budget needs `claims.subjectId` or `issuer` on the binding. With `issuer`, each subject has its own limit and counter.
+- Each subject id has its own counter per issuer. Two issuers that issue the same id do not share a rate limit or budget.
+- A limit for `claims.subjectId` applies to that id under the issuer of the binding: `issuer`, or the binding name for API keys. A binding with neither `issuer` nor `apiKeys` sets the limit of that id under every issuer.
+- Sluice keeps the rate limit state of up to 10000 subjects. A subject whose state was dropped starts again with a full burst.
 - Without `rateLimit`, `limits.defaultSubjectRps` and `limits.defaultSubjectBurst` apply.
 - A reload resets all rate limits.
 - Sluice counts usage after a query. One large query can pass the budget.

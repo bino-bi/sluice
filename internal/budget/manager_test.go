@@ -32,7 +32,7 @@ func TestBudget_RowsLimitEnforced(t *testing.T) {
 	m := newManager(t, filepath.Join(t.TempDir(), "b.db"))
 	defer func() { _ = m.Close(context.Background()) }()
 
-	m.SetSpecs(map[string]budget.Spec{"alice": {RowsPerDay: 10}}, nil)
+	m.SetSpecs(map[budget.SubjectKey]budget.Spec{{Subject: "alice"}: {RowsPerDay: 10}}, nil)
 
 	// Under budget → allowed.
 	if err := m.Check(context.Background(), "alice", ""); err != nil {
@@ -49,7 +49,7 @@ func TestBudget_RowsLimitEnforced(t *testing.T) {
 func TestBudget_CPULimitEnforced(t *testing.T) {
 	m := newManager(t, filepath.Join(t.TempDir(), "b.db"))
 	defer func() { _ = m.Close(context.Background()) }()
-	m.SetSpecs(map[string]budget.Spec{"bob": {CPUSecondsPerDay: 2}}, nil)
+	m.SetSpecs(map[budget.SubjectKey]budget.Spec{{Subject: "bob"}: {CPUSecondsPerDay: 2}}, nil)
 
 	m.Record("bob", "", 2500*time.Millisecond, 1) // 2.5s > 2s cap
 	if err := m.Check(context.Background(), "bob", ""); err == nil {
@@ -79,7 +79,7 @@ func TestBudget_IssuerFallback(t *testing.T) {
 func TestBudget_SurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "b.db")
 	m1 := newManager(t, path)
-	m1.SetSpecs(map[string]budget.Spec{"carol": {RowsPerDay: 100}}, nil)
+	m1.SetSpecs(map[budget.SubjectKey]budget.Spec{{Subject: "carol"}: {RowsPerDay: 100}}, nil)
 	m1.Record("carol", "", time.Second, 60)
 	// Force a flush by closing.
 	if err := m1.Close(context.Background()); err != nil {
@@ -89,7 +89,7 @@ func TestBudget_SurvivesRestart(t *testing.T) {
 	// Reopen — the 60 rows must be seeded back.
 	m2 := newManager(t, path)
 	defer func() { _ = m2.Close(context.Background()) }()
-	m2.SetSpecs(map[string]budget.Spec{"carol": {RowsPerDay: 100}}, nil)
+	m2.SetSpecs(map[budget.SubjectKey]budget.Spec{{Subject: "carol"}: {RowsPerDay: 100}}, nil)
 	// 60 more hits the 100 cap? 60+60=120 > 100.
 	m2.Record("carol", "", 0, 60)
 	if err := m2.Check(context.Background(), "carol", ""); err == nil {

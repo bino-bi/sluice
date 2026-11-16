@@ -50,8 +50,8 @@ func buildBudgetManager(scfg *config.ServerConfig, snap *config.Snapshot, log *s
 
 // buildBudgetSpecs derives per-subject and per-issuer budget specs from
 // SubjectBinding.spec.budget, mirroring buildRateSpecs.
-func buildBudgetSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]budget.Spec) {
-	bySubject = map[string]budget.Spec{}
+func buildBudgetSpecs(snap *config.Snapshot) (bySubject map[budget.SubjectKey]budget.Spec, byIssuer map[string]budget.Spec) {
+	bySubject = map[budget.SubjectKey]budget.Spec{}
 	byIssuer = map[string]budget.Spec{}
 	if snap == nil {
 		return bySubject, byIssuer
@@ -68,7 +68,7 @@ func buildBudgetSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]bud
 			continue
 		}
 		if sb.Spec.Claims.SubjectID != "" {
-			bySubject[sb.Spec.Claims.SubjectID] = spec
+			bySubject[budget.SubjectKey{Subject: sb.Spec.Claims.SubjectID, Issuer: bindingIssuer(sb)}] = spec
 		}
 		if sb.Spec.Issuer != "" {
 			byIssuer[sb.Spec.Issuer] = spec
