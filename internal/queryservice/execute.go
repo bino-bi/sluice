@@ -113,8 +113,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		req.MaxRows = s.opts.Limits.MaxRowsCeiling
 	}
 
-	// 1. Parse (best-effort; the regex fallback carries us when the
-	// parser fails but tables are still extractable).
+	// 1. Parse. On a parse error the best-effort regex fallback gives policy
+	// some table names, so a deny can win over the syntax error.
 	parseCtx, parseSpan := s.tracer.Start(ctx, "query.parse")
 	ast, parseErr := s.opts.Parser.Parse(parseCtx, req.SQL)
 	var shape parser.QueryShape

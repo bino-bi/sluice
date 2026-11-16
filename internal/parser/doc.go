@@ -10,6 +10,6 @@
 // policy engine never learn which is active.
 //
 // A regex-based fallback extracts table references from queries the backend
-// cannot parse (concept §4.8). Callers use it to decide whether to reject or
-// pass through an unparseable query.
+// cannot parse. It is best effort and only orders error codes: such a query
+// never runs.
 package parser

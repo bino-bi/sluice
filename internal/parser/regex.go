@@ -8,9 +8,8 @@ import (
 )
 
 // tableRefRegex matches a FROM / JOIN / UPDATE / INTO clause followed by a
-// dotted identifier. It is intentionally permissive: false positives are
-// cheap (the caller treats the result as a lower bound on referenced
-// tables) but false negatives let protected data escape.
+// dotted identifier. Only the first name after the keyword is matched:
+// FROM a, b gives a, and TABLE b gives nothing.
 //
 // The expression matches up to three dotted segments with optional
 // double-quoted identifiers. Trailing aliases are not consumed; the caller
@@ -23,12 +22,10 @@ var tableRefRegex = regexp.MustCompile(
 )
 
 // ExtractTablesRegex returns table references using a tolerant regex over
-// FROM/JOIN/UPDATE/INTO clauses. Used when Parse fails to decide whether
-// rejecting or passing through is safe (concept §4.8).
-//
-// Results are always over-approximations: the caller treats them as "at
-// least these tables are referenced". If any intersects a policy-protected
-// table, the query is rejected; otherwise it is passed through.
+// FROM/JOIN/UPDATE/INTO clauses. It is best effort: it misses tables and
+// does not fold names. queryservice uses it when Parse fails, for policy
+// and the audit record. The request still ends with the parse error, so
+// the result only decides whether the client gets a deny or that error.
 //
 // The scanner strips single-line (--…) and block (/*…*/) comments, and
 // skips single-quoted string literals, to avoid false positives from
