@@ -77,7 +77,7 @@ An expression reads `subject.*`, as in [conditions](conditions.md), and these va
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `limit.max` | int | | Row limit, 1 to 2147483647. Sluice adds a `LIMIT` or lowers a larger one. A smaller whole number stays. Any other `LIMIT`, such as `LIMIT 1 + 1`, becomes `max`. |
+| `limit.max` | int | | Row limit, 1 to 2147483647. Sluice adds a `LIMIT` or lowers a larger one. A whole number from 0 to `max` stays. Any other `LIMIT`, such as `LIMIT -1` or `LIMIT 1 + 1`, becomes `max`. |
 | `sample.rate` | number | | Share of rows to return, above 0 and at most 1. |
 | `sample.method` | string | `reservoir` | `reservoir`, `bernoulli` or `system`. |
 | `timeout` | duration | | Longest run time, `"10s"` or seconds as a number. Then the client gets `ERR_TIMEOUT`. |

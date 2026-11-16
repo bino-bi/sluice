@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
+	pgparser "github.com/pganalyze/pg_query_go/v6/parser"
 
 	"github.com/bino-bi/sluice/internal/parser"
 )
@@ -68,7 +69,7 @@ func (p *Parser) Parse(ctx context.Context, sql string) (parser.AST, error) {
 
 	tree, err := pg.Parse(sql)
 	if err != nil {
-		return nil, &parser.ParseError{Cause: err, Line: extractLine(sql, err)}
+		return nil, syntaxError(sql, err)
 	}
 	if tree == nil || len(tree.Stmts) == 0 {
 		return nil, &parser.ParseError{Cause: errors.New("empty parse tree")}
@@ -226,15 +227,28 @@ func ParserVersion() string {
 	return fmt.Sprintf("pg_query_go/v6 proto=%d", tree.Version)
 }
 
-// extractLine does a best-effort extraction of the line number from
-// pg_query's error message. pg_query_go returns "syntax error at … at …"
-// without a structured offset. When nothing can be parsed, 0 is returned.
-func extractLine(sql string, err error) int {
-	// pg_query messages include "at or near …" but not a line number.
-	// Count newlines up to the first offending token if we can find one.
-	// As a cheap heuristic we return 0 — the Cause carries full detail
-	// for logs.
-	_ = sql
-	_ = err
-	return 0
+// syntaxError builds the ParseError for a pg_query error. Line and Col
+// come from the error's cursor position, a 1-based count of characters.
+// Both stay 0 when pg_query reports no position.
+func syntaxError(sql string, err error) *parser.ParseError {
+	pe := &parser.ParseError{Cause: err}
+	var perr *pgparser.Error
+	if !errors.As(err, &perr) || perr.Cursorpos <= 0 {
+		return pe
+	}
+	pe.Line, pe.Col = 1, 1
+	n := 1
+	for _, r := range sql {
+		if n == perr.Cursorpos {
+			break
+		}
+		n++
+		if r == '\n' {
+			pe.Line++
+			pe.Col = 1
+		} else {
+			pe.Col++
+		}
+	}
+	return pe
 }

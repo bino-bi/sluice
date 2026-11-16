@@ -195,10 +195,6 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 	}
 
 	// Lift the pg_query AST so the mutators can operate on proto nodes.
-	raw, ok := req.AST.Raw().(*pg.ParseResult)
-	if !ok {
-		return nil, ErrForeignAST
-	}
 	clone, ok := req.AST.Clone().Raw().(*pg.ParseResult)
 	if !ok {
 		return nil, ErrForeignAST
@@ -266,7 +262,6 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		// original fingerprint as a fallback so audit remains populated.
 		fp = req.AST.Fingerprint()
 	}
-	_ = raw // kept so the compiler retains the type assertion in early slices
 
 	// Step 6: sampling wraps the deparsed text — pg_query cannot express
 	// DuckDB's USING SAMPLE, so the wrap happens after deparse and the

@@ -49,6 +49,24 @@ func TestRewriter_RewriteLimitKeepsSmallerExisting(t *testing.T) {
 	}
 }
 
+// A negative LIMIT is replaced with the cap, so the bound does not depend
+// on how DuckDB reads it.
+func TestRewriter_RewriteLimitClampsNegative(t *testing.T) {
+	rw := buildRewriter(t)
+	sql := "SELECT id FROM pg.public.orders LIMIT -1"
+	dec, ast := evaluate(t, sql, nil, allowAll(0), capRows(1000))
+
+	res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{
+		AST: ast, Decision: dec, Raw: sql,
+	})
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if !strings.HasSuffix(res.SQL, "LIMIT 1000") || !slices.Contains(res.Rewrites, "limit-clamped:1000") {
+		t.Errorf("SQL = %q, rewrites = %v, want LIMIT 1000 clamped", res.SQL, res.Rewrites)
+	}
+}
+
 func TestRewriter_RewriteLimitSkipsNonSelect(t *testing.T) {
 	rw := buildRewriter(t)
 	p := pgquery.New(parser.Options{})

@@ -41,10 +41,10 @@ func (s *state) applyRewrite(res *pg.ParseResult) error {
 		s.rewrites = append(s.rewrites, "limit-injected:"+limitStr)
 		return nil
 	}
-	// Keep an existing constant LIMIT that is already at or below the cap;
-	// anything else (larger constant, parameter, expression) is clamped.
+	// Keep an existing constant LIMIT from 0 up to the cap; anything else
+	// (negative or larger constant, parameter, expression) is clamped.
 	if c := sel.LimitCount.GetAConst(); c != nil {
-		if iv := c.GetIval(); iv != nil && int64(iv.Ival) <= eff.LimitMax {
+		if iv := c.GetIval(); iv != nil && iv.Ival >= 0 && int64(iv.Ival) <= eff.LimitMax {
 			return nil
 		}
 	}

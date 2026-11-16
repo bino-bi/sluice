@@ -162,6 +162,30 @@ func TestParseSyntaxError(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("err not *ParseError: %T", err)
 	}
+	if pe.Line != 1 || pe.Col != 1 {
+		t.Fatalf("position = %d:%d, want 1:1", pe.Line, pe.Col)
+	}
+}
+
+// The position counts characters, not bytes, from pg_query's cursor.
+func TestParseSyntaxErrorPosition(t *testing.T) {
+	cases := []struct {
+		sql       string
+		line, col int
+	}{
+		{"SELECT 1\nFROM t\nWHERE x = = 1", 3, 11},
+		{"SELECT 'ü'\n  FROM t WHER x", 2, 15},
+	}
+	for _, tc := range cases {
+		_, err := newTestParser(t).Parse(context.Background(), tc.sql)
+		var pe *parser.ParseError
+		if !errors.As(err, &pe) {
+			t.Fatalf("%q: err = %v, want *ParseError", tc.sql, err)
+		}
+		if pe.Line != tc.line || pe.Col != tc.col {
+			t.Errorf("%q: position = %d:%d, want %d:%d (%v)", tc.sql, pe.Line, pe.Col, tc.line, tc.col, err)
+		}
+	}
 }
 
 func TestParseInputTooLarge(t *testing.T) {
