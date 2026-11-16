@@ -191,7 +191,7 @@ func checkDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("audit: the audit directory %s is not a directory", dir)
 	}
-	return checkDirOwner(dir, info)
+	return checkDirMode(dir, info)
 }
 
 // lockDir takes the exclusive lock of dir without waiting.
@@ -445,61 +445,90 @@ func (s *FileSink) openForDay(day time.Time, seq int) (*os.File, int64, error) {
 
 // repairTornTail moves a last line without newline, left by a crash or a
 // failed write, to <path>.torn-<time> and cuts it from path. That line was
-// never a complete record, so the chain stays intact. A missing file is
-// fine.
+// never a complete record, so the chain stays intact. It reads only the
+// bytes after the last newline. A missing file is fine. When the side file
+// cannot be written, the log stays as it is.
 func (s *FileSink) repairTornTail(path string) error {
-	torn, err := endsTorn(path)
-	if err != nil || !torn {
-		return err
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("audit: read %s: %w", path, err)
-	}
-	keep := bytes.LastIndexByte(data, '\n') + 1
-	side := path + ".torn-" + s.clock().UTC().Format("20060102T150405.000000000Z")
-	if err := os.WriteFile(side, data[keep:], s.fileMode); err != nil {
-		return fmt.Errorf("audit: save the torn last line of %s: %w", path, err)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return fmt.Errorf("audit: open %s: %w", path, err)
 	}
-	if err := f.Truncate(int64(keep)); err != nil {
-		_ = f.Close()
+	defer func() { _ = f.Close() }()
+	keep, frag, err := tornTail(f)
+	if err != nil {
+		return fmt.Errorf("audit: read %s: %w", path, err)
+	}
+	if frag == nil {
+		return nil
+	}
+	side := path + ".torn-" + s.clock().UTC().Format("20060102T150405.000000000Z")
+	if err := writeSideFile(side, frag, s.fileMode); err != nil {
+		return fmt.Errorf("audit: save the torn last line of %s: %w", path, err)
+	}
+	if err := f.Truncate(keep); err != nil {
 		return fmt.Errorf("audit: cut the torn last line of %s: %w", path, err)
 	}
-	if err := closeFile(f); err != nil {
-		return err
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("audit: fsync %s: %w", path, err)
 	}
 	slog.Default().Error("audit: the audit file ended in a torn line, moved it aside",
-		slog.String("file", path), slog.String("moved_to", side), slog.Int("bytes", len(data)-keep))
+		slog.String("file", path), slog.String("moved_to", side), slog.Int("bytes", len(frag)))
 	return nil
 }
 
-// endsTorn reports whether path is not empty and its last byte is not a
-// newline. It reads one byte, files can be large. A missing file is fine.
-func endsTorn(path string) (bool, error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("audit: open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
+// tornTail returns the length of f up to its last newline and the bytes
+// after it. frag is nil when f is empty or ends in a newline. It reads
+// backwards from the end in chunks.
+func tornTail(f *os.File) (keep int64, frag []byte, err error) {
 	info, err := f.Stat()
 	if err != nil {
-		return false, fmt.Errorf("audit: stat %s: %w", path, err)
+		return 0, nil, err
 	}
-	if info.Size() == 0 {
-		return false, nil
+	end := info.Size()
+	const chunk = 64 * 1024
+	var tail []byte
+	for pos := end; pos > 0; {
+		n := min(int64(chunk), pos)
+		pos -= n
+		buf := make([]byte, n)
+		if _, err := f.ReadAt(buf, pos); err != nil {
+			return 0, nil, err
+		}
+		if pos+n == end && buf[n-1] == '\n' {
+			return end, nil, nil
+		}
+		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+			return pos + int64(i) + 1, append(buf[i+1:], tail...), nil
+		}
+		tail = append(buf, tail...)
 	}
-	last := make([]byte, 1)
-	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
-		return false, fmt.Errorf("audit: read %s: %w", path, err)
+	if end == 0 {
+		return 0, nil, nil
 	}
-	return last[0] != '\n', nil
+	return 0, tail, nil
+}
+
+// writeSideFile writes data to a new file at path and removes it again
+// when the write fails, so a full disk leaves no partial side file.
+func writeSideFile(path string, data []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+	}
+	return err
 }
 
 // primeLastHash takes the chain tip from the newest record in names, which
