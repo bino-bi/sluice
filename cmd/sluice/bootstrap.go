@@ -852,8 +852,8 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 // every SubjectBinding.spec.rateLimit. API-key bindings key by their
 // claims.subjectId; JWT bindings key by issuer so the limit applies per
 // authenticated subject under that issuer.
-func buildRateSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]ratelimit.Spec) {
-	bySubject = map[string]ratelimit.Spec{}
+func buildRateSpecs(snap *config.Snapshot) (bySubject map[ratelimit.SubjectKey]ratelimit.Spec, byIssuer map[string]ratelimit.Spec) {
+	bySubject = map[ratelimit.SubjectKey]ratelimit.Spec{}
 	byIssuer = map[string]ratelimit.Spec{}
 	if snap == nil {
 		return bySubject, byIssuer
@@ -867,7 +867,7 @@ func buildRateSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]ratel
 			spec.Burst = 1
 		}
 		if sb.Spec.Claims.SubjectID != "" {
-			bySubject[sb.Spec.Claims.SubjectID] = spec
+			bySubject[ratelimit.SubjectKey{Subject: sb.Spec.Claims.SubjectID, Issuer: bindingIssuer(sb)}] = spec
 		}
 		if sb.Spec.Issuer != "" {
 			byIssuer[sb.Spec.Issuer] = spec
@@ -879,6 +879,19 @@ func buildRateSpecs(snap *config.Snapshot) (bySubject, byIssuer map[string]ratel
 // minHMACSecretBytes is the SHA-256 output size, the shortest key HS256
 // should get.
 const minHMACSecretBytes = 32
+
+// bindingIssuer is the issuer of the subjects a binding makes, for the
+// rate limit and budget keys: spec.issuer, or the binding name for API
+// keys without one (as buildAPIKeyBindings sets it). "" means any issuer.
+func bindingIssuer(sb *apitypes.SubjectBinding) string {
+	if sb.Spec.Issuer != "" {
+		return sb.Spec.Issuer
+	}
+	if len(sb.Spec.APIKeys) > 0 {
+		return sb.Metadata.Name
+	}
+	return ""
+}
 
 // buildHMACSecrets resolves each SubjectBinding's hmacSecretRef into the
 // issuer→secret map the JWT identifier uses to verify HS256/HS384 tokens.

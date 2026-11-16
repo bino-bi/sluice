@@ -6,6 +6,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
@@ -33,7 +35,7 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 // execute is the pipeline body. resumed is true on the second pass after
 // an approval was granted: it consumes the grant instead of parking again,
 // which bounds recursion to one level.
-func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (*QueryResult, error) {
+func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (out *QueryResult, outErr error) {
 	start := s.opts.Clock()
 	qid := pkgerr.NewQueryID()
 
@@ -47,37 +49,55 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	var finalRec *audit.Record
 	defer func() { endQuerySpan(span, finalRec) }()
 
-	// 0. Concurrency + input caps.
-	if !s.acquireSlot(ctx) {
+	// 0. Admission: concurrency slot and per-subject rate limit.
+	releaseSlot, admErr := s.admit(ctx, req.User)
+	if admErr != nil {
 		rec := s.buildAuditBase(req, qid, nil)
 		finalRec = rec
 		rec.Decision = audit.DecisionError
-		rec.ErrorCode = string(pkgerr.CodeRateLimited)
-		rec.Message = "service saturated"
+		setErrorCode(rec, admErr)
 		s.emit(ctx, rec, start)
-		return nil, pkgerr.New(pkgerr.CodeRateLimited).
-			WithQueryID(qid).
-			WithMessage("service saturated")
+		return nil, pkgerr.FromError(admErr).WithQueryID(qid)
 	}
-	releaseSlot := s.releaseFn()
-
-	// 0b. Per-subject rate limit.
-	if s.opts.RateLimiter != nil && req.User != nil {
-		if !s.opts.RateLimiter.Allow(req.User.Subject, req.User.Issuer) {
-			rec := s.buildAuditBase(req, qid, nil)
-			finalRec = rec
-			rec.Decision = audit.DecisionError
-			rec.ErrorCode = string(pkgerr.CodeRateLimited)
-			s.emit(ctx, rec, start)
-			releaseSlot()
-			return nil, pkgerr.New(pkgerr.CodeRateLimited).
-				WithQueryID(qid).
-				WithMessage("per-subject rate limit exceeded")
+	defer releaseSlot()
+	// openRows is a result not yet handed to the caller, closed on a panic.
+	var openRows executor.RowIterator
+	// What the panic record knows of the statement.
+	var (
+		panicTables      []parser.TableRef
+		panicFingerprint string
+	)
+	// A panic in a stage (cgo parser, DuckDB, a mask provider, CEL) must
+	// not skip the audit record. The REST and MCP transports then get a
+	// normal ERR_INTERNAL.
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
 		}
-	}
+		s.opts.Logger.Error("query pipeline panic",
+			"query_id", qid,
+			"panic", fmt.Sprint(p),
+			"stack", string(debug.Stack()),
+		)
+		if openRows != nil {
+			_ = openRows.Close()
+		}
+		// A fresh record: finalRec can be queued already, and the audit
+		// worker owns it then.
+		rec := s.buildAuditBase(req, qid, panicTables)
+		rec.SQLFingerprint = panicFingerprint
+		finalRec = rec
+		rec.Decision = audit.DecisionError
+		rec.ErrorCode = string(pkgerr.CodeInternal)
+		s.emit(ctx, rec, start)
+		out, outErr = nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid)
+	}()
 
 	// 0c. Per-subject daily budget (pre-admission). A subject over its
-	// budget is refused before any work. Usage is recorded post-execution.
+	// budget is refused before any work. Every later exit is charged: the
+	// wall time with 0 rows here, unless the result iterator took over.
+	budgetDone := false
 	if s.opts.Budget != nil && req.User != nil {
 		if err := s.opts.Budget.Check(ctx, req.User.Subject, req.User.Issuer); err != nil {
 			rec := s.buildAuditBase(req, qid, nil)
@@ -85,9 +105,14 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeBudgetExceeded)
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.FromError(err).WithQueryID(qid)
 		}
+		subject, issuer := req.User.Subject, req.User.Issuer
+		defer func() {
+			if !budgetDone {
+				s.opts.Budget.Record(subject, issuer, s.opts.Clock().Sub(start), 0)
+			}
+		}()
 	}
 
 	if len(req.SQL) > s.opts.Limits.MaxSQLBytes {
@@ -96,7 +121,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodePayloadTooLarge)
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodePayloadTooLarge).WithQueryID(qid)
 	}
 	if req.Timeout <= 0 {
@@ -131,6 +155,20 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if ast != nil {
 		rec.SQLFingerprint = ast.Fingerprint()
 	}
+	panicTables, panicFingerprint = tables, rec.SQLFingerprint
+
+	// 1a. Shape of a sample endpoint statement. Before the approval gate,
+	// so a where that changes the statement opens no approval ticket.
+	if req.Sample != nil && parseErr == nil {
+		if err := checkSampleAST(ast); err != nil {
+			apiErr := toAPIError(err, qid)
+			setErrorCode(rec, apiErr)
+			rec.Decision = audit.DecisionError
+			s.emit(ctx, rec, start)
+			return nil, apiErr
+		}
+		sampleRequestsMetric().WithLabelValues(string(req.Sample.Method)).Inc()
+	}
 
 	// 1b. Cross-catalog gate. Runs before the rewrite cache and policy so
 	// a memoised Allow cannot bypass it. Only three-part
@@ -141,7 +179,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionReject
 			rec.Message = "cross-catalog queries are disabled (limits.disableCrossCatalog)"
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).
 				WithMessage("cross-catalog queries are disabled (limits.disableCrossCatalog)")
 		}
@@ -155,7 +192,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionReject
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
 	// Also before the cache: a $n reads the values the rewriter binds (row
@@ -165,7 +201,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, apiErr
 	}
 
@@ -178,7 +213,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionReject
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
 
@@ -191,7 +225,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionDeny
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid).WithMessage(reason)
 	}
 
@@ -227,7 +260,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, apiErr
 		}
 	}
@@ -241,7 +273,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
 		}
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, denyToAPIError(dec, qid)
 	}
 	if dec.Outcome == policy.OutcomeReject {
@@ -249,7 +280,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
 		}
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, rejectToAPIError(dec, qid)
 	}
 
@@ -263,40 +293,37 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, apiErr
 	}
 
 	// 3b. Approval gate. A decision carrying an approval requirement holds
-	// the query until a human decides. On a consumed grant we proceed and
-	// note the approval id; otherwise we park (releasing the admission slot
-	// first) and either resolve inline or return ERR_APPROVAL_PENDING.
+	// the query until a human decides. With a grant we proceed and consume
+	// it right before execution; otherwise we park (releasing the admission
+	// slot first) and either resolve inline or return ERR_APPROVAL_PENDING.
+	var sqlHash, subjectKey string
 	if dec.Approval != nil {
 		if s.opts.Approvals == nil {
 			// Policy requires approval but no broker is wired — fail closed.
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeInternal)
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid).
 				WithMessage("approval required but no approval broker configured")
 		}
-		sqlHash := approvalHash(req)
-		subjectKey := subjectKeyOf(req.User)
-		if apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash); ok {
-			if rec.Extras == nil {
-				rec.Extras = map[string]any{}
+		sqlHash = approvalHash(req)
+		subjectKey = subjectKeyOf(req.User)
+		// With a grant, fall through to rewrite. A rewrite error must not
+		// use up the approval, so the grant is consumed before step 5.
+		if !s.opts.Approvals.HasGrant(subjectKey, sqlHash) {
+			if resumed {
+				// Resumed pass but the grant vanished (expired/raced). Do
+				// not re-park — that would recurse. Surface pending.
+				s.emit(ctx, rec, start)
+				return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
 			}
-			rec.Extras["approval_id"] = apprID
-			// Fall through to rewrite + execute with the grant consumed.
-		} else if resumed {
-			// Resumed pass but the grant vanished (expired/raced). Do not
-			// re-park — that would recurse. Surface pending.
-			s.emit(ctx, rec, start)
-			releaseSlot()
-			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
-		} else {
 			releaseSlot() // never hold the admission slot while parked
+			// The wait is no usage. The resumed pass charges its own run.
+			budgetDone = true
 			return s.awaitApproval(ctx, req, dec, rec, qid, start, sqlHash, subjectKey)
 		}
 	}
@@ -308,6 +335,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rewriteResp, reErr = s.opts.Rewriter.Rewrite(rwCtx, rewriter.RewriteRequest{
 			AST: ast, Decision: dec, User: req.User, Facts: req.Facts, Raw: req.SQL,
 			Sample: req.Sample,
+			// One row over the limit shows the result was cut.
+			RowCap: req.MaxRows + 1,
 		})
 		rwSpan.End()
 		if reErr != nil {
@@ -325,7 +354,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 				rec.Decision = audit.DecisionError
 			}
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, apiErr
 		}
 		if cacheable {
@@ -353,6 +381,22 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			"sample":     eff.Sample != nil,
 			"policies":   eff.Policies,
 		}
+	}
+
+	// 5a. Consume the grant. It can be gone since the check: expired, or
+	// used by a parallel request.
+	if dec.Approval != nil {
+		apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash)
+		if !ok {
+			rec.Decision = audit.DecisionError
+			rec.ErrorCode = string(pkgerr.CodeApprovalPending)
+			s.emit(ctx, rec, start)
+			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
+		}
+		if rec.Extras == nil {
+			rec.Extras = map[string]any{}
+		}
+		rec.Extras["approval_id"] = apprID
 	}
 
 	// 5. Execute.
@@ -383,7 +427,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		if stderrors.Is(execErr, executor.ErrRejected) {
 			// The client only gets the code. The fault can also be in the
 			// SQL sluice wrote, so the cause must be in the log.
@@ -394,6 +437,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 		return nil, apiErr
 	}
+	openRows = resp.Rows
 
 	// 5b. Post-query mask decorators (FPE, fake, jitter, hmac). Build them
 	// before the audit gate so a construction failure refuses the query
@@ -411,7 +455,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			setErrorCode(rec, mErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, toAPIError(mErr, qid)
 		}
 		resp.Rows = masked
@@ -432,7 +475,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	rec.Decision = audit.DecisionAllow
 	if err := s.emitAccess(ctx, rec, start); err != nil {
 		_ = resp.Rows.Close()
-		releaseSlot()
 		return nil, err
 	}
 
@@ -457,23 +499,36 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		origin:   rec.Origin,
 		remoteIP: rec.RemoteIP,
 	}
-	// Budget usage: capture the execute duration now (excludes client
-	// streaming so a slow reader does not burn budget); rows are known at
-	// Close. Record fires once in Close.
+	// Budget usage: the executor's run time, without the wait for a pool
+	// connection and without client streaming. Rows are known at Close,
+	// which records once.
 	if s.opts.Budget != nil && req.User != nil {
 		ar.budgetSubject = req.User.Subject
 		ar.budgetIssuer = req.User.Issuer
-		ar.execDur = s.opts.Clock().Sub(start)
+		ar.execDur = resp.ExecTime
 		ar.recordBudget = true
+		budgetDone = true
 	}
 	qr.Rows = ar
-	// Release concurrency slot when the iterator is closed — but don't
-	// leak semaphore slots if the caller forgets. We release now because
-	// DuckDB holds its own connection pool slot for the duration, and
-	// Service.MaxConcurrent is a higher-level gate on request
-	// throughput, not on executor resources.
-	releaseSlot()
+	openRows = nil
+	// The deferred release frees the slot now, not at Close: the slot gates
+	// request throughput, and the DuckDB pool bounds the connections.
 	return qr, nil
+}
+
+// admit is the admission step of a query and of the metadata calls: a
+// concurrency slot, then a token of the subject's rate limit. The caller
+// must call release; it is idempotent. A nil user skips the rate limit.
+func (s *Service) admit(ctx context.Context, user *identity.UserCtx) (release func(), err error) {
+	if !s.acquireSlot(ctx) {
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+	}
+	release = s.releaseFn()
+	if s.opts.RateLimiter != nil && user != nil && !s.opts.RateLimiter.Allow(user.Subject, user.Issuer) {
+		release()
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("per-subject rate limit exceeded")
+	}
+	return release, nil
 }
 
 // acquireSlot grabs a semaphore token when MaxConcurrent is set. Returns

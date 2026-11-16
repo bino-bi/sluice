@@ -135,9 +135,16 @@ The third run:
 ## Limits
 
 - A rate limit or budget needs `claims.subjectId` or `issuer` on the binding. With `issuer`, each subject has its own limit and counter.
+- Each subject id has its own counter per issuer. Two issuers that issue the same id do not share a rate limit or budget.
+- A limit for `claims.subjectId` applies to that id under the issuer of the binding: `issuer`, or the binding name for API keys. A binding with neither `issuer` nor `apiKeys` sets the limit of that id under every issuer.
+- Sluice keeps the rate limit state of up to 10000 subjects. A subject whose state was dropped starts again with a full burst.
 - Without `rateLimit`, `limits.defaultSubjectRps` and `limits.defaultSubjectBurst` apply.
+- The rate limit and `limits.maxConcurrent` also count the MCP tools that list catalogs or tables, describe a table or explain access. The budget does not count them. The explain endpoint of the admin API counts only for `limits.maxConcurrent`.
 - A reload resets all rate limits.
 - Sluice counts usage after a query. One large query can pass the budget.
+- A query that serves rows counts the DuckDB run time, without the wait for a DuckDB connection.
+- A query that fails or times out counts the time since the request started, with 0 rows.
+- The check sees only finished queries. Queries of one subject that run at the same time all pass it, so a subject can go over its budget by that much.
 - `budget.db` in `budget.stateDir` holds one row per UTC day, subject id and issuer. At start, Sluice deletes rows older than `budget.retentionDays` (default 35).
 
 ## See also

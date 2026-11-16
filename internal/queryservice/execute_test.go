@@ -117,6 +117,9 @@ type fakeExecutor struct {
 	// truncateAfter > 0 stops iteration after that many rows and flips
 	// Response.Truncated mid-stream, like the real sqlRowIterator.
 	truncateAfter int
+	execTime      time.Duration
+	// iterErr is the error of the iterator once the rows are read.
+	iterErr error
 }
 
 func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*executor.Response, error) {
@@ -126,8 +129,8 @@ func (e *fakeExecutor) Execute(_ context.Context, req executor.Request) (*execut
 		return nil, e.err
 	}
 	rowCount := new(int64)
-	iter := &fakeIter{rows: e.rows, rowCount: rowCount, truncateAfter: e.truncateAfter}
-	resp := &executor.Response{Columns: e.columns, Rows: iter, RowCount: rowCount}
+	iter := &fakeIter{rows: e.rows, rowCount: rowCount, truncateAfter: e.truncateAfter, err: e.iterErr}
+	resp := &executor.Response{Columns: e.columns, Rows: iter, RowCount: rowCount, ExecTime: e.execTime}
 	iter.resp = resp
 	return resp, nil
 }

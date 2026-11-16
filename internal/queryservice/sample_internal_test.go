@@ -70,6 +70,7 @@ func (pendingBroker) Wait(context.Context, string, time.Duration) (approval.Stat
 	return approval.StatePending, nil
 }
 
+func (pendingBroker) HasGrant(string, string) bool               { return false }
 func (pendingBroker) ConsumeGrant(string, string) (string, bool) { return "", false }
 
 func (pendingBroker) Get(string) (approval.View, bool) { return approval.View{}, false }

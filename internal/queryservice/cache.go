@@ -25,5 +25,7 @@ func (s *Service) cacheKey(req QueryRequest, parseErr error) (policycache.Key, b
 	if version == 0 {
 		return policycache.Key{}, false
 	}
-	return policycache.BuildKey(version, digest, req.SQL, req.User, req.Facts, keyHeaders, allHeaders), true
+	k := policycache.BuildKey(version, digest, req.SQL, req.User, req.Facts, keyHeaders, allHeaders)
+	k.RowCap = req.MaxRows + 1
+	return k, true
 }

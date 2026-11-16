@@ -3,6 +3,7 @@
 package rewriter
 
 import (
+	"math"
 	"strconv"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -10,47 +11,57 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 )
 
-// applyRewrite applies the folded QueryRewritePolicy effect to the AST.
-// Only the LIMIT instruction mutates the tree here; sampling wraps the
-// deparsed SQL afterwards (pg_query's grammar cannot represent DuckDB's
-// USING SAMPLE clause) and the timeout override is enforced by
-// queryservice, not the SQL.
+// applyRewrite applies the folded QueryRewritePolicy effect and the row
+// cap to the AST. Only the LIMIT instruction mutates the tree here;
+// sampling wraps the deparsed SQL afterwards (pg_query's grammar cannot
+// represent DuckDB's USING SAMPLE clause) and the timeout override is
+// enforced by queryservice, not the SQL.
 func (s *state) applyRewrite(res *pg.ParseResult) error {
-	eff := s.decision.Rewrite
-	if eff == nil || eff.LimitMax <= 0 || len(res.Stmts) == 0 {
+	var limitMax int64
+	if eff := s.decision.Rewrite; eff != nil {
+		limitMax = eff.LimitMax
+	}
+	if (limitMax <= 0 && s.rowCap <= 0) || len(res.Stmts) == 0 {
 		return nil
 	}
 	// A LIMIT inside would draw the sample from the first rows only. The
 	// MaxRows clamp in queryservice still caps the sample's output.
 	if s.sample != nil {
-		s.rewrites = append(s.rewrites, "limit-deferred:sample")
+		if limitMax > 0 {
+			s.rewrites = append(s.rewrites, "limit-deferred:sample")
+		}
 		return nil
 	}
 	sel := res.Stmts[0].Stmt.GetSelectStmt()
 	if sel == nil {
 		// EXPLAIN carries no row set to bound; queryservice's MaxRows clamp
 		// still applies to whatever it emits.
-		s.rewrites = append(s.rewrites, "limit-skipped:not-select")
+		if limitMax > 0 {
+			s.rewrites = append(s.rewrites, "limit-skipped:not-select")
+		}
 		return nil
 	}
-
-	limitStr := strconv.FormatInt(eff.LimitMax, 10)
-	if sel.LimitCount == nil {
-		sel.LimitCount = intConst(eff.LimitMax)
-		sel.LimitOption = pg.LimitOption_LIMIT_OPTION_COUNT
-		s.rewrites = append(s.rewrites, "limit-injected:"+limitStr)
-		return nil
-	}
-	// Keep an existing constant LIMIT from 0 up to the cap; anything else
-	// (negative or larger constant, parameter, expression) is clamped.
-	if c := sel.LimitCount.GetAConst(); c != nil {
-		if iv := c.GetIval(); iv != nil && iv.Ival >= 0 && int64(iv.Ival) <= eff.LimitMax {
-			return nil
+	if limitMax > 0 {
+		limitStr := strconv.FormatInt(limitMax, 10)
+		hadLimit := sel.LimitCount != nil
+		changed := capLimit(sel, limitMax, false)
+		if changed && s.rowCap > 0 && limitMax < math.MaxInt32 {
+			// When the query runs (a row cap is set), one row over the
+			// limit lets the row iterator see that the result was cut. It
+			// still stops at limitMax. A policy test shows the plain limit.
+			sel.LimitCount = intConst(limitMax + 1)
+		}
+		switch {
+		case !changed:
+		case hadLimit:
+			s.rewrites = append(s.rewrites, "limit-clamped:"+limitStr)
+		default:
+			s.rewrites = append(s.rewrites, "limit-injected:"+limitStr)
 		}
 	}
-	sel.LimitCount = intConst(eff.LimitMax)
-	sel.LimitOption = pg.LimitOption_LIMIT_OPTION_COUNT
-	s.rewrites = append(s.rewrites, "limit-clamped:"+limitStr)
+	if s.rowCap > 0 {
+		capLimit(sel, s.rowCap, true)
+	}
 	return nil
 }
 

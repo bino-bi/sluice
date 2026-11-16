@@ -75,6 +75,9 @@ type RewriteRequest struct {
 	// Sample is the sample of the sample endpoint. It forces the mutation
 	// path, so DuckDB runs the canonical deparse.
 	Sample *SampleSpec
+	// RowCap is the most rows a SELECT may return, set as its outer LIMIT
+	// (a smaller LIMIT stays). 0 means none. A sample gets none.
+	RowCap int64
 }
 
 // RewriteResult carries the rewritten SQL, positional parameters, and an
@@ -185,10 +188,16 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 			WithMessage("EXPLAIN is not supported on a table with a row filter or column mask")
 	}
 
-	// Step 3: pass-through fast path.
+	// Step 3: pass-through fast path. The row cap edits the text only.
 	if !needsMutation(req.Decision) && req.Sample == nil {
+		sql := req.Raw
+		if n := rowCapOf(req); n > 0 && req.AST.Statement() == parser.StmtSelect && req.AST.Source() == req.Raw {
+			if tree, ok := req.AST.Raw().(*pg.ParseResult); ok {
+				sql = capPassThrough(req.Raw, tree, n)
+			}
+		}
 		return &RewriteResult{
-			SQL:         req.Raw,
+			SQL:         sql,
 			Fingerprint: req.AST.Fingerprint(),
 			Changed:     false,
 		}, nil
@@ -224,6 +233,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		salts:           r.opts.Salts,
 		snippets:        r.snippets,
 		sample:          req.Sample,
+		rowCap:          rowCapOf(req),
 	}
 
 	if err := state.checkReservedName(clone); err != nil {
@@ -311,6 +321,8 @@ type state struct {
 	snippets        *snippetMemo
 	// sample is the sample endpoint's request, nil for other queries.
 	sample *SampleSpec
+	// rowCap is the outer LIMIT of a SELECT, 0 for none.
+	rowCap int64
 
 	params    []any
 	rewrites  []string

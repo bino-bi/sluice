@@ -2,8 +2,8 @@
 
 // Package executor owns the embedded DuckDB instance. It provides a
 // hardened connection pool, runs already-rewritten SQL with parameters,
-// streams results in JSON or CSV (Arrow lands in a later slice), and
-// enforces statement timeouts and row caps.
+// hands out the results for JSON or CSV (Arrow lands in a later slice),
+// and enforces statement timeouts and row caps.
 //
 // Hardening (applied on every fresh connection, in order): disable
 // external access, forbid community extensions, disable autoload /

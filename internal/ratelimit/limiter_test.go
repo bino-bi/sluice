@@ -12,7 +12,7 @@ import (
 func TestLimiter_PerSubjectBurstAndRefill(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := ratelimit.New(func() time.Time { return now })
-	l.SetSpecs(map[string]ratelimit.Spec{"alice": {RPS: 1, Burst: 2}}, nil)
+	l.SetSpecs(map[ratelimit.SubjectKey]ratelimit.Spec{{Subject: "alice"}: {RPS: 1, Burst: 2}}, nil)
 
 	first := l.Allow("alice", "")
 	second := l.Allow("alice", "")
@@ -34,7 +34,7 @@ func TestLimiter_PerSubjectBurstAndRefill(t *testing.T) {
 
 func TestLimiter_UnconfiguredAndAnonymousAreUnlimited(t *testing.T) {
 	l := ratelimit.New(func() time.Time { return time.Unix(0, 0) })
-	l.SetSpecs(map[string]ratelimit.Spec{"alice": {RPS: 1, Burst: 1}}, nil)
+	l.SetSpecs(map[ratelimit.SubjectKey]ratelimit.Spec{{Subject: "alice"}: {RPS: 1, Burst: 1}}, nil)
 
 	for range 100 {
 		if !l.Allow("bob", "") {
@@ -50,7 +50,7 @@ func TestLimiter_DefaultSpecForUnboundSubjects(t *testing.T) {
 	now := time.Unix(0, 0)
 	l := ratelimit.New(func() time.Time { return now })
 	l.SetDefault(ratelimit.Spec{RPS: 1, Burst: 1})
-	l.SetSpecs(map[string]ratelimit.Spec{"alice": {RPS: 1, Burst: 3}}, nil)
+	l.SetSpecs(map[ratelimit.SubjectKey]ratelimit.Spec{{Subject: "alice"}: {RPS: 1, Burst: 3}}, nil)
 
 	// Unbound subject falls back to the default spec.
 	if !l.Allow("bob", "") {

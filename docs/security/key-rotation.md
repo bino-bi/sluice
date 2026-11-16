@@ -71,7 +71,7 @@ Sluice reads a `secret://env/` value from its own process environment. A new or 
 ## Limits
 
 - Sluice cuts spaces and line ends at the end of the pepper and the genesis. `sluice apikey hash --pepper secret://...` does the same.
-- Without a reload, Sluice can use an old mask salt for up to 10 minutes.
+- Without a reload, Sluice can use an old mask salt for up to 10 minutes. With `cache.rewrite.enabled`, add `cache.rewrite.ttl`.
 - With `claims.subjectId`, the audit log does not show which key a client used.
 
 ## See also

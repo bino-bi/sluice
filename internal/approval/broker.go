@@ -382,6 +382,15 @@ func (b *Broker) ConsumeGrant(subjectKey, sqlHash string) (string, bool) {
 	return g.approvalID, true
 }
 
+// HasGrant reports whether an unexpired grant for subjectKey + sqlHash
+// exists. It does not consume it and does no store I/O.
+func (b *Broker) HasGrant(subjectKey, sqlHash string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g, ok := b.grants[keyOf(subjectKey, sqlHash)]
+	return ok && !b.clock().After(g.expiresAt)
+}
+
 // Get returns a token-free view of the request.
 func (b *Broker) Get(id string) (View, bool) {
 	b.mu.Lock()

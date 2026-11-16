@@ -5,9 +5,11 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -72,9 +74,13 @@ type Response struct {
 	Rows      RowIterator
 	RowCount  *int64
 	Truncated bool
+	// ExecTime is the time DuckDB took to run the statement, from after a
+	// pool connection was acquired to the first row. The driver builds the
+	// whole result in that time. Budgets charge it.
+	ExecTime time.Duration
 }
 
-// RowIterator is a streaming result iterator. Callers must call Close
+// RowIterator is a result iterator. Callers must call Close
 // after draining (defer is idiomatic). Scan's dest[] slice must match
 // Columns in count and be compatible types.
 type RowIterator interface {
@@ -95,8 +101,10 @@ type RowIterator interface {
 }
 
 // Execute runs req against a hardened connection drawn from the pool.
-// Rows stream through the returned iterator; the underlying connection
-// is held until Response.Rows.Close is called.
+// The DuckDB driver builds the whole result before QueryContext returns,
+// so the result is in memory before the first row is read; the caller caps
+// it with a LIMIT in the SQL. The connection is held until
+// Response.Rows.Close is called.
 func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) {
 	if req.Format == "" {
 		req.Format = FormatJSON
@@ -117,8 +125,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	// cancel runs when the iterator closes, not when this function
-	// returns — otherwise we'd cancel the query mid-stream. Leak-proof
-	// paths below call cancel on every early-exit branch.
+	// returns — otherwise we'd cancel the query mid-stream.
 	conn, err := e.db.Conn(execCtx)
 	if err != nil {
 		cancel()
@@ -127,29 +134,55 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		}
 		return nil, fmt.Errorf("%w: %w", ErrConnUnavailable, err)
 	}
+	// Until the iterator owns rows, conn and cancel, every exit frees
+	// them, a panic in the driver or the attach hook too.
+	var rows *sql.Rows
+	handedOff := false
+	defer func() {
+		if handedOff {
+			return
+		}
+		p := recover()
+		if p == nil {
+			if rows != nil {
+				_ = rows.Close()
+			}
+			_ = conn.Close()
+			cancel()
+			return
+		}
+		cancel()
+		// A panic inside a database/sql call leaves the connection's lock
+		// held, and closing it would block for good. So the close runs
+		// apart: it frees the connection when it can, else only that
+		// connection is lost. ErrBadConn drops a half set up connection.
+		go func() {
+			if rows != nil {
+				_ = rows.Close()
+			}
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			_ = conn.Close()
+		}()
+		panic(p)
+	}()
 	// The read lock is taken after the connection, never while waiting
 	// for one: with MaxOpen=1 Exclusive holds the only connection and
-	// waits for the write lock.
+	// waits for the write lock. A held lock would block every Exclusive.
 	e.attachMu.RLock()
+	unlock := sync.OnceFunc(e.attachMu.RUnlock)
+	defer unlock()
 	if err := e.ensureInit(execCtx, conn); err != nil {
-		e.attachMu.RUnlock()
-		cancel()
-		_ = conn.Close()
 		return nil, err
 	}
 
-	rows, err := conn.QueryContext(execCtx, req.SQL, req.Params...)
-	e.attachMu.RUnlock()
+	began := time.Now()
+	rows, err = conn.QueryContext(execCtx, req.SQL, req.Params...)
+	unlock()
 	if err != nil {
-		cancel()
-		_ = conn.Close()
 		return nil, wrapRunErr(err)
 	}
 	cols, err := rows.ColumnTypes()
 	if err != nil {
-		cancel()
-		_ = rows.Close()
-		_ = conn.Close()
 		return nil, fmt.Errorf("%w: columns: %w", ErrExecute, err)
 	}
 	colInfo := make([]ColumnInfo, len(cols))
@@ -177,8 +210,10 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		Columns:  colInfo,
 		Rows:     iter,
 		RowCount: rowCount,
+		ExecTime: time.Since(began),
 	}
 	iter.parent = resp
+	handedOff = true
 	return resp, nil
 }
 
@@ -238,6 +273,10 @@ type sqlRowIterator struct {
 	parent   *Response
 	closed   bool
 	iterErr  error
+	// capped is set when a cap ended the rows before EOF. database/sql
+	// then reports the end of the context as Err, which is no error of
+	// the rows handed out.
+	capped bool
 
 	// With a byte cap, Next reads the row into row to know its size
 	// before it hands the row out.
@@ -296,7 +335,12 @@ func (it *sqlRowIterator) Next() bool {
 		return false
 	}
 	if it.maxRows > 0 && *it.rowCount >= it.maxRows {
-		it.parent.Truncated = true
+		// Only a further row means the result was cut. The SQL carries a
+		// LIMIT of maxRows+1 for this check.
+		if it.rows.Next() {
+			it.parent.Truncated = true
+			it.capped = true
+		}
 		return false
 	}
 	if !it.rows.Next() {
@@ -312,6 +356,7 @@ func (it *sqlRowIterator) Next() bool {
 		}
 		if it.bytes > it.maxBytes {
 			it.parent.Truncated = true
+			it.capped = true
 			return false
 		}
 	}
@@ -348,6 +393,9 @@ func (it *sqlRowIterator) Scan(dest ...any) error {
 func (it *sqlRowIterator) Err() error {
 	if it.iterErr != nil {
 		return it.iterErr
+	}
+	if it.capped {
+		return nil
 	}
 	if err := it.rows.Err(); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecute, err)

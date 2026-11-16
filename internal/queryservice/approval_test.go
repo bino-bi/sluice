@@ -25,6 +25,7 @@ type fakeBroker struct {
 	grantOK      bool
 	requireCalls atomic.Int64
 	waited       atomic.Int64
+	waitErr      error
 }
 
 func (f *fakeBroker) Require(_ context.Context, _ approval.RequireInput) (approval.Ticket, bool, error) {
@@ -42,7 +43,13 @@ func (f *fakeBroker) Wait(ctx context.Context, _ string, _ time.Duration) (appro
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.waitState, nil
+	return f.waitState, f.waitErr
+}
+
+func (f *fakeBroker) HasGrant(_, _ string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.grantOK
 }
 
 func (f *fakeBroker) ConsumeGrant(_, _ string) (string, bool) {

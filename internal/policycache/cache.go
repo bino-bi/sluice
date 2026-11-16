@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package policycache memoises the (Decision, RewriteResult) pair for a
-// given SQL text + identity under a fixed policy snapshot. It removes the
-// parse→evaluate→rewrite cost from repeated identical queries; rate
-// limiting, budgets, approval, and audit still run per request because the
-// cache sits at the evaluate/rewrite boundary only.
+// given SQL text + identity under a fixed policy snapshot. A hit skips
+// policy evaluation and the rewrite. The parse still runs per request: the
+// gates before the cache and the audit fingerprint need the AST. Rate
+// limiting, budgets, approval, and audit also run per request.
+//
+// A cached RewriteResult holds resolved secrets, such as the salt of a
+// hash mask, in its Params. Only a reload, which also invalidates the
+// secrets cache, or the TTL drops them.
 package policycache
 
 import (
@@ -28,6 +32,9 @@ type Key struct {
 	Digest       string
 	SQLHash      [32]byte
 	IdentityHash [32]byte
+	// RowCap is the outer LIMIT the rewritten SQL carries. It follows the
+	// row limit of the request.
+	RowCap int64
 }
 
 // Entry is the cached result. Both fields are treated as immutable by

@@ -28,4 +28,10 @@ One label of diagram 4 (approval flow) changed on 2026-10-13, with the code chan
 |---|---|---|
 | Label `GET or POST accept_url (capability token)` is now `POST accept_url (capability token)` | Only a `POST` decides an approval. A `GET` returns a page with a button | `internal/transport/rest/routes.go:43-47` |
 
-Diagrams 1, 3 and 5 are unchanged. No label in them is proven wrong.
+One label of diagram 3 (request lifecycle) changed on 2026-11-16. The copy in `request-lifecycle.mmd` holds the new version.
+
+| Change | Reason | Evidence |
+|---|---|---|
+| Label `execute (read-only, streaming)` is now `execute (read-only, full result)` | The DuckDB driver builds the whole result before the first row is read | `internal/executor/executor.go`, `Execute` |
+
+Diagrams 1 and 5 are unchanged. No label in them is proven wrong.

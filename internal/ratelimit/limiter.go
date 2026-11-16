@@ -9,6 +9,8 @@ package ratelimit
 import (
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 // Spec is a subject's configured rate limit. A zero RPS means "no limit".
@@ -26,17 +28,31 @@ func (s Spec) normalized() Spec {
 	return s
 }
 
-// Limiter holds a token bucket per subject key. Specs are resolved by
-// subject id first, then by issuer, so an API key with a fixed subject and
-// a JWT issuer that applies a shared per-user rate both work.
+// SubjectKey names a subject of one issuer. An empty Issuer in a spec key
+// matches the subject under every issuer.
+type SubjectKey struct {
+	Subject string
+	Issuer  string
+}
+
+// maxSubjectBuckets bounds the bucket map: every distinct JWT sub under a
+// rate-limited issuer adds a bucket. An evicted subject starts over with a
+// full burst.
+const maxSubjectBuckets = 10000
+
+// Limiter holds a token bucket per subject of an issuer. Specs are resolved
+// by subject id first, then by issuer, so an API key with a fixed subject
+// and a JWT issuer that applies a shared per-user rate both work.
 type Limiter struct {
 	clock func() time.Time
 
 	mu        sync.Mutex
 	def       Spec
-	bySubject map[string]Spec
+	bySubject map[SubjectKey]Spec
 	byIssuer  map[string]Spec
-	buckets   map[string]*bucket
+	// buckets is keyed by subject and issuer: two issuers can issue the
+	// same sub, and each must get its own counter.
+	buckets *lru.Cache[SubjectKey, *bucket]
 }
 
 type bucket struct {
@@ -69,23 +85,25 @@ func New(clock func() time.Time) *Limiter {
 	if clock == nil {
 		clock = time.Now
 	}
+	// golang-lru only rejects non-positive capacity.
+	buckets, _ := lru.New[SubjectKey, *bucket](maxSubjectBuckets)
 	return &Limiter{
 		clock:     clock,
-		bySubject: map[string]Spec{},
+		bySubject: map[SubjectKey]Spec{},
 		byIssuer:  map[string]Spec{},
-		buckets:   map[string]*bucket{},
+		buckets:   buckets,
 	}
 }
 
 // SetSpecs atomically replaces the per-subject and per-issuer rate specs.
 // Existing buckets whose spec changed are dropped so the new limit applies
 // on the next request. Called on config reload.
-func (l *Limiter) SetSpecs(bySubject, byIssuer map[string]Spec) {
+func (l *Limiter) SetSpecs(bySubject map[SubjectKey]Spec, byIssuer map[string]Spec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.bySubject = bySubject
 	l.byIssuer = byIssuer
-	l.buckets = map[string]*bucket{}
+	l.buckets.Purge()
 }
 
 // SetDefault sets the fallback spec applied to subjects whose binding
@@ -96,14 +114,18 @@ func (l *Limiter) SetDefault(spec Spec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.def = spec.normalized()
-	l.buckets = map[string]*bucket{}
+	l.buckets.Purge()
 }
 
 // specFor resolves the effective spec for (subject, issuer): subject
-// binding first, then issuer binding, then the configured default. Returns
-// a zero Spec (no limit) when none applies.
+// binding of that issuer, subject binding of any issuer, issuer binding,
+// then the configured default. Returns a zero Spec (no limit) when none
+// applies.
 func (l *Limiter) specFor(subject, issuer string) (Spec, bool) {
-	if s, ok := l.bySubject[subject]; ok && s.RPS > 0 {
+	if s, ok := l.bySubject[SubjectKey{subject, issuer}]; ok && s.RPS > 0 {
+		return s, true
+	}
+	if s, ok := l.bySubject[SubjectKey{Subject: subject}]; ok && s.RPS > 0 {
 		return s, true
 	}
 	if s, ok := l.byIssuer[issuer]; ok && s.RPS > 0 {
@@ -132,10 +154,11 @@ func (l *Limiter) Allow(subject, issuer string) bool {
 		return true
 	}
 	now := l.clock()
-	b := l.buckets[subject]
-	if b == nil || b.spec != spec {
+	k := SubjectKey{subject, issuer}
+	b, ok := l.buckets.Get(k)
+	if !ok || b.spec != spec {
 		b = &bucket{tokens: float64(spec.Burst), last: now, spec: spec}
-		l.buckets[subject] = b
+		l.buckets.Add(k, b)
 	}
 	return b.take(now, spec)
 }

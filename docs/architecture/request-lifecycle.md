@@ -26,7 +26,7 @@ sequenceDiagram
         S->>B: consume grant, or park + sync wait
     end
     S->>R: rewrite (filters, masks, LIMIT, sample)
-    S->>D: execute (read-only, streaming)
+    S->>D: execute (read-only, full result)
     S->>S: attach post-query masks
     S->>A: access record (fail-closed gate)
     S-->>T: stream rows
@@ -44,7 +44,7 @@ Diagram numbers count messages, not stages.
 5. **Policy.** The [engine](policy-engines.md) allows, denies or rejects the query.
 6. **Approval.** An [approval policy](../policies/approvals.md) can hold the query until a person accepts it.
 7. **Rewrite.** Sluice refuses writes and DDL. It adds [row filters](../policies/row-filters.md), [column masks](../policies/column-masks.md) and [limits](../policies/guardrails.md) to the SQL.
-8. **Execute.** DuckDB runs the rewritten SQL.
+8. **Execute.** DuckDB runs the rewritten SQL. It builds the whole result before Sluice sends the first row. So Sluice gives a SELECT a `LIMIT` of the row limit plus one. A smaller `LIMIT` in the query stays.
 9. **Post-query masks.** Some mask types change values in the result rows.
 10. **Audit, then rows.** Sluice queues the [audit record](../security/audit.md), then sends the rows.
 11. **Close.** Sluice writes a second audit record with the row count and updates the budget.
@@ -147,7 +147,12 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 - Parse and rewrite errors show only if the policies allow the statement. A deny or reject comes first.
 - `ERR_SYNTAX` also covers a table alias that is a DuckDB keyword and an unquoted identifier with a non-letter Unicode character.
 - A request stopped by the transport limits or the login leaves no audit record.
+- `duckdb.maxOpen` (default 4) is the number of queries DuckDB runs at one time. `limits.maxConcurrent` counts requests only until DuckDB is done, not while the rows are sent. A query without a free connection waits until its timeout ends.
+- A query holds its DuckDB connection until all rows are sent. A slow client keeps the connection that long.
+- A SELECT with `OFFSET` but no `LIMIT`, a `LIMIT` written as an expression, and a sample get no added `LIMIT`. DuckDB builds their full result, and Sluice cuts it to the row limit.
+- The query timeout covers the run and the sending of the rows. A slow client can hit it after DuckDB is done. The second audit record then carries `ERR_TIMEOUT`.
 - With `cache.rewrite.enabled`, a cached rewrite keeps the old column list of a masked table until `cache.rewrite.ttl` ends or a reload.
+- A cached rewrite also keeps the mask salt it was made with. After a salt changes without a reload, the old salt can stay in use for 10 minutes plus `cache.rewrite.ttl`. A reload clears both caches.
 
 ## See also
 

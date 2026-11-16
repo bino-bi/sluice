@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -259,6 +260,29 @@ func TestHandleQuery_CSVTrailerTruncated(t *testing.T) {
 	if got := trailer.Get("X-Sluice-Warning"); got != "ERR_RESULT_TRUNCATED" {
 		t.Fatalf("X-Sluice-Warning trailer: got %q want ERR_RESULT_TRUNCATED", got)
 	}
+}
+
+// A CSV stream that ends in an error, such as the query timeout during
+// delivery, aborts the connection. A clean end would read like a full CSV.
+func TestHandleQuery_CSVErrorAbortsConnection(t *testing.T) {
+	t.Parallel()
+	svc := newRealService(t)
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Service:    svc,
+		Identifier: &stubIdentifier{user: &identity.UserCtx{Subject: "x"}},
+	})
+	body := strings.NewReader(`{"sql":"SELECT 1 AS cut"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/query", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/csv")
+	defer func() {
+		got := recover()
+		if err, _ := got.(error); !errors.Is(err, http.ErrAbortHandler) {
+			t.Fatalf("recover() = %v, want http.ErrAbortHandler", got)
+		}
+	}()
+	srv.Handler().ServeHTTP(w, r)
 }
 
 func TestHandleQuery_JSONTruncatedFlag(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -102,6 +103,21 @@ func (e *fakeExec) Execute(_ context.Context, req executor.Request) (*executor.R
 		iter.parent = resp
 		return resp, nil
 	}
+	if contains(sql, " AS cut") {
+		// Serves one row, then the stream ends with the query timeout.
+		iter := &fakeIter{
+			rows:     [][]any{{int64(1)}},
+			rowCount: rowCount,
+			err:      fmt.Errorf("%w: %w", executor.ErrExecute, context.DeadlineExceeded),
+		}
+		resp := &executor.Response{
+			Columns:  []executor.ColumnInfo{{Name: "cut"}},
+			Rows:     iter,
+			RowCount: rowCount,
+		}
+		iter.parent = resp
+		return resp, nil
+	}
 	// Default: single-column "n" with value 1.
 	iter := &fakeIter{
 		rows:     [][]any{{int64(1)}},
@@ -123,6 +139,7 @@ type fakeIter struct {
 	closed        bool
 	parent        *executor.Response
 	truncateAfter int
+	err           error
 }
 
 func (it *fakeIter) Next() bool {
@@ -149,7 +166,12 @@ func (it *fakeIter) Scan(dest ...any) error {
 	it.idx++
 	return nil
 }
-func (it *fakeIter) Err() error { return nil }
+func (it *fakeIter) Err() error {
+	if it.idx < len(it.rows) {
+		return nil
+	}
+	return it.err
+}
 func (it *fakeIter) Close() error {
 	if it.closed {
 		return nil

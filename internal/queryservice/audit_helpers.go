@@ -317,6 +317,13 @@ func (r *auditedRows) Close() error {
 		return nil
 	}
 	r.closed = true
+	// A query timeout or a client that went away ends the stream with no
+	// Scan error: only the iterator's Err shows the cut.
+	if r.iterErr == nil {
+		if err := r.inner.Err(); err != nil {
+			r.iterErr = execErrToAPI(err, r.qid)
+		}
+	}
 	closeErr := r.inner.Close()
 	r.syncTruncated()
 

@@ -28,6 +28,13 @@ type Spec struct {
 	RowsPerDay       int64
 }
 
+// SubjectKey names a subject of one issuer. An empty Issuer in a spec key
+// matches the subject under every issuer.
+type SubjectKey struct {
+	Subject string
+	Issuer  string
+}
+
 // Options configures a Manager.
 type Options struct {
 	Path          string // SQLite file path; required
@@ -55,7 +62,7 @@ type Manager struct {
 	day      string // current UTC day (YYYY-MM-DD)
 	counters map[string]*usage
 	specs    struct {
-		bySubject map[string]Spec
+		bySubject map[SubjectKey]Spec
 		byIssuer  map[string]Spec
 	}
 	closed chan struct{}
@@ -100,7 +107,7 @@ func New(opts Options) (*Manager, error) {
 		counters:      map[string]*usage{},
 		closed:        make(chan struct{}),
 	}
-	m.specs.bySubject = map[string]Spec{}
+	m.specs.bySubject = map[SubjectKey]Spec{}
 	m.specs.byIssuer = map[string]Spec{}
 	m.day = m.today()
 	if err := m.seed(); err != nil {
@@ -114,7 +121,7 @@ func New(opts Options) (*Manager, error) {
 }
 
 // SetSpecs replaces the budget specs (called at boot and on reload).
-func (m *Manager) SetSpecs(bySubject, byIssuer map[string]Spec) {
+func (m *Manager) SetSpecs(bySubject map[SubjectKey]Spec, byIssuer map[string]Spec) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.specs.bySubject = bySubject
@@ -211,8 +218,13 @@ func (m *Manager) Close(_ context.Context) error {
 
 // --- internals ---
 
+// specFor resolves the spec of (subject, issuer) like the rate limiter:
+// subject of that issuer, subject of any issuer, then issuer.
 func (m *Manager) specFor(subject, issuer string) (Spec, bool) {
-	if s, ok := m.specs.bySubject[subject]; ok {
+	if s, ok := m.specs.bySubject[SubjectKey{subject, issuer}]; ok {
+		return s, true
+	}
+	if s, ok := m.specs.bySubject[SubjectKey{Subject: subject}]; ok {
 		return s, true
 	}
 	if s, ok := m.specs.byIssuer[issuer]; ok {

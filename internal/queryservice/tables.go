@@ -19,6 +19,7 @@ import (
 // Table or SimulatedSQL must be set.
 type ExplainInput struct {
 	User         *identity.UserCtx
+	Facts        *policy.RequestFacts
 	Table        parser.TableRef
 	SimulatedSQL string
 	Origin       Origin
@@ -30,6 +31,28 @@ type ExplainInput struct {
 func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.ExplainResult, error) {
 	start := s.opts.Clock()
 	qid := pkgerr.NewQueryID()
+
+	// The admin API asks about another subject, so its call must not use
+	// up that subject's rate limit.
+	limited := in.User
+	if in.Origin == OriginAdmin {
+		limited = nil
+	}
+	release, err := s.admit(ctx, limited)
+	if err != nil {
+		rec := &audit.Record{
+			EventType: audit.EventAdminAction,
+			QueryID:   qid,
+			Origin:    string(in.Origin),
+			Subject:   subjectFromUser(in.User),
+			Message:   "policy explain",
+			Decision:  audit.DecisionError,
+		}
+		setErrorCode(rec, err)
+		s.emit(ctx, rec, start)
+		return nil, pkgerr.FromError(err).WithQueryID(qid)
+	}
+	defer release()
 
 	var (
 		ast    parser.AST
@@ -52,7 +75,7 @@ func (s *Service) Explain(ctx context.Context, in ExplainInput) (*pkgapi.Explain
 	// Without SQL the question is about a read of the table.
 	result, err := s.opts.Policy.Explain(ctx, policy.Input{
 		User: in.User, AST: ast, Shape: shape, Tables: tables, Now: start,
-		Action: pkgapi.ActionSelect,
+		Action: pkgapi.ActionSelect, Request: in.Facts,
 	})
 	rec := &audit.Record{
 		EventType: audit.EventAdminAction,
@@ -98,10 +121,15 @@ type CatalogLister interface {
 // catalog is hidden when every table the schema cache knows about in it is
 // denied to the user; catalogs with no known tables stay visible (the
 // operator attached them and we cannot prove they are off-limits).
-func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *identity.UserCtx) ([]CatalogInfo, error) {
+func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *identity.UserCtx, facts *policy.RequestFacts) ([]CatalogInfo, error) {
 	if lister == nil {
 		return nil, pkgerr.New(pkgerr.CodeInternal).WithMessage("catalog lister not configured")
 	}
+	release, err := s.admit(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	all := lister.List(ctx)
 	if s.opts.Schema == nil {
 		return all, nil
@@ -114,7 +142,11 @@ func (s *Service) ListCatalogs(ctx context.Context, lister CatalogLister, user *
 			continue
 		}
 		known[e.Key.Catalog] = true
-		if s.tableVisible(ctx, user, parser.TableRef{Catalog: e.Key.Catalog, Schema: e.Key.Schema, Table: e.Key.Table}) {
+		// One visible table shows the catalog.
+		if visible[e.Key.Catalog] {
+			continue
+		}
+		if s.tableVisible(ctx, user, facts, parser.TableRef{Catalog: e.Key.Catalog, Schema: e.Key.Schema, Table: e.Key.Table}) {
 			visible[e.Key.Catalog] = true
 		}
 	}
@@ -148,9 +180,14 @@ const (
 // against the policy engine so schema discovery respects access control.
 // The second return value is the cursor for the next page ("" when the
 // listing is exhausted).
-func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx, page Page) ([]parser.TableRef, string, error) {
+func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, user *identity.UserCtx, facts *policy.RequestFacts, page Page) ([]parser.TableRef, string, error) {
+	release, err := s.admit(ctx, user)
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
 	s.loadCatalogs(ctx, catalog)
-	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
+	return s.listVisible(ctx, user, facts, page, func(e *schema.Entry) bool {
 		if e.Key.Catalog != catalog {
 			return false
 		}
@@ -163,7 +200,7 @@ func (s *Service) ListTables(ctx context.Context, catalog, schemaName string, us
 // page. Pagination happens after visibility filtering so pages are dense
 // (a page of N is N tables the caller can actually query). The cursor is
 // the qualified name of the last returned table.
-func (s *Service) listVisible(ctx context.Context, user *identity.UserCtx, page Page, match func(*schema.Entry) bool) ([]parser.TableRef, string, error) {
+func (s *Service) listVisible(ctx context.Context, user *identity.UserCtx, facts *policy.RequestFacts, page Page, match func(*schema.Entry) bool) ([]parser.TableRef, string, error) {
 	if s.opts.Schema == nil {
 		return nil, "", pkgerr.New(pkgerr.CodeInternal).WithMessage("schema cache not configured")
 	}
@@ -199,7 +236,7 @@ func (s *Service) listVisible(ctx context.Context, user *identity.UserCtx, page 
 		if page.After != "" && qualifiedName(ref) <= page.After {
 			continue
 		}
-		if !s.tableVisible(ctx, user, ref) {
+		if !s.tableVisible(ctx, user, facts, ref) {
 			continue
 		}
 		if len(out) == limit {
@@ -227,11 +264,16 @@ func qualifiedName(t parser.TableRef) string {
 // miss. Access is checked first so an agent cannot enumerate the columns
 // of a table policy denies it. Errors propagate untouched (schema.Cache
 // already returns domain-appropriate sentinels).
-func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *identity.UserCtx) (*schema.Entry, error) {
+func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *identity.UserCtx, facts *policy.RequestFacts) (*schema.Entry, error) {
 	if s.opts.Schema == nil {
 		return nil, pkgerr.New(pkgerr.CodeInternal).WithMessage("schema cache not configured")
 	}
-	if !s.tableVisible(ctx, user, ref) {
+	release, err := s.admit(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if !s.tableVisible(ctx, user, facts, ref) {
 		return nil, pkgerr.New(pkgerr.CodeACLDenied).WithMessage("access to table denied")
 	}
 	key := schema.Key{Catalog: ref.Catalog, Schema: ref.Schema, Table: ref.Table}
@@ -243,9 +285,14 @@ func (s *Service) DescribeTable(ctx context.Context, ref parser.TableRef, user *
 // Backs the MCP list_accessible_tables tool so an agent can discover what
 // it may query without probing by trial and error. The second return
 // value is the next-page cursor ("" when exhausted).
-func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, catalog string, page Page) ([]parser.TableRef, string, error) {
+func (s *Service) AccessibleTables(ctx context.Context, user *identity.UserCtx, facts *policy.RequestFacts, catalog string, page Page) ([]parser.TableRef, string, error) {
+	release, err := s.admit(ctx, user)
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
 	s.loadCatalogs(ctx, catalog)
-	return s.listVisible(ctx, user, page, func(e *schema.Entry) bool {
+	return s.listVisible(ctx, user, facts, page, func(e *schema.Entry) bool {
 		return catalog == "" || e.Key.Catalog == catalog
 	})
 }
@@ -274,13 +321,16 @@ func (s *Service) loadCatalogs(ctx context.Context, catalog string) {
 
 // tableVisible reports whether user may read ref — i.e. the policy engine
 // does not deny an access to it. Used by every metadata surface so schema
-// discovery cannot leak tables the caller could not query.
-func (s *Service) tableVisible(ctx context.Context, user *identity.UserCtx, ref parser.TableRef) bool {
+// discovery cannot leak tables the caller could not query. facts are those
+// of the request, so a policy on headers or the client IP decides as for a
+// query.
+func (s *Service) tableVisible(ctx context.Context, user *identity.UserCtx, facts *policy.RequestFacts, ref parser.TableRef) bool {
 	if s.opts.Policy == nil {
 		return false
 	}
 	dec, err := s.opts.Policy.Evaluate(ctx, policy.Input{
 		User: user, Tables: []parser.TableRef{ref}, Action: pkgapi.ActionSelect,
+		Request: facts,
 	})
 	if err != nil || dec == nil {
 		return false
