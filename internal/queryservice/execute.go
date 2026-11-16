@@ -62,6 +62,11 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	defer releaseSlot()
 	// openRows is a result not yet handed to the caller, closed on a panic.
 	var openRows executor.RowIterator
+	// What the panic record knows of the statement.
+	var (
+		panicTables      []parser.TableRef
+		panicFingerprint string
+	)
 	// A panic in a stage (cgo parser, DuckDB, a mask provider, CEL) must
 	// not skip the audit record. The REST and MCP transports then get a
 	// normal ERR_INTERNAL.
@@ -78,11 +83,11 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		if openRows != nil {
 			_ = openRows.Close()
 		}
-		rec := finalRec
-		if rec == nil {
-			rec = s.buildAuditBase(req, qid, nil)
-			finalRec = rec
-		}
+		// A fresh record: finalRec can be queued already, and the audit
+		// worker owns it then.
+		rec := s.buildAuditBase(req, qid, panicTables)
+		rec.SQLFingerprint = panicFingerprint
+		finalRec = rec
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodeInternal)
 		s.emit(ctx, rec, start)
@@ -150,6 +155,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	if ast != nil {
 		rec.SQLFingerprint = ast.Fingerprint()
 	}
+	panicTables, panicFingerprint = tables, rec.SQLFingerprint
 
 	// 1a. Shape of a sample endpoint statement. Before the approval gate,
 	// so a where that changes the statement opens no approval ticket.

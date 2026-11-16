@@ -58,6 +58,44 @@ func TestExecute_PanicReleasesSlotAndAudits(t *testing.T) {
 	_ = res.Rows.Close()
 }
 
+// panicAudit stores every record and panics on the first one.
+type panicAudit struct{ fakeAudit }
+
+func (a *panicAudit) Enqueue(ctx context.Context, r *audit.Record) error {
+	_ = a.fakeAudit.Enqueue(ctx, r)
+	if len(a.all()) == 1 {
+		panic("audit bug")
+	}
+	return nil
+}
+
+// The panic record is a new record. A record queued before the panic
+// belongs to the audit worker and must not change.
+func TestExecute_PanicRecordIsFresh(t *testing.T) {
+	a := &panicAudit{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeDeny}},
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{},
+		Audit:    a,
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id FROM pg.public.orders"})
+	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeInternal {
+		t.Fatalf("err = %v, want ERR_INTERNAL", err)
+	}
+	recs := a.all()
+	if len(recs) != 2 || recs[0] == recs[1] {
+		t.Fatalf("got %d records, want the deny record and a new panic record", len(recs))
+	}
+	if recs[0].Decision != audit.DecisionDeny || recs[0].ErrorCode != "" {
+		t.Fatalf("queued record changed to %s %q", recs[0].Decision, recs[0].ErrorCode)
+	}
+	if recs[1].ErrorCode != string(pkgerr.CodeInternal) || recs[1].SQLFingerprint == "" || len(recs[1].Tables) == 0 {
+		t.Fatalf("panic record %+v, want ERR_INTERNAL with the fingerprint and tables", recs[1])
+	}
+}
+
 // A wait that ends with an error, for example because the client went
 // away, still leaves the decision record of the request.
 func TestApproval_WaitErrorIsAudited(t *testing.T) {
