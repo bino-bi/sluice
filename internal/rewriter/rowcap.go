@@ -52,7 +52,8 @@ func capLimit(sel *pg.SelectStmt, n int64, keepExpr bool) bool {
 // result is parsed again, and a text that does not parse to one SELECT
 // with LIMIT n is dropped.
 func capPassThrough(raw string, tree *pg.ParseResult, n int64) string {
-	if tree == nil || len(tree.Stmts) != 1 {
+	// pg_query holds an integer constant as int32.
+	if tree == nil || len(tree.Stmts) != 1 || n < 0 || n > math.MaxInt32 {
 		return raw
 	}
 	rs := tree.Stmts[0]
