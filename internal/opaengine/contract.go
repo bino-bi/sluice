@@ -148,6 +148,10 @@ func decodeDecision(raw []byte, tables []parser.TableRef) (*policy.Decision, err
 		if _, ok := valid[rf.Table]; !ok {
 			return nil, fmt.Errorf("opaengine: row_filter references table %q not in the input set", rf.Table)
 		}
+		// A second filter would replace the first and drop it silently.
+		if _, dup := d.RowFilters[rf.Table]; dup {
+			return nil, fmt.Errorf("opaengine: more than one row_filter for table %q", rf.Table)
+		}
 		pred, err := policy.CompilePredicateSpec(rf.Predicate)
 		if err != nil {
 			return nil, fmt.Errorf("opaengine: row_filter predicate: %w", err)
@@ -168,6 +172,9 @@ func decodeDecision(raw []byte, tables []parser.TableRef) (*policy.Decision, err
 			return nil, fmt.Errorf("opaengine: column_mask: %w", err)
 		}
 		key := cm.Table + "." + cm.Column
+		if _, dup := d.ColumnMasks[key]; dup {
+			return nil, fmt.Errorf("opaengine: more than one column_mask for %q", key)
+		}
 		d.ColumnMasks[key] = policy.NewMask(cm.Table, cm.Column, cm.Mask.Type, args, "opa")
 	}
 

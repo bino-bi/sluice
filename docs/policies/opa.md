@@ -55,11 +55,11 @@ A guest sends the same query.
 | `allow` | boolean | `false` | `true` allows. `false` denies. |
 | `abstain` | boolean | `false` | `true`: the other composite members decide. |
 | `deny_reason` | object | | `message`, `code`, `policy` for the error. |
-| `row_filters[]` | list | | `table` (a `key` from the input), `predicate` as in a [row filter](row-filters.md), `combine`. |
-| `column_masks[]` | list | | `table`, `column`, and `mask` as in a [column mask](column-masks.md). |
+| `row_filters[]` | list | | `table` (a `key` from the input), `predicate` as in a [row filter](row-filters.md). One entry per table. `combine` has no effect. |
+| `column_masks[]` | list | | `table`, `column`, and `mask` as in a [column mask](column-masks.md). One entry per column. |
 | `rejections[]` | list | | `rule`, `message`, `code`. One entry rejects the query. |
 
-An undefined result denies the query. The header `X-Sluice-Applied-Policies` and the audit record show the name `opa`.
+An undefined result denies the query. So does a result with two `row_filters` for one table or two `column_masks` for one column. The header `X-Sluice-Applied-Policies` and the audit record show the name `opa`.
 
 ## Limits
 
