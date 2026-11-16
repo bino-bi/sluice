@@ -78,7 +78,7 @@ func TestListTables_PagedWalkMatchesUnpaginated(t *testing.T) {
 	svc := newListingService(t, 25, deny)
 	ctx := context.Background()
 
-	full, next, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{Limit: queryservice.MaxListLimit})
+	full, next, err := svc.ListTables(ctx, "shop", "", nil, nil, queryservice.Page{Limit: queryservice.MaxListLimit})
 	if err != nil {
 		t.Fatalf("full list: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestListTables_PagedWalkMatchesUnpaginated(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		refs, nc, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{Limit: 4, After: cursor})
+		refs, nc, err := svc.ListTables(ctx, "shop", "", nil, nil, queryservice.Page{Limit: 4, After: cursor})
 		if err != nil {
 			t.Fatalf("page %d: %v", pages, err)
 		}
@@ -127,7 +127,7 @@ func TestListTables_LimitClamping(t *testing.T) {
 	svc := newListingService(t, 30, nil)
 	ctx := context.Background()
 
-	refs, next, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{Limit: -5})
+	refs, next, err := svc.ListTables(ctx, "shop", "", nil, nil, queryservice.Page{Limit: -5})
 	if err != nil {
 		t.Fatalf("default limit: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestListTables_LimitClamping(t *testing.T) {
 		t.Fatalf("limit<=0 should use default (500): got %d refs cursor %q", len(refs), next)
 	}
 
-	refs, next, err = svc.ListTables(ctx, "shop", "", nil, queryservice.Page{Limit: 10})
+	refs, next, err = svc.ListTables(ctx, "shop", "", nil, nil, queryservice.Page{Limit: 10})
 	if err != nil {
 		t.Fatalf("limit 10: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestListTables_LimitClamping(t *testing.T) {
 
 func TestListTables_CursorPastEnd(t *testing.T) {
 	svc := newListingService(t, 5, nil)
-	refs, next, err := svc.ListTables(context.Background(), "shop", "", nil,
+	refs, next, err := svc.ListTables(context.Background(), "shop", "", nil, nil,
 		queryservice.Page{Limit: 10, After: "shop.main.t999"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -160,14 +160,14 @@ func TestAccessibleTables_CatalogFilterAndPaging(t *testing.T) {
 	svc := newListingService(t, 8, map[string]bool{"t000": true})
 	ctx := context.Background()
 
-	refs, next, err := svc.AccessibleTables(ctx, nil, "shop", queryservice.Page{Limit: 5})
+	refs, next, err := svc.AccessibleTables(ctx, nil, nil, "shop", queryservice.Page{Limit: 5})
 	if err != nil {
 		t.Fatalf("accessible: %v", err)
 	}
 	if len(refs) != 5 || next == "" {
 		t.Fatalf("page 1: got %d refs cursor %q", len(refs), next)
 	}
-	refs2, next2, err := svc.AccessibleTables(ctx, nil, "shop", queryservice.Page{Limit: 5, After: next})
+	refs2, next2, err := svc.AccessibleTables(ctx, nil, nil, "shop", queryservice.Page{Limit: 5, After: next})
 	if err != nil {
 		t.Fatalf("accessible page 2: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAccessibleTables_CatalogFilterAndPaging(t *testing.T) {
 		t.Fatalf("page 2: got %d refs cursor %q", len(refs2), next2)
 	}
 
-	none, _, err := svc.AccessibleTables(ctx, nil, "nope", queryservice.Page{})
+	none, _, err := svc.AccessibleTables(ctx, nil, nil, "nope", queryservice.Page{})
 	if err != nil {
 		t.Fatalf("unknown catalog: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestListTables_LoadsTheCatalog(t *testing.T) {
 	svc, loader := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true}}, "")
 	ctx := context.Background()
 	for range 2 {
-		got, _, err := svc.ListTables(ctx, "shop", "", nil, queryservice.Page{})
+		got, _, err := svc.ListTables(ctx, "shop", "", nil, nil, queryservice.Page{})
 		if err != nil {
 			t.Fatalf("ListTables: %v", err)
 		}
@@ -238,7 +238,7 @@ func TestListTables_LoadsTheCatalog(t *testing.T) {
 		t.Errorf("loads = %v, want one load of shop only", loader.loads)
 	}
 	// A name that is no attached catalog reaches no data source.
-	if got, _, err := svc.ListTables(ctx, "nope", "", nil, queryservice.Page{}); err != nil || len(got) != 0 {
+	if got, _, err := svc.ListTables(ctx, "nope", "", nil, nil, queryservice.Page{}); err != nil || len(got) != 0 {
 		t.Errorf("ListTables(nope) = %v, %v, want no table", got, err)
 	}
 	if loader.loads["nope"] != 0 {
@@ -248,7 +248,7 @@ func TestListTables_LoadsTheCatalog(t *testing.T) {
 
 func TestAccessibleTables_LoadsEveryCatalogThatIsUp(t *testing.T) {
 	svc, loader := newColdService(t, &denyingPolicy{}, "crm")
-	got, _, err := svc.AccessibleTables(context.Background(), nil, "", queryservice.Page{})
+	got, _, err := svc.AccessibleTables(context.Background(), nil, nil, "", queryservice.Page{})
 	if err != nil {
 		t.Fatalf("AccessibleTables: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestAccessibleTables_LoadsEveryCatalogThatIsUp(t *testing.T) {
 func TestListCatalogs_HidesADeniedCatalogOnAColdCache(t *testing.T) {
 	svc, _ := newColdService(t, &denyingPolicy{deny: map[string]bool{"customers": true, "orders": true}}, "crm")
 	got, err := svc.ListCatalogs(context.Background(),
-		fixedCatalogs{{Name: "shop"}, {Name: "crm"}}, nil)
+		fixedCatalogs{{Name: "shop"}, {Name: "crm"}}, nil, nil)
 	if err != nil {
 		t.Fatalf("ListCatalogs: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestListTables_VisibilityIsCheckedAsSelect(t *testing.T) {
 		}},
 		Clock: func() time.Time { return time.Unix(1713600000, 0) },
 	})
-	got, _, err := svc.ListTables(context.Background(), "shop", "", nil, queryservice.Page{})
+	got, _, err := svc.ListTables(context.Background(), "shop", "", nil, nil, queryservice.Page{})
 	if err != nil {
 		t.Fatalf("ListTables: %v", err)
 	}

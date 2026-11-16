@@ -16,6 +16,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/policycache"
@@ -48,19 +49,16 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	var finalRec *audit.Record
 	defer func() { endQuerySpan(span, finalRec) }()
 
-	// 0. Concurrency + input caps.
-	if !s.acquireSlot(ctx) {
+	// 0. Admission: concurrency slot and per-subject rate limit.
+	releaseSlot, admErr := s.admit(ctx, req.User)
+	if admErr != nil {
 		rec := s.buildAuditBase(req, qid, nil)
 		finalRec = rec
 		rec.Decision = audit.DecisionError
-		rec.ErrorCode = string(pkgerr.CodeRateLimited)
-		rec.Message = "service saturated"
+		setErrorCode(rec, admErr)
 		s.emit(ctx, rec, start)
-		return nil, pkgerr.New(pkgerr.CodeRateLimited).
-			WithQueryID(qid).
-			WithMessage("service saturated")
+		return nil, pkgerr.FromError(admErr).WithQueryID(qid)
 	}
-	releaseSlot := s.releaseFn()
 	defer releaseSlot()
 	// openRows is a result not yet handed to the caller, closed on a panic.
 	var openRows executor.RowIterator
@@ -90,20 +88,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		s.emit(ctx, rec, start)
 		out, outErr = nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid)
 	}()
-
-	// 0b. Per-subject rate limit.
-	if s.opts.RateLimiter != nil && req.User != nil {
-		if !s.opts.RateLimiter.Allow(req.User.Subject, req.User.Issuer) {
-			rec := s.buildAuditBase(req, qid, nil)
-			finalRec = rec
-			rec.Decision = audit.DecisionError
-			rec.ErrorCode = string(pkgerr.CodeRateLimited)
-			s.emit(ctx, rec, start)
-			return nil, pkgerr.New(pkgerr.CodeRateLimited).
-				WithQueryID(qid).
-				WithMessage("per-subject rate limit exceeded")
-		}
-	}
 
 	// 0c. Per-subject daily budget (pre-admission). A subject over its
 	// budget is refused before any work. Every later exit is charged: the
@@ -165,6 +149,19 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	finalRec = rec
 	if ast != nil {
 		rec.SQLFingerprint = ast.Fingerprint()
+	}
+
+	// 1a. Shape of a sample endpoint statement. Before the approval gate,
+	// so a where that changes the statement opens no approval ticket.
+	if req.Sample != nil && parseErr == nil {
+		if err := checkSampleAST(ast); err != nil {
+			apiErr := toAPIError(err, qid)
+			setErrorCode(rec, apiErr)
+			rec.Decision = audit.DecisionError
+			s.emit(ctx, rec, start)
+			return nil, apiErr
+		}
+		sampleRequestsMetric().WithLabelValues(string(req.Sample.Method)).Inc()
 	}
 
 	// 1b. Cross-catalog gate. Runs before the rewrite cache and policy so
@@ -511,6 +508,21 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	// The deferred release frees the slot now, not at Close: the slot gates
 	// request throughput, and the DuckDB pool bounds the connections.
 	return qr, nil
+}
+
+// admit is the admission step of a query and of the metadata calls: a
+// concurrency slot, then a token of the subject's rate limit. The caller
+// must call release; it is idempotent. A nil user skips the rate limit.
+func (s *Service) admit(ctx context.Context, user *identity.UserCtx) (release func(), err error) {
+	if !s.acquireSlot(ctx) {
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("service saturated")
+	}
+	release = s.releaseFn()
+	if s.opts.RateLimiter != nil && user != nil && !s.opts.RateLimiter.Allow(user.Subject, user.Issuer) {
+		release()
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithMessage("per-subject rate limit exceeded")
+	}
+	return release, nil
 }
 
 // acquireSlot grabs a semaphore token when MaxConcurrent is set. Returns

@@ -48,26 +48,13 @@ type SampleRequest struct {
 }
 
 // Sample validates req, builds the inner SELECT and runs it through the
-// query pipeline with the sample spec attached.
+// query pipeline with the sample spec attached. The pipeline admits the
+// request before it parses the SQL, and checks its shape.
 func (s *Service) Sample(ctx context.Context, req SampleRequest) (*QueryResult, error) {
 	sql, spec, maxRows, err := s.buildSample(req)
 	if err != nil {
 		return nil, err
 	}
-	// The shape check runs here too, before the approval gate in execute,
-	// so a where that changes the statement opens no approval ticket.
-	ast, err := s.opts.Parser.Parse(ctx, sql)
-	if err != nil {
-		return nil, parseErrToAPI(err, "")
-	}
-	res, ok := ast.Raw().(*pg.ParseResult)
-	if !ok {
-		return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage("the sample endpoint needs the pg_query parser")
-	}
-	if err := rewriter.CheckSampleStatement(res); err != nil {
-		return nil, err
-	}
-	sampleRequestsMetric().WithLabelValues(string(spec.Method)).Inc()
 	return s.execute(ctx, QueryRequest{
 		SQL:     sql,
 		MaxRows: maxRows,
@@ -77,6 +64,16 @@ func (s *Service) Sample(ctx context.Context, req SampleRequest) (*QueryResult, 
 		Facts:   req.Facts,
 		Sample:  spec,
 	}, false)
+}
+
+// checkSampleAST refuses a sample statement that is not one SELECT of one
+// table with at most a WHERE.
+func checkSampleAST(ast parser.AST) error {
+	res, ok := ast.Raw().(*pg.ParseResult)
+	if !ok {
+		return pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage("the sample endpoint needs the pg_query parser")
+	}
+	return rewriter.CheckSampleStatement(res)
 }
 
 // buildSample validates req and returns the inner SELECT, the sample spec

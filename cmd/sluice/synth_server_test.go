@@ -347,7 +347,7 @@ func TestSynthServer_NotBuiltThenSwap(t *testing.T) {
 		t.Errorf("datasources entry after the build: %v", ds)
 	}
 	assertOnlyA(t, deps)
-	tables, _, err := deps.service.ListTables(context.Background(), "crmsynth", "", analyst, queryservice.Page{Limit: 10})
+	tables, _, err := deps.service.ListTables(context.Background(), "crmsynth", "", analyst, nil, queryservice.Page{Limit: 10})
 	if err != nil || len(tables) != 1 || tables[0].Table != "customers" {
 		t.Fatalf("tables after the build: %v, %v", tables, err)
 	}

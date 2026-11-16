@@ -209,9 +209,9 @@ type ExplainAccessOutput struct {
 	Rejected    []PolicyRefInfo `json:"rejected,omitempty"`
 }
 
-func (s *Server) toolExplainAccess(ctx context.Context, _ *sdkmcp.CallToolRequest, in ExplainAccessArgs) (*sdkmcp.CallToolResult, ExplainAccessOutput, error) {
+func (s *Server) toolExplainAccess(ctx context.Context, req *sdkmcp.CallToolRequest, in ExplainAccessArgs) (*sdkmcp.CallToolResult, ExplainAccessOutput, error) {
 	user, _ := userFrom(ctx)
-	input := queryservice.ExplainInput{User: user, Origin: queryservice.OriginMCP}
+	input := queryservice.ExplainInput{User: user, Facts: requestFacts(ctx, req), Origin: queryservice.OriginMCP}
 	if in.Table != "" {
 		ref, err := parseTableRef(in.Table)
 		if err != nil {
@@ -252,13 +252,13 @@ type ListAccessibleTablesArgs struct {
 	Cursor  string `json:"cursor,omitempty" jsonschema:"opaque cursor from a previous next_cursor"`
 }
 
-func (s *Server) toolListAccessibleTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListAccessibleTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
+func (s *Server) toolListAccessibleTables(ctx context.Context, req *sdkmcp.CallToolRequest, in ListAccessibleTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
 	user, _ := userFrom(ctx)
 	page, err := decodePage(in.Limit, in.Cursor)
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
-	tables, next, err := s.deps.Service.AccessibleTables(ctx, user, in.Catalog, page)
+	tables, next, err := s.deps.Service.AccessibleTables(ctx, user, requestFacts(ctx, req), in.Catalog, page)
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
@@ -445,13 +445,13 @@ type CatalogEntry struct {
 	Healthy bool   `json:"healthy"`
 }
 
-func (s *Server) toolListCatalogs(ctx context.Context, _ *sdkmcp.CallToolRequest, _ ListCatalogsArgs) (*sdkmcp.CallToolResult, ListCatalogsOutput, error) {
+func (s *Server) toolListCatalogs(ctx context.Context, req *sdkmcp.CallToolRequest, _ ListCatalogsArgs) (*sdkmcp.CallToolResult, ListCatalogsOutput, error) {
 	user, _ := userFrom(ctx)
 	if s.deps.Catalogs == nil {
 		return s.toolErrorResult(ctx, pkgerr.New(pkgerr.CodeInternal).WithMessage("catalog lister not configured")),
 			ListCatalogsOutput{}, nil
 	}
-	catalogs, err := s.deps.Service.ListCatalogs(ctx, s.deps.Catalogs, user)
+	catalogs, err := s.deps.Service.ListCatalogs(ctx, s.deps.Catalogs, user, requestFacts(ctx, req))
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ListCatalogsOutput{}, nil
 	}
@@ -484,13 +484,13 @@ type ListTablesOutput struct {
 	NextCursor string   `json:"next_cursor,omitempty"`
 }
 
-func (s *Server) toolListTables(ctx context.Context, _ *sdkmcp.CallToolRequest, in ListTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
+func (s *Server) toolListTables(ctx context.Context, req *sdkmcp.CallToolRequest, in ListTablesArgs) (*sdkmcp.CallToolResult, ListTablesOutput, error) {
 	user, _ := userFrom(ctx)
 	page, err := decodePage(in.Limit, in.Cursor)
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
-	tables, next, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user, page)
+	tables, next, err := s.deps.Service.ListTables(ctx, in.Catalog, in.Schema, user, requestFacts(ctx, req), page)
 	if err != nil {
 		return s.toolErrorResult(ctx, err), ListTablesOutput{}, nil
 	}
@@ -524,14 +524,14 @@ type ColumnMetaInfo struct {
 	Nullable bool   `json:"nullable"`
 }
 
-func (s *Server) toolDescribeTable(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeTableArgs) (*sdkmcp.CallToolResult, DescribeTableOutput, error) {
+func (s *Server) toolDescribeTable(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeTableArgs) (*sdkmcp.CallToolResult, DescribeTableOutput, error) {
 	user, _ := userFrom(ctx)
 	ref, err := parseTableRef(in.Table)
 	if err != nil {
 		return s.toolErrorResult(ctx, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())),
 			DescribeTableOutput{}, nil
 	}
-	entry, err := s.deps.Service.DescribeTable(ctx, ref, user)
+	entry, err := s.deps.Service.DescribeTable(ctx, ref, user, requestFacts(ctx, req))
 	if err != nil {
 		return s.toolErrorResult(ctx, err), DescribeTableOutput{}, nil
 	}
