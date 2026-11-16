@@ -41,7 +41,7 @@ What happened: the first query returned 2 rows and used up `rowsPerDay`. Sluice 
 | `identity.apiKeyPepper` | API keys do not work without the [pepper](../reference/glossary.md) | A `secret://` reference |
 | Secret files | Sluice refuses files that group or others can write | `chmod 0600` |
 | `audit.chainKeyRef` | Without a key, a writer of the audit files can compute the hash chain again | A `secret://` reference to 32 bytes or more, stored away from the log |
-| `audit.file.path`, `audit.file.genesis` | The path is required. Sluice refuses a directory that is a symlink, that group or others can write, or that another user owns. The genesis default is built from host name and build commit | A directory only the Sluice user can write, a `secret://` reference for the [genesis](../reference/glossary.md) |
+| `audit.file.path`, `audit.file.genesis` | The path is required. Sluice refuses a directory that is a symlink or that every user can write. The genesis default is built from host name and build commit | A directory only the Sluice user or its group can write, a `secret://` reference for the [genesis](../reference/glossary.md) |
 | JWT subject binding: `issuer`, `audience`, `jwksUrl` | The audience is checked only when set | Set all three |
 | Subject binding: `rateLimit`, `budget` | Both need `claims.subjectId` or `issuer`. Budgets also need `budget.enabled: true` | See the example |
 | `resources` in every allow policy | Without `resources`, an allow policy covers every table of every data source. The catalog views of DuckDB, such as `information_schema.tables`, are refused whatever the policies say | List catalog, schema and table, the catalog without a wildcard |

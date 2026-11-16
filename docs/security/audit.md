@@ -128,7 +128,7 @@ Syslog and S3 get copies. Their failures never stop a query. Each has its own qu
 - File: `audit.file.path` is required. `sluice serve` and `sluice mcp` do not start without it.
 - File: a restart continues the same hash chain.
 - File: Sluice creates the directory with mode `0700` and the files with mode `0640`.
-- File: Sluice refuses a directory that is a symlink, that group or others can write, or that another user owns. On Windows, it checks only for a symlink.
+- File: Sluice refuses a directory that is a symlink or that every user can write. On Windows, it checks only for a symlink.
 - File: Sluice locks the directory with the file `.sluice.lock`. A second process with the same `audit.file.path` does not start. Give each process its own directory, or run `sluice serve` with `mcp.enabled` in place of a separate `sluice mcp`.
 - File: a crash can leave a last line without a newline. At start, Sluice moves that line to `<file>.torn-<time>`, logs an error and continues the chain from the last full record.
 - Sluice replaces invalid UTF-8 in a record with U+FFFD before it computes the hash. `sql_sample` and `client_meta` are cut at a character boundary.

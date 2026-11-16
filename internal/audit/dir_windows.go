@@ -26,5 +26,5 @@ func tryLock(f *os.File) error {
 	return err
 }
 
-// checkDirOwner has no owner check on Windows: ACLs are out of scope.
-func checkDirOwner(string, fs.FileInfo) error { return nil }
+// checkDirMode has no mode check on Windows: ACLs are out of scope.
+func checkDirMode(string, fs.FileInfo) error { return nil }

@@ -24,18 +24,11 @@ func tryLock(f *os.File) error {
 	return err
 }
 
-// checkDirOwner refuses a directory of another user, or one that group or
-// others can write.
-func checkDirOwner(dir string, info fs.FileInfo) error {
-	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("audit: group or others can write the audit directory %s (mode %v), run chmod go-w on it", dir, info.Mode().Perm())
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return nil
-	}
-	if uid := os.Geteuid(); int(st.Uid) != uid {
-		return fmt.Errorf("audit: the audit directory %s belongs to uid %d, sluice runs as uid %d", dir, st.Uid, uid)
+// checkDirMode refuses a directory that every user can write. A group
+// writable directory passes: a volume with an fsGroup is one.
+func checkDirMode(dir string, info fs.FileInfo) error {
+	if info.Mode().Perm()&0o002 != 0 {
+		return fmt.Errorf("audit: every user can write the audit directory %s (mode %v), run chmod o-w on it", dir, info.Mode().Perm())
 	}
 	return nil
 }

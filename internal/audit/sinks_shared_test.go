@@ -14,9 +14,7 @@ import (
 	"github.com/bino-bi/sluice/internal/audit"
 )
 
-// auditDir returns a new, empty audit directory with mode 0700. t.TempDir
-// follows the umask, and the file sink refuses a directory that the group
-// can write.
+// auditDir returns a new, empty audit directory with mode 0700.
 func auditDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "audit")

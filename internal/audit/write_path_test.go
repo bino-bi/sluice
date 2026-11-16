@@ -527,10 +527,19 @@ func TestFileSink_DirectoryChecks(t *testing.T) {
 	if err := os.Mkdir(open, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(open, 0o770); err != nil {
+	// A volume with an fsGroup is group writable and passes.
+	if err := os.Chmod(open, 0o2770); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := audit.NewFileSink(audit.FileOptions{Dir: open}); err == nil || !strings.Contains(err.Error(), "can write") {
-		t.Errorf("group writable err = %v", err)
+	s, err = audit.NewFileSink(audit.FileOptions{Dir: open})
+	if err != nil {
+		t.Fatalf("group writable: %v", err)
+	}
+	_ = s.Close(context.Background())
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := audit.NewFileSink(audit.FileOptions{Dir: open}); err == nil || !strings.Contains(err.Error(), "every user can write") {
+		t.Errorf("world writable err = %v", err)
 	}
 }

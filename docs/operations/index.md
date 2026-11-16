@@ -12,7 +12,7 @@ As an operator, you handle these parts of Sluice:
 | Audit directory | `audit.file.path` | None, required | The [audit log](../security/audit.md). Sluice creates it with mode `0700` and locks it. |
 | State directory | `budget.stateDir`, `approval.stateDir` | `./state` | Budget counters with `budget.enabled: true`, approvals with `approval.persist: true`. Sluice creates it with mode `0700`. |
 
-- Without `audit.file.path`, `sluice serve` and `sluice mcp` do not start. Sluice refuses an audit directory that is a symlink, that group or others can write, or that another user owns.
+- Without `audit.file.path`, `sluice serve` and `sluice mcp` do not start. Sluice refuses an audit directory that is a symlink or that every user can write.
 - Every `.yaml` and `.yml` file in the policy directory must be a policy object. Sluice skips hidden directories and the directories `tests` and `testdata`.
 
 ## Pages
