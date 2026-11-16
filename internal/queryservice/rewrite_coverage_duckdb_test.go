@@ -988,6 +988,153 @@ func TestExecute_UnallowedTableIsDenied(t *testing.T) {
 	_ = res.Rows.Close()
 }
 
+// DuckDB folds ASCII letters only, so a CTE named with a Kelvin sign
+// (U+212A) or a dotted capital I (U+0130) does not shadow the base table of
+// the same name under Unicode folding. Policy must see that table: it has
+// no allow, so the statement is denied before it runs.
+func TestExecute_UnicodeCTENameDoesNotHideTable(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	for _, sql := range []string{
+		"WITH \"Kunden\" AS (SELECT 1 AS x) SELECT k.x FROM kunden k, shop.main.customers c",
+		"WITH \"LİSTE\" AS (SELECT 1 AS x) SELECT l.x FROM liste l, shop.main.customers c",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			_ = res.Rows.Close()
+			t.Errorf("%s: served, want ACL_DENIED", sql)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+			t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
+const allowBareKundenPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-kunden
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          tables: ["kunden"]
+`
+
+const denyMemoryPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-memory
+  priority: 200
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          catalogs: ["memory"]
+          schemas: ["main"]
+`
+
+// DuckDB reads a table written without catalog in its default database.
+// A deny scoped to that catalog and schema must apply to the short name.
+func TestExecute_CatalogScopedDenyAppliesToBareName(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowBareKundenPolicy, denyMemoryPolicy)
+	if _, err := ex.inner.DB().ExecContext(context.Background(), "CREATE TABLE memory.main.kunden AS SELECT 1 AS x"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for _, sql := range []string{
+		"SELECT x FROM kunden",
+		"SELECT x FROM main.kunden",
+		"SELECT x FROM memory.main.kunden",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			t.Errorf("%s: served %v, want ACL_DENIED", sql, drainRows(t, res))
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+			t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
+// DuckDB system views list the tables and columns of every catalog, also
+// admin_users, which the subject may not read. Even a broad allow must not
+// open them, in any form DuckDB reads them by.
+func TestExecute_SystemObjectsRefused(t *testing.T) {
+	allows := map[string]string{
+		"tables *":        `tables: ["*"]`,
+		"schemas main":    `schemas: ["main"]`,
+		"catalogs memory": `catalogs: ["memory"]`,
+	}
+	sqls := []string{
+		"SELECT table_name, column_name FROM duckdb_columns",
+		"SELECT * FROM duckdb_tables",
+		"SELECT * FROM DuckDB_Views",
+		"SELECT * FROM main.duckdb_tables",
+		"SELECT * FROM system.duckdb_tables",
+		"SELECT * FROM system.main.duckdb_tables",
+		"SELECT * FROM sqlite_master",
+		"SELECT * FROM pg_class",
+		"SELECT * FROM pg_catalog.pg_class",
+		"SELECT * FROM information_schema.tables",
+		"SELECT * FROM information_schema.columns",
+		"SELECT * FROM system.information_schema.tables",
+		"SELECT * FROM temp.main.t",
+		"SELECT c.id FROM shop.main.customers c, (SELECT count(*) FROM duckdb_columns) x",
+	}
+	for name, res := range allows {
+		t.Run(name, func(t *testing.T) {
+			svc, ex, _ := newHelloSluiceService(t, `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-broad
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          `+res+`
+`)
+			for _, sql := range sqls {
+				out, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+					SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+				})
+				if err == nil {
+					t.Errorf("%s: served %v, want ACL_DENIED", sql, drainRows(t, out))
+					continue
+				}
+				if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+					t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+				}
+			}
+			if ex.calls != 0 {
+				t.Fatalf("executor ran %d times, want 0", ex.calls)
+			}
+		})
+	}
+}
+
 // A FROM alias that is a DuckDB join keyword is refused before execution:
 // otherwise DuckDB restructures the join and the row filter and mask are
 // skipped. (A pre-existing deparse divergence, closed at the parser.)

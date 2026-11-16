@@ -162,6 +162,30 @@ func TestParseSyntaxError(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("err not *ParseError: %T", err)
 	}
+	if pe.Line != 1 || pe.Col != 1 {
+		t.Fatalf("position = %d:%d, want 1:1", pe.Line, pe.Col)
+	}
+}
+
+// The position counts characters, not bytes, from pg_query's cursor.
+func TestParseSyntaxErrorPosition(t *testing.T) {
+	cases := []struct {
+		sql       string
+		line, col int
+	}{
+		{"SELECT 1\nFROM t\nWHERE x = = 1", 3, 11},
+		{"SELECT 'ü'\n  FROM t WHER x", 2, 15},
+	}
+	for _, tc := range cases {
+		_, err := newTestParser(t).Parse(context.Background(), tc.sql)
+		var pe *parser.ParseError
+		if !errors.As(err, &pe) {
+			t.Fatalf("%q: err = %v, want *ParseError", tc.sql, err)
+		}
+		if pe.Line != tc.line || pe.Col != tc.col {
+			t.Errorf("%q: position = %d:%d, want %d:%d (%v)", tc.sql, pe.Line, pe.Col, tc.line, tc.col, err)
+		}
+	}
 }
 
 func TestParseInputTooLarge(t *testing.T) {
@@ -577,11 +601,28 @@ func TestShapeValues(t *testing.T) {
 		{"SELECT a.id FROM a, b", want{joins: 1}},
 		{"SELECT a.id FROM a JOIN b ON a.id = b.id, c", want{joins: 2}},
 		{"SELECT id FROM (SELECT a.id FROM a JOIN b USING (id) JOIN c USING (id)) s", want{joins: 2}},
-		{"SELECT id FROM a WHERE id IN (SELECT b.id FROM b, c)", want{where: true, joins: 1}},
+		{"SELECT id FROM a WHERE id IN (SELECT b.id FROM b, c)", want{where: true, joins: 1, whereCols: "id"}},
 		{"SELECT a.id FROM a JOIN b USING (id) UNION SELECT c.id FROM c JOIN d USING (id)", want{union: true, joins: 2}},
 		// A star in a subquery is not the result of the statement.
 		{"SELECT id FROM (SELECT * FROM a) s", want{}},
 		{"EXPLAIN SELECT id FROM a UNION SELECT * FROM b", want{union: true, star: true}},
+		// Aggregates at any depth of a select item, by DuckDB's list.
+		{"SELECT median(x) FROM a", want{agg: true}},
+		{"SELECT quantile_cont(x, 0.5), any_value(y) FROM a", want{agg: true}},
+		{"SELECT round(sum(x)) FROM a", want{agg: true}},
+		{"SELECT sum(x)::INT FROM a", want{agg: true}},
+		{"SELECT CASE WHEN count(*) > 1 THEN 1 END FROM a", want{agg: true}},
+		{`SELECT "SUM"(x) FROM a`, want{agg: true}},
+		{"SELECT geomean(x) FROM a", want{agg: true}},
+		{"SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY x) FROM a", want{agg: true}},
+		// A window call and a subquery do not make the statement aggregate.
+		{"SELECT id, count(*) OVER () FROM a", want{}},
+		{"SELECT id, (SELECT count(*) FROM b) FROM a", want{}},
+		{"SELECT abs(x) FROM a", want{}},
+		// WHERE columns at any depth, but not in a subquery body.
+		{"SELECT id FROM a WHERE lower(name) = 'x' AND CAST(age AS INT) > 3", want{where: true, whereCols: "name,age"}},
+		{"SELECT id FROM a WHERE CASE WHEN flag THEN x END BETWEEN lo AND hi", want{where: true, whereCols: "flag,x,lo,hi"}},
+		{"SELECT id FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b.ssn = 1)", want{where: true}},
 	}
 	p := newTestParser(t)
 	for _, tc := range cases {

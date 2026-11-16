@@ -55,7 +55,7 @@ func (s *state) checkReservedName(raw *pg.ParseResult) error {
 		found := false
 		m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 			if fd.Kind() == protoreflect.StringKind && !fd.IsList() {
-				found = strings.Contains(foldName(v.String()), wrapperSource)
+				found = strings.Contains(parser.FoldASCII(v.String()), wrapperSource)
 			}
 			return !found
 		})
@@ -114,12 +114,12 @@ func (s *state) checkWrapperQualifiers(raw *pg.ParseResult) error {
 		}
 		f := make([]string, len(cr.Fields))
 		for i, n := range cr.Fields {
-			f[i] = foldName(n.GetString_().GetSval())
+			f[i] = parser.FoldASCII(n.GetString_().GetSval())
 		}
 		for _, rv := range named {
 			if s.reachesTable(f, rv) {
 				return false, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(fmt.Sprintf(
-					"qualify the columns of table %q with the table name or an alias, not with its schema or catalog", foldName(rv.Relname)))
+					"qualify the columns of table %q with the table name or an alias, not with its schema or catalog", parser.FoldASCII(rv.Relname)))
 			}
 		}
 		return false, nil
@@ -134,9 +134,9 @@ func (s *state) checkWrapperQualifiers(raw *pg.ParseResult) error {
 // the four-part form, but the three-part form matches the schema only,
 // since alias.struct_col.field has the same shape.
 func (s *state) reachesTable(f []string, rv *pg.RangeVar) bool {
-	name := foldName(rv.Relname)
-	schema := cmp.Or(foldName(rv.Schemaname), "main")
-	catalog := foldName(cmp.Or(rv.Catalogname, s.defaultCatalog, s.defaultDatabase))
+	name := parser.FoldASCII(rv.Relname)
+	schema := cmp.Or(parser.FoldASCII(rv.Schemaname), "main")
+	catalog := parser.FoldASCII(cmp.Or(rv.Catalogname, s.defaultCatalog, s.defaultDatabase))
 	if len(f) >= 3 && f[1] == name && (f[0] == schema || catalog != "" && f[0] == catalog) {
 		return true
 	}

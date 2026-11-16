@@ -64,9 +64,8 @@ func New(opts Options) *Rewriter {
 	return &Rewriter{opts: opts, snippets: &snippetMemo{pc: opts.ParseCheck}}
 }
 
-// RewriteRequest carries everything Rewrite needs. AST may be nil if the
-// caller has the raw SQL but couldn't parse it — the rewriter attempts
-// the pass-through / regex-fallback path.
+// RewriteRequest carries everything Rewrite needs. AST is required:
+// Rewrite refuses a request without one.
 type RewriteRequest struct {
 	AST      parser.AST
 	Decision *policy.Decision
@@ -114,16 +113,15 @@ type PostMask struct {
 
 // Rewrite applies req.Decision to req.AST. The general flow is:
 //
-//  1. Reject unsupported statement kinds.
-//  2. Deny / reject: return a typed APIError.
+//  1. Deny / reject: return a typed APIError.
+//  2. Refuse a nil AST, unsupported statement kinds, functions and params.
 //  3. Fast-path: pass-through when no mutation is required.
 //  4. Clone the AST, normalize it for DuckDB and refuse it when DuckDB
 //     reads its deparse in another way than req.Raw. Then plan the
 //     post-query masks and wrap each filtered or masked table.
 //  5. Deparse, compute fingerprint, return the result.
 //
-// Steps 4+ are only reached when req.AST != nil. The nil-AST branch
-// handles the regex fallback.
+// A nil AST is an error: the rewriter never serves text it did not parse.
 func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteResult, error) {
 	if req.Decision == nil {
 		return nil, fmt.Errorf("rewriter: Decision required")
@@ -164,33 +162,31 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		return nil, e
 	}
 
-	// Step 2: statement-kind gate. AST == nil means the parser failed
-	// upstream; that path is handled by the regex fallback.
-	if req.AST != nil {
-		if err := validateStatementKind(req.AST.Statement()); err != nil {
-			return nil, err
-		}
-		// Function gate. The passes below only secure tables, subqueries
-		// and joins; queryservice runs the same check before its cache.
-		if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
-			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
-		}
-		if req.AST.Shape().HasParams {
-			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(parser.ErrParamRef.Error())
-		}
-		// The plan shows the policy SQL with its bound values (salts too)
-		// and statistics over the rows a filter hides.
-		if req.AST.Statement() == parser.StmtExplain && (len(req.Decision.RowFilters) > 0 || len(req.Decision.ColumnMasks) > 0) {
-			return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
-				WithMessage("EXPLAIN is not supported on a table with a row filter or column mask")
-		}
+	// Step 2: a nil AST means the parser failed upstream. Refuse it also
+	// on a plain allow: unparsed text could be a write or a file read.
+	if req.AST == nil {
+		return nil, fmt.Errorf("%w: statement was not parsed", ErrUnsupportedSyntax)
+	}
+	if err := validateStatementKind(req.AST.Statement()); err != nil {
+		return nil, err
+	}
+	// Function gate. The passes below only secure tables, subqueries
+	// and joins; queryservice runs the same check before its cache.
+	if reason := parser.CheckFunctions(req.AST.Shape()); reason != "" {
+		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithMessage(reason)
+	}
+	if req.AST.Shape().HasParams {
+		return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).WithMessage(parser.ErrParamRef.Error())
+	}
+	// The plan shows the policy SQL with its bound values (salts too)
+	// and statistics over the rows a filter hides.
+	if req.AST.Statement() == parser.StmtExplain && (len(req.Decision.RowFilters) > 0 || len(req.Decision.ColumnMasks) > 0) {
+		return nil, pkgerr.New(pkgerr.CodeUnsupportedSyntax).
+			WithMessage("EXPLAIN is not supported on a table with a row filter or column mask")
 	}
 
 	// Step 3: pass-through fast path.
 	if !needsMutation(req.Decision) && req.Sample == nil {
-		if req.AST == nil {
-			return r.regexFallback(req)
-		}
 		return &RewriteResult{
 			SQL:         req.Raw,
 			Fingerprint: req.AST.Fingerprint(),
@@ -198,16 +194,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		}, nil
 	}
 
-	// Step 4: AST is required to apply mutations.
-	if req.AST == nil {
-		return nil, fmt.Errorf("%w: rewrite required but AST missing", ErrUnsupportedSyntax)
-	}
-
 	// Lift the pg_query AST so the mutators can operate on proto nodes.
-	raw, ok := req.AST.Raw().(*pg.ParseResult)
-	if !ok {
-		return nil, ErrForeignAST
-	}
 	clone, ok := req.AST.Clone().Raw().(*pg.ParseResult)
 	if !ok {
 		return nil, ErrForeignAST
@@ -275,7 +262,6 @@ func (r *Rewriter) Rewrite(ctx context.Context, req RewriteRequest) (*RewriteRes
 		// original fingerprint as a fallback so audit remains populated.
 		fp = req.AST.Fingerprint()
 	}
-	_ = raw // kept so the compiler retains the type assertion in early slices
 
 	// Step 6: sampling wraps the deparsed text — pg_query cannot express
 	// DuckDB's USING SAMPLE, so the wrap happens after deparse and the

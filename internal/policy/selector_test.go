@@ -189,3 +189,43 @@ func TestCompile_RejectsDottedNamePatterns(t *testing.T) {
 		t.Errorf(`tables: ["sales\.2024"] must match exactly the table named sales.2024`)
 	}
 }
+
+// A name written without catalog or schema is in DuckDB's default database
+// and schema, so a selector scoped to them matches it.
+func TestCompile_BareNameMatchesDefaultCatalogAndSchema(t *testing.T) {
+	r, err := compileResourceSelector(apitypes.ResourceSelector{Catalogs: []string{"memory"}, Schemas: []string{"main"}}, nil)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for _, ref := range []parser.TableRef{{Table: "t"}, {Schema: "main", Table: "t"}, {Catalog: "memory", Schema: "main", Table: "t"}} {
+		if !r.matches(ref) {
+			t.Errorf("matches(%+v) = false, want true", ref)
+		}
+	}
+	// DuckDB reads a system view from its system catalog, not from memory.
+	for _, ref := range []parser.TableRef{{Schema: "other", Table: "t"}, {Catalog: "shop", Schema: "main", Table: "t"}, {Table: "duckdb_tables"}} {
+		if r.matches(ref) {
+			t.Errorf("matches(%+v) = true, want false", ref)
+		}
+	}
+}
+
+// Names match like DuckDB compares them: ASCII letters without regard to
+// case, every other letter exactly.
+func TestCompile_NamesFoldASCIIOnly(t *testing.T) {
+	r, err := compileResourceSelector(apitypes.ResourceSelector{Tables: []string{"Kunden", "Übersicht"}}, nil)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for table, want := range map[string]bool{
+		"kunden":    true,
+		"KUNDEN":    true,
+		"Kunden":    false, // Kelvin sign
+		"Übersicht": true,
+		"übersicht": false,
+	} {
+		if got := r.matches(parser.TableRef{Table: table}); got != want {
+			t.Errorf("matches(%q) = %v, want %v", table, got, want)
+		}
+	}
+}

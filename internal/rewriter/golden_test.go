@@ -124,8 +124,8 @@ func runGoldenFixture(t *testing.T, dir string) {
 		user = nil
 	}
 
-	// Parse + evaluate policy — on parse failure let the rewriter see a
-	// nil AST so regex fallback + statement-kind gates exercise.
+	// Parse + evaluate policy. On a parse failure the rewriter sees a nil
+	// AST and must refuse it.
 	p := pgquery.New(parser.Options{})
 	ast, parseErr := p.Parse(context.Background(), sql)
 

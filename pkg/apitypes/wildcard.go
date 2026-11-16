@@ -53,6 +53,8 @@ func (m *regexMatcher) Pattern() string        { return m.pat }
 
 // wildcardToRegex converts our pattern syntax to an anchored regex body.
 // It walks character by character so escapes can be handled precisely.
+// Other bytes are copied as they are: string(p[i]) would turn each byte of
+// a multi-byte UTF-8 letter into a rune of its own.
 func wildcardToRegex(p string) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(p); i++ {
@@ -62,8 +64,7 @@ func wildcardToRegex(p string) (string, error) {
 			if i+1 >= len(p) {
 				return "", fmt.Errorf("apitypes: trailing backslash in wildcard %q", p)
 			}
-			next := p[i+1]
-			b.WriteString(regexp.QuoteMeta(string(next)))
+			b.WriteString(regexp.QuoteMeta(p[i+1 : i+2]))
 			i++
 		case '*':
 			if i+1 < len(p) && p[i+1] == '*' {
@@ -78,7 +79,7 @@ func wildcardToRegex(p string) (string, error) {
 		case '.':
 			b.WriteString(`\.`)
 		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
+			b.WriteString(regexp.QuoteMeta(p[i : i+1]))
 		}
 	}
 	return b.String(), nil

@@ -26,6 +26,9 @@ func TestWildcardMatcher(t *testing.T) {
 		{`\*.orders`, "public.orders", false},
 		{"exact", "exact", true},
 		{"exact", "other", false},
+		{"Übersicht", "Übersicht", true},
+		{"ü*", "übersicht", true},
+		{`\ü`, "ü", true},
 	}
 	for _, c := range cases {
 		t.Run(c.pattern+"=>"+c.path, func(t *testing.T) {

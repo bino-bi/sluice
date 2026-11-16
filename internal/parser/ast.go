@@ -2,11 +2,13 @@
 
 package parser
 
-// AST is the narrow interface the rest of the system consumes. Concrete
-// backends wrap their native node tree; callers must not unwrap Raw()
-// outside the backend's own package.
+// AST is the interface policy and queryservice consume. pg_query
+// (internal/pgquery) is the only real backend. The rewriter is bound to it:
+// it unwraps Raw() to a *pg_query.ParseResult and works on pg_query nodes,
+// and so does the sample endpoint. A second backend would need a rewrite of
+// internal/rewriter.
 type AST interface {
-	// Raw returns the backend-specific node tree. Opaque to callers.
+	// Raw returns the backend's node tree, a *pg_query.ParseResult.
 	Raw() any
 
 	// Fingerprint returns the pre-computed fingerprint for this AST.
@@ -34,9 +36,18 @@ type AST interface {
 	Source() string
 }
 
-// TableRef is a reference to a table inside an AST. Catalog is empty when
-// the query used an unqualified or two-part name; the rewriter fills it in
-// from the default catalog.
+// DuckDB reads a table written without a catalog in its default database,
+// and one written without a schema in its default schema. Sluice runs
+// DuckDB in memory, so both are fixed. TestDefaultDatabaseAndSchema in
+// internal/executor checks them.
+const (
+	DefaultDatabase = "memory"
+	DefaultSchema   = "main"
+)
+
+// TableRef is a reference to a table inside an AST. Catalog and Schema are
+// empty when the query did not write them. Policy selectors then match
+// DefaultDatabase and DefaultSchema, the names DuckDB reads.
 type TableRef struct {
 	Catalog string
 	Schema  string

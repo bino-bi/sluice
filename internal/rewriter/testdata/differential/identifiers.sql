@@ -17,6 +17,9 @@ same SELECT count(*) FROM memory.main.t
 same SELECT count(*) FROM "memory"."main"."t"
 same SELECT T.id FROM Memory.Main.T ORDER BY 1
 same WITH "Totals" AS (SELECT a, count(*) AS n FROM t GROUP BY a) SELECT a, n FROM totals ORDER BY a
+# DuckDB folds ASCII letters only. A CTE named with a Kelvin sign (U+212A)
+# does not shadow kw, so the table keeps its row filter.
+same WITH "Kw" AS (SELECT 0 AS id) SELECT id FROM kw ORDER BY id
 same WITH c AS (SELECT ID AS Key FROM t) SELECT key FROM C ORDER BY KEY
 
 # Alias spelling comes back as written.

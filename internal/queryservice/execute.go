@@ -7,7 +7,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -113,8 +112,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		req.MaxRows = s.opts.Limits.MaxRowsCeiling
 	}
 
-	// 1. Parse (best-effort; the regex fallback carries us when the
-	// parser fails but tables are still extractable).
+	// 1. Parse. On a parse error the best-effort regex fallback gives policy
+	// some table names, so a deny can win over the syntax error.
 	parseCtx, parseSpan := s.tracer.Start(ctx, "query.parse")
 	ast, parseErr := s.opts.Parser.Parse(parseCtx, req.SQL)
 	var shape parser.QueryShape
@@ -181,6 +180,19 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		s.emit(ctx, rec, start)
 		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
+	}
+
+	// 1e. DuckDB system objects. Views such as duckdb_columns list the
+	// tables and columns of every catalog, and a policy keyed on table names
+	// cannot tell them from user data. The list endpoints serve metadata
+	// filtered by policy instead.
+	if i := slices.IndexFunc(tables, parser.IsSystemObject); i >= 0 {
+		reason := fmt.Sprintf("table %q is a DuckDB system object and cannot be queried", tables[i].Table)
+		rec.Decision = audit.DecisionDeny
+		rec.Message = reason
+		s.emit(ctx, rec, start)
+		releaseSlot()
+		return nil, pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid).WithMessage(reason)
 	}
 
 	// 2. Policy evaluation + rewrite, memoised when the cache is enabled.
@@ -663,7 +675,7 @@ func (s *Service) catalogAsSchema(tables []parser.TableRef) string {
 			catalogs = s.opts.Catalogs()
 		}
 		for _, c := range catalogs {
-			if strings.EqualFold(c, t.Schema) {
+			if parser.FoldASCII(c) == parser.FoldASCII(t.Schema) {
 				return t.Schema + "." + t.Table
 			}
 		}

@@ -67,6 +67,109 @@ WHERE database_name = 'system' AND schema_name = 'main'`)
 	}
 }
 
+// TestAggregateFunctionsMatchDuckDB checks the aggregate list behind
+// QueryShape.IsAggregate against the embedded DuckDB, in both directions.
+func TestAggregateFunctionsMatchDuckDB(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	rows, err := e.DB().QueryContext(context.Background(), `
+SELECT DISTINCT function_name, function_type
+FROM duckdb_functions()
+WHERE function_type = 'aggregate' OR function_name IN (`+
+		"'"+strings.Join(parser.AggregateMacros(), "', '")+"'"+`)`)
+	if err != nil {
+		t.Fatalf("duckdb_functions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var duck []string
+	macros := map[string]bool{}
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		switch typ {
+		case "aggregate":
+			duck = append(duck, name)
+		case "macro":
+			macros[name] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	slices.Sort(duck)
+	duck = slices.Compact(duck)
+	if got := parser.AggregateFunctions(); !slices.Equal(got, duck) {
+		t.Errorf("aggregate list differs from DuckDB.\nlist:   %v\nduckdb: %v", got, duck)
+	}
+	for _, name := range parser.AggregateMacros() {
+		if !macros[name] {
+			t.Errorf("aggregate macro %q is not a macro in DuckDB", name)
+		}
+	}
+}
+
+// TestDefaultDatabaseAndSchema checks where DuckDB reads a table written
+// without catalog or schema. Policy selectors match such a name there.
+func TestDefaultDatabaseAndSchema(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	var db, schema string
+	if err := e.DB().QueryRowContext(context.Background(), "SELECT current_database(), current_schema()").Scan(&db, &schema); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if db != parser.DefaultDatabase || schema != parser.DefaultSchema {
+		t.Fatalf("default is %s.%s, want %s.%s", db, schema, parser.DefaultDatabase, parser.DefaultSchema)
+	}
+	got, err := e.CurrentDatabase(context.Background())
+	if err != nil || got != parser.DefaultDatabase {
+		t.Fatalf("CurrentDatabase = %q, %v; want %q", got, err, parser.DefaultDatabase)
+	}
+}
+
+// TestSystemObjectsMatchDuckDB checks the list behind parser.IsSystemObject
+// against the tables and views of DuckDB's system and temp catalogs, in
+// both directions.
+func TestSystemObjectsMatchDuckDB(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	rows, err := e.DB().QueryContext(context.Background(), `
+SELECT database_name, schema_name, name FROM (
+	SELECT database_name, schema_name, table_name AS name FROM duckdb_tables()
+	UNION ALL
+	SELECT database_name, schema_name, view_name FROM duckdb_views())
+WHERE database_name IN ('system', 'temp')
+ORDER BY ALL`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	duck := map[string][]string{}
+	for rows.Next() {
+		var db, schema, name string
+		if err := rows.Scan(&db, &schema, &name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if db != "system" {
+			t.Errorf("%s.%s.%s: a temp object is not in the list", db, schema, name)
+			continue
+		}
+		duck[schema] = append(duck[schema], name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	got := parser.SystemObjects()
+	for schema := range duck {
+		if _, ok := got[schema]; !ok {
+			t.Errorf("schema system.%s is not in the list: %v", schema, duck[schema])
+		}
+	}
+	for schema, names := range got {
+		if !slices.Equal(names, duck[schema]) {
+			t.Errorf("system.%s differs from DuckDB.\nlist:   %v\nduckdb: %v", schema, names, duck[schema])
+		}
+	}
+}
+
 // TestWrapperAliasKeywords checks the unsafe alias list against DuckDB.
 // For every word of duckdb_keywords() it deparses a subquery aliased with
 // that word and joined to a table, the shape a row-filter wrapper takes,

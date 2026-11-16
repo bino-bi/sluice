@@ -3,8 +3,6 @@
 package pgquery
 
 import (
-	"strings"
-
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -62,7 +60,7 @@ func (w *tableWalker) pushCTEScope(names []string) {
 	scope := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		if n != "" {
-			scope[strings.ToLower(n)] = struct{}{}
+			scope[parser.FoldASCII(n)] = struct{}{}
 		}
 	}
 	w.ctes = append(w.ctes, scope)
@@ -239,13 +237,13 @@ func (w *tableWalker) walkRelation(rv *pg.RangeVar, aliasOverride string) {
 	if alias == "" && rv.Alias != nil {
 		alias = rv.Alias.Aliasname
 	}
-	// DuckDB resolves names without regard to case, also when quoted.
+	// DuckDB resolves names without regard to ASCII case, also when quoted.
 	// pg_query keeps a quoted name as written, so fold here: policies and
 	// the rewriter compare these names exactly.
 	w.addRef(parser.TableRef{
-		Catalog: strings.ToLower(rv.Catalogname),
-		Schema:  strings.ToLower(rv.Schemaname),
-		Table:   strings.ToLower(rv.Relname),
+		Catalog: parser.FoldASCII(rv.Catalogname),
+		Schema:  parser.FoldASCII(rv.Schemaname),
+		Table:   parser.FoldASCII(rv.Relname),
 		Alias:   alias,
 	})
 }
@@ -269,7 +267,7 @@ func (w *tableWalker) walkWith(with *pg.WithClause) {
 			w.walkNode(n)
 			continue
 		}
-		name := strings.ToLower(cte.GetCtename())
+		name := parser.FoldASCII(cte.GetCtename())
 		if body := cte.GetCtequery().GetSelectStmt(); with.GetRecursive() && body.GetOp() == pg.SetOperation_SETOP_UNION {
 			w.walkRecursiveUnion(body, scope, name)
 		} else {

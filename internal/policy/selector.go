@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -184,7 +185,7 @@ func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]
 			}
 		}
 	}
-	// Catalog, schema and table names are matched without regard to case,
+	// Catalog, schema and table names are matched without regard to ASCII case,
 	// like DuckDB resolves them.
 	if out.catalogs, err = compileMatchers(lowerAll(r.Catalogs), "catalogs"); err != nil {
 		return nil, err
@@ -238,7 +239,7 @@ func hasUnescapedDot(p string) bool {
 func lowerAll(in []string) []string {
 	out := make([]string, len(in))
 	for i, s := range in {
-		out[i] = strings.ToLower(s)
+		out[i] = parser.FoldASCII(s)
 	}
 	return out
 }
@@ -542,19 +543,25 @@ func walkClaimPath(claims map[string]any, path []string) (any, bool) {
 }
 
 // matches reports whether a single TableRef satisfies the resource
-// selector. An empty Catalog on the ref is treated as "any catalog" so
-// unqualified SQL still matches catalog-scoped policies.
+// selector. An empty Catalog or Schema on the ref is matched as DuckDB's
+// default database or schema, the one DuckDB reads for such a name. A
+// DuckDB system object keeps the empty parts: DuckDB reads it from the
+// system catalog, and queryservice refuses it before policy.
 func (r *compiledResource) matches(t parser.TableRef) bool {
 	if r == nil || r.empty {
 		return true
 	}
-	if len(r.catalogs) > 0 && !matchAny(r.catalogs, strings.ToLower(t.Catalog)) {
+	catalog, schema := t.Catalog, t.Schema
+	if !parser.IsSystemObject(t) {
+		catalog, schema = cmp.Or(catalog, parser.DefaultDatabase), cmp.Or(schema, parser.DefaultSchema)
+	}
+	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(catalog)) {
 		return false
 	}
-	if len(r.schemas) > 0 && !matchAny(r.schemas, strings.ToLower(t.Schema)) {
+	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(schema)) {
 		return false
 	}
-	if len(r.tables) > 0 && !matchAny(r.tables, strings.ToLower(t.Table)) {
+	if len(r.tables) > 0 && !matchAny(r.tables, parser.FoldASCII(t.Table)) {
 		return false
 	}
 	// Tag references: at least one referenced classification rule must also

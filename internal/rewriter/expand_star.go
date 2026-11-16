@@ -10,6 +10,7 @@ import (
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/schema"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -263,13 +264,13 @@ func appendFromEntries(entries []fromEntry, n *pg.Node, aliases aliasMap, defaul
 		entries = appendFromEntries(entries, v.JoinExpr.Larg, aliases, defaultCatalog)
 		return appendFromEntries(entries, v.JoinExpr.Rarg, aliases, defaultCatalog)
 	case *pg.Node_RangeSubselect:
-		alias := foldName(v.RangeSubselect.GetAlias().GetAliasname())
+		alias := parser.FoldASCII(v.RangeSubselect.GetAlias().GetAliasname())
 		if alias == "" {
 			return append(entries, fromEntry{sub: v.RangeSubselect})
 		}
 		return append(entries, fromEntry{alias: alias})
 	case *pg.Node_RangeFunction:
-		alias := foldName(v.RangeFunction.GetAlias().GetAliasname())
+		alias := parser.FoldASCII(v.RangeFunction.GetAlias().GetAliasname())
 		if alias == "" {
 			// DuckDB names the output of an unaliased table function
 			// after the function.
@@ -340,7 +341,7 @@ func (s *state) fromHasPostMask(aliases aliasMap) bool {
 // star covers every FROM item, in FROM order.
 func (s *state) expandOneStar(aliases aliasMap, entries []fromEntry, qualifier string) ([]*pg.Node, error) {
 	if qualifier != "" {
-		qualifier = foldName(qualifier)
+		qualifier = parser.FoldASCII(qualifier)
 		for i := range entries {
 			if entries[i].alias == qualifier {
 				return s.starTargets(aliases, &entries[i])
