@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -65,7 +66,7 @@ func TestNoLeaks(t *testing.T) {
 			if (err == nil) != (tc.want == "") || err != nil && !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
-			report, rerr := os.ReadFile(Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
+			report, rerr := os.ReadFile(layout.Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
 			if rerr != nil {
 				t.Fatal(rerr)
 			}

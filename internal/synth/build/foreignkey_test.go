@@ -14,6 +14,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/synth/generate"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/synth/profile"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -70,7 +71,7 @@ const orphanQuery = `SELECT count(*) FROM syn.crm.orders o WHERE o.customer_id I
 func TestForeignKeyBuild(t *testing.T) {
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: fkSpec(nil, sequenceID), dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	// R2: parents first in the report.
 	if len(rep.Tables) != 2 || rep.Tables[0].Name != "crm.customers" || rep.Tables[1].Name != "crm.orders" {
@@ -115,7 +116,7 @@ func TestForeignKeyBuild(t *testing.T) {
 func TestForeignKeyOrphanRate(t *testing.T) {
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: fkSpec(map[string]any{"orphanRate": 0.05}, sequenceID), dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	orphans := scalar[int64](t, db, orphanQuery)
 	rows := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.orders")
 	if share := float64(orphans) / float64(rows); math.Abs(share-0.05) > 0.01 {

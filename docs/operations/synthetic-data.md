@@ -4,7 +4,7 @@
 
 A `synthetic` data source serves generated rows that look like the rows of another data source. Use it to give developers and tests realistic data without real values.
 
-Sluice reads the source once, builds a profile of each column, and writes generated rows to a snapshot file. Clients query the snapshot like any other catalog.
+A build reads the source, builds a profile of each column, and writes generated rows to a snapshot file. Clients query the snapshot like any other catalog.
 
 ## Example
 
@@ -156,7 +156,7 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 
 - `asOf` is an ISO date or timestamp. Without it, `asOf` is the upper bound of the column after `clipOutliers` and `extremeJitter`. Set it to the date of the source data, so the ages mean something.
 - An age with fewer than `minGroupSize` rows never appears. Its rows are left out of the shares.
-- `clipOutliers` cuts the dates before Sluice counts the ages. A spike at the lowest or highest date gives a warning.
+- `clipOutliers` cuts the dates before Sluice counts the ages. Then a spike at the lowest or highest date gives a warning.
 - A date after `asOf` counts as age 0. An age above 150 counts as 150.
 - `granularity` cuts the written date. The cut date keeps the drawn age.
 - With `noise` and `bounds` on the column, `asOf` defaults to `bounds.max`, and dates outside the bounds count as the nearest bound.
@@ -202,20 +202,30 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 
 | Setting | Default | What it does |
 |---|---|---|
-| `minGroupSize` | 5 | A value, length, bin or bound must come from at least this many source rows. Rarer values never appear. |
+| `minGroupSize` | 5 | A value, length, bin or bound must come from at least this many source rows. Rarer values never appear. See [Range](#range). |
 | `clipOutliers` | Off | Cuts the source below the `lower` and above the `upper` quantile before the profile. |
 | `extremeJitter` | `{min: 0.01, max: 0.02}` | Moves the lowest and highest value by a random share of the range. `off` turns it off. |
-| `spikeWarning` | `true` | Warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
+| `spikeWarning` | `true` | With `clipOutliers`, warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
 | `strictTags` | `[pii]` | A column with one of these tags needs a column entry or a rule. The default generator is not enough. |
 | `rejectExactMatches` | Off | Columns that together must not equal a source row. Sluice draws matching rows again. |
 | `noise` | Off | Adds random noise to the counts of the profile. Takes `epsilon` from 0.001 to 100. See [Noise](#noise). |
 | `bounds` | None | The public `min` and `max` of a number, `TIME` or date column. Needs `noise`. |
 
 - Columns with fewer than `minGroupSize` non-null rows fail the build, unless the generator needs no profile. Examples: `constant`, `sequence`, `range`, `weighted`, `regex`, `uuid`, `redact`, `null`.
-- A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Set `clipOutliers` to remove it.
+- A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Choose other `clipOutliers` quantiles to remove it.
 - `strictTags` is set only on the data source. Tags come from `DataClassification` objects on the source catalog.
 - `rejectExactMatches` is set only on a table. It takes 1 to 32 column names.
 - `noise` is set only on the data source. `bounds` is set only on a column entry.
+
+### Range
+
+The range of a number, `TIME` or date column is its lowest and highest value. Most generators write no value outside it. `normal` and `lognormal` with `truncate: false` and `age` can, but their values do not come from a single row.
+
+- Without `clipOutliers`, the range goes from the `minGroupSize`-th lowest to the `minGroupSize`-th highest source value. A source value outside counts as the nearest end. So no single row sets an end, and one far value does not stretch the range.
+- Sluice checks two things: at least `minGroupSize` non-null rows, and a `minGroupSize`-th lowest value that is not above the `minGroupSize`-th highest. Without many equal values, the second check needs about `2 x minGroupSize - 1` rows. When a check fails, a column entry fails the build, a default column is written as `NULL`, and a `by` group is dropped.
+- With `clipOutliers`, the range goes from the `lower` to the `upper` quantile. Source values outside are left out of the profile. Quantiles near 0 and 1 can put the value of a single row at an end. Then `spikeWarning` warns.
+- With `noise` and `bounds`, the range comes from the bounds. See [Min and max](#min-and-max).
+- `extremeJitter` then moves both ends.
 
 `rejectExactMatches` compares the listed columns of each synthetic row with every source row:
 
@@ -322,7 +332,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 - When the table sizes do not fit the source fan-out, Sluice scales it. The report warns when the scale is below 0.5 or above 2.
 - Orphan keys are new values, not source keys.
 - After the write, Sluice checks that every key except the orphans finds its parent. The snapshot has no `FOREIGN KEY` constraint.
-- Sluice keeps the parent keys in memory during the build, about 50 bytes per parent row.
+- Sluice keeps the parent keys in memory during the build, about 50 bytes per parent row. See [Memory](#memory).
 
 ### Groups with by
 
@@ -331,7 +341,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 - A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
 - Values compare as text. The `by` column needs a generator that keeps source labels: `categorical`, `uniformCategory`, `shuffleLabels`, `weighted`, `boolean` or `constant`. Other generators are refused, also when a default falls back to one. The report warns when most rows find no group.
 - `minGroupSize` counts rows, not people. Do not group by a column that holds one value per person, such as a customer id.
-- A group needs `minGroupSize` rows. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
+- A group needs `minGroupSize` rows. For a number or date range it must also pass the check in [Range](#range). Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
 - `NULL` is a group value of its own.
 - The spike check runs per group. The report counts groups with a spike, but names none.
 
@@ -348,7 +358,7 @@ A `template` is `NULL` when a column it reads is `NULL`. A `dateOffset` is `NULL
 
 ## Profile on a sample
 
-By default a build reads the full source table, once for each profile query. For a large table, set `profile.sampleRows` on the table, such as `profile: { sampleRows: 1000000 }`.
+By default a build reads the full source table, once for each profile query. See [Consistency](#consistency). For a large table, set `profile.sampleRows` on the table, such as `profile: { sampleRows: 1000000 }`.
 
 - When the table has more rows than `sampleRows`, Sluice reads it once and keeps a sample of about `sampleRows` rows in the builder. Every profile query and the source side of the report then read the sample.
 - Sluice keeps each row by a hash of its values, its copy number among equal rows and the seed. So the sample size varies a little around `sampleRows`.
@@ -370,6 +380,14 @@ Three things start a build:
 - `POST /admin/synthetic/<name>/build` on the [admin API](../reference/admin-api.md#synthetic-builds) builds in the running server.
 - `build.onStart: ifMissing` builds at server start when no snapshot exists. The server serves queries during the build.
 
+A server build runs in the server process. It opens a second DuckDB instance next to the query pool, with the same `duckdb.memoryLimit` and `duckdb.threads`. So a build can use up to twice the memory and threads of the query pool, and more Go memory on top. See [Memory](#memory). To keep this bounded:
+
+- One build runs at a time in the server. A build of another name during a build gives 409 `ERR_CONFLICT`. Builds at start wait for a running build.
+- A build that runs longer than `synthetic.buildTimeout` of the server config (default `1h`) is canceled and fails.
+- `POST /admin/synthetic/<name>/cancel` asks a running build to stop. See the [admin API](../reference/admin-api.md#synthetic-builds).
+
+`sluice synth build` runs in its own process and has none of these limits.
+
 The size check runs before the profile. A `ratio` above `synthetic.maxRatio` of the server config fails the build, and so does a `rows` count above that share.
 
 A build writes into `synthetic.dir`:
@@ -382,7 +400,36 @@ A build writes into `synthetic.dir`:
 
 Sluice changes `current` only after every check passed. A failed build writes its report and leaves `current` as it was. Sluice keeps the current and the previous snapshot and deletes older ones. Clients can read only the `snapshots` folder.
 
+A build writes the snapshot to `snapshots/.<build-id>.duckdb.tmp` first and renames it at the end. A build that was killed, for example by the out-of-memory killer, leaves this file behind. Sluice removes such files at server start and each time a build publishes. A running build holds a lock on `snapshots/.<build-id>.duckdb.lock`, also from `sluice synth build` in another process, so its files stay.
+
+### Consistency
+
+A build reads a source table many times: once for each profile query. On a live source, rows can change between two reads. Sluice runs the profile of one table in one read-only DuckDB transaction. Whether the reads in it see one state depends on the source:
+
+- `duckdb_file`: yes. DuckDB reads one version of the file, and no other process can write it while Sluice has it open.
+- `postgres` and `mysql`: the DuckDB extension runs the reads of one DuckDB transaction in one transaction of the database. Postgres with `REPEATABLE READ` and MySQL with InnoDB then show one state. Sluice does not check this.
+- Other sources, such as `s3`, `http`, `sqlite` and `motherduck`: no promise. Each query reads the files or the database again.
+
+Some reads are outside the transaction of a table and can see another state:
+
+- Each table has its own transaction. Two tables are read at different times.
+- The source side of the report, `rejectExactMatches` and the noise fingerprint read the source again.
+
+For a fixed state, build from a copy or a snapshot of the source, or build when the source does not change.
+
 The same spec, seed and source data give the same rows on the same CPU architecture. With `noise`, the DuckDB version must be the same too. The report holds a `content_hash` of the rows to compare builds.
+
+### Memory
+
+`duckdb.memoryLimit` bounds the DuckDB part of a build. Sluice writes rows in batches of 10000. Some generators keep data for each row in the Go memory of the build, outside this limit. Rough numbers, measured on amd64:
+
+| What | Go memory |
+|---|---|
+| `unique: true` | About 64 bytes per synthetic row for numbers, and about 70 bytes plus the text length for text. Held for the whole table. |
+| `foreignKey` | 8 bytes per child row, and about 32 bytes per parent row while the table is drawn. |
+| Parent keys of a `foreignKey` | About 50 bytes per parent row, for the whole build. |
+
+Example: a table of 100 million synthetic rows with a `unique` text column of 24 characters holds about 10 GB. With a server build, this memory is in the server process. Build such a table with `sluice synth build`, or choose a generator such as `sequence` or `uuid` that does not need `unique`.
 
 ## Status
 
@@ -446,6 +493,7 @@ The JSON has these fields for relations, correlated columns and noise. Each one 
 - `rejectExactMatches` stops exact copies, not near copies. `sourceVocabulary` keeps a name that many rows hold. `by` uses at most 100 groups.
 - `sluice synth build` writes no record to the audit log. It prints the record on stderr and stores it in the report.
 - A running server picks up a snapshot from `sluice synth build` only after a restart. Each build keeps only the current and the previous snapshot, so two CLI builds delete the file a running server serves. Use the admin API to build in the server.
+- `synthetic.buildTimeout` and the cancel route stop a build only when the running DuckDB query reacts to the interrupt. A query that waits on a remote source can run on until it returns.
 - Sluice attaches data sources only at start. Restart it after you add a synthetic data source or change its spec. The seed value is not part of the `stale` check, so build again after you change it.
 
 ## See also

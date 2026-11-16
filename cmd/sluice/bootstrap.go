@@ -462,9 +462,10 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			Tagger: func() (build.Tagger, error) {
 				return policy.NewColumnTagger(deps.registry.Current())
 			},
-			Secrets:  secrets.NewDataSourceResolver(deps.resolver),
-			Dir:      scfg.Synthetic.Dir,
-			MaxRatio: scfg.Synthetic.MaxRatio,
+			Secrets:      secrets.NewDataSourceResolver(deps.resolver),
+			Dir:          scfg.Synthetic.Dir,
+			MaxRatio:     scfg.Synthetic.MaxRatio,
+			BuildTimeout: scfg.Synthetic.BuildTimeout,
 			Harden: executor.HardenConfig{
 				MemoryLimit:   scfg.DuckDB.MemoryLimit,
 				Threads:       scfg.DuckDB.Threads,
@@ -619,6 +620,9 @@ func adminSynthService(svc *build.Service) admin.SynthService {
 func (a adminSynth) Start(ctx context.Context, name, remoteIP string) (build.BuildView, bool, error) {
 	return a.svc.Start(ctx, name, build.OriginAdmin, remoteIP)
 }
+
+// Cancel implements admin.SynthService.
+func (a adminSynth) Cancel(name string) (build.BuildView, error) { return a.svc.Cancel(name) }
 
 // Status implements admin.SynthService.
 func (a adminSynth) Status(name string) (build.StatusView, error) { return a.svc.Status(name) }

@@ -17,9 +17,9 @@ import (
 // profile queries.
 const MaxGroups = 100
 
-// groupTable holds the rows of one group while it is profiled. The
-// builder's default catalog is memory.
-var groupTable = Table{Catalog: "memory", Schema: "main", Name: "sluice_group"}
+// groupTable holds the rows of one group while it is profiled. It is a
+// temp table, so the read-only profile transaction can write it.
+var groupTable = Table{Catalog: "temp", Schema: "main", Name: "sluice_group"}
 
 // Group is the profile of one by-group. Key is the length-prefixed list
 // of the group's by values as text, a NULL value marked apart.
@@ -100,7 +100,7 @@ func (r *Runner) Groups(ctx context.Context, t Table, col ColumnInfo, by []Colum
 	defer func() {
 		_, _ = r.Conn.ExecContext(context.WithoutCancel(ctx), "DROP TABLE IF EXISTS "+groupTable.sql())
 	}()
-	create := "CREATE OR REPLACE TABLE " + groupTable.sql() + " AS SELECT " + x + " FROM " + t.sql() +
+	create := "CREATE OR REPLACE TEMP TABLE " + parser.QuoteIdent(groupTable.Name) + " AS SELECT " + x + " FROM " + t.sql() +
 		" WHERE " + strings.Join(where, " AND ")
 	var out []Group
 	for _, vals := range keys {

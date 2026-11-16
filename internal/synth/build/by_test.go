@@ -15,6 +15,7 @@ import (
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -22,14 +23,16 @@ import (
 func TestByColumns(t *testing.T) {
 	spec := relSpec(map[string]apitypes.SyntheticColumn{
 		"status": {Generator: apitypes.GenCategorical},
-		"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"Status"}}},
-		"dept":   {Generator: apitypes.GenCategorical, Args: map[string]any{"by": []any{"status"}}},
+		// A clip that keeps the far salary, so one group has a spike.
+		"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"Status"}},
+			Privacy: &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0, Upper: 1}}},
+		"dept": {Generator: apitypes.GenCategorical, Args: map[string]any{"by": []any{"status"}}},
 	})
 	dir := t.TempDir()
 	var logBuf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	rep, _ := mustRun(t, opts{spec: spec, dir: dir, source: relationsPath(t), log: log, tagger: mapTagger{}})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	// R6: the median of each kept group stays close.
 	r := scalar[float64](t, db, "SELECT max(salary) - min(salary) FROM src.crm.customers")

@@ -17,6 +17,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/synth/build"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
@@ -40,7 +41,7 @@ func testSpec(ratio float64) *apitypes.SyntheticSpec {
 
 func specHash(t *testing.T, spec *apitypes.SyntheticSpec) string {
 	t.Helper()
-	h, err := build.SpecHash(spec)
+	h, err := layout.SpecHash(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func specHash(t *testing.T, spec *apitypes.SyntheticSpec) string {
 
 // writeBuild writes a snapshot with crm.customers of rows rows and its
 // report, as a build would.
-func writeBuild(t *testing.T, l build.Layout, id, hash string, rows int) {
+func writeBuild(t *testing.T, l layout.Layout, id, hash string, rows int) {
 	t.Helper()
 	for _, d := range []string{l.SnapshotsDir(), l.ReportsDir()} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
@@ -76,7 +77,7 @@ func writeBuild(t *testing.T, l build.Layout, id, hash string, rows int) {
 	}
 }
 
-func setCurrent(t *testing.T, l build.Layout, id string) {
+func setCurrent(t *testing.T, l layout.Layout, id string) {
 	t.Helper()
 	if err := os.MkdirAll(l.Root(), 0o750); err != nil {
 		t.Fatal(err)
@@ -153,8 +154,8 @@ func TestNotBuilt(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	d := mustOpen(t, dir, testSpec(0.2))
-	if got := d.State(); got != StateNotBuilt {
-		t.Fatalf("State = %q; want %q", got, StateNotBuilt)
+	if got := d.State(); got != layout.StateNotBuilt {
+		t.Fatalf("State = %q; want %q", got, layout.StateNotBuilt)
 	}
 	if !d.Readonly() || d.Type() != Type || d.Name() != catalog {
 		t.Errorf("Readonly/Type/Name = %v/%q/%q", d.Readonly(), d.Type(), d.Name())
@@ -185,13 +186,13 @@ func TestReadyAndStale(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	spec := testSpec(0.2)
-	l := build.Layout{Dir: dir, Name: catalog}
+	l := layout.Layout{Dir: dir, Name: catalog}
 	writeBuild(t, l, build1, specHash(t, spec), 7)
 	setCurrent(t, l, build1)
 
 	d := mustOpen(t, dir, spec)
-	if got := d.State(); got != StateReady {
-		t.Fatalf("State = %q; want %q", got, StateReady)
+	if got := d.State(); got != layout.StateReady {
+		t.Fatalf("State = %q; want %q", got, layout.StateReady)
 	}
 	c := conn(t)
 	if err := d.Attach(ctx, c, pkgds.AttachOptions{}); err != nil {
@@ -213,8 +214,8 @@ func TestReadyAndStale(t *testing.T) {
 
 	// Another spec: the snapshot still serves, as stale.
 	stale := mustOpen(t, dir, testSpec(0.1))
-	if got := stale.State(); got != StateStale {
-		t.Fatalf("State = %q; want %q", got, StateStale)
+	if got := stale.State(); got != layout.StateStale {
+		t.Fatalf("State = %q; want %q", got, layout.StateStale)
 	}
 	c2 := conn(t)
 	if err := stale.Attach(ctx, c2, pkgds.AttachOptions{}); err != nil {
@@ -227,7 +228,7 @@ func TestReadyAndStale(t *testing.T) {
 
 func TestCurrentNamesMissingFiles(t *testing.T) {
 	dir := t.TempDir()
-	l := build.Layout{Dir: dir, Name: catalog}
+	l := layout.Layout{Dir: dir, Name: catalog}
 	setCurrent(t, l, build1)
 	if _, err := open(t, dir, testSpec(0.2)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("missing snapshot: err = %v; want not exist", err)
@@ -244,11 +245,11 @@ func TestCurrentNamesMissingFiles(t *testing.T) {
 // Test 22, driver part: a bad id in current fails before any path use.
 func TestInvalidCurrent(t *testing.T) {
 	dir := t.TempDir()
-	l := build.Layout{Dir: dir, Name: catalog}
+	l := layout.Layout{Dir: dir, Name: catalog}
 	for _, id := range []string{"../x", "20261102T101500Z-A1B2C3", "latest", build1 + "/../../x"} {
 		setCurrent(t, l, id)
 		_, err := open(t, dir, testSpec(0.2))
-		if !errors.Is(err, build.ErrInvalidBuildID) {
+		if !errors.Is(err, layout.ErrInvalidBuildID) {
 			t.Fatalf("current %q: err = %v; want invalid build id", id, err)
 		}
 		if !strings.Contains(err.Error(), "invalid build id") || strings.Contains(err.Error(), id) {
@@ -262,7 +263,7 @@ func TestSwap(t *testing.T) {
 	dir := t.TempDir()
 	spec := testSpec(0.2)
 	hash := specHash(t, spec)
-	l := build.Layout{Dir: dir, Name: catalog}
+	l := layout.Layout{Dir: dir, Name: catalog}
 	d := mustOpen(t, dir, spec)
 	c := conn(t)
 	if err := d.Attach(ctx, c, pkgds.AttachOptions{}); err != nil {
@@ -276,7 +277,7 @@ func TestSwap(t *testing.T) {
 	if err := d.Swap(ctx, c, build1, hash); err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
-	if got := d.State(); got != StateReady {
+	if got := d.State(); got != layout.StateReady {
 		t.Errorf("State = %q; want ready", got)
 	}
 	if got := d.BuildID(); got != build1 {
@@ -290,7 +291,7 @@ func TestSwap(t *testing.T) {
 	if err := d.Swap(ctx, c, build2, hash); err == nil {
 		t.Fatal("Swap to a missing snapshot passed")
 	}
-	if got := d.State(); got != StateReady {
+	if got := d.State(); got != layout.StateReady {
 		t.Errorf("State after failed swap = %q; want ready", got)
 	}
 	if got := d.BuildID(); got != build1 {
@@ -300,7 +301,7 @@ func TestSwap(t *testing.T) {
 		t.Errorf("rows after failed swap = %d; want 3", n)
 	}
 
-	if err := d.Swap(ctx, c, "../x", hash); !errors.Is(err, build.ErrInvalidBuildID) {
+	if err := d.Swap(ctx, c, "../x", hash); !errors.Is(err, layout.ErrInvalidBuildID) {
 		t.Errorf("Swap with a bad id: err = %v", err)
 	}
 
@@ -308,7 +309,7 @@ func TestSwap(t *testing.T) {
 	if err := d.Swap(ctx, c, build2, "sha256:other"); err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
-	if got := d.State(); got != StateStale {
+	if got := d.State(); got != layout.StateStale {
 		t.Errorf("State = %q; want stale", got)
 	}
 	if n := count(t, c); n != 5 {
@@ -322,7 +323,7 @@ func TestSwap(t *testing.T) {
 	if err := d.Swap(ctx, c, "20261102T121500Z-0a0b0c", hash); err == nil {
 		t.Fatal("Swap to a missing snapshot passed")
 	}
-	if got := d.State(); got != StateNotBuilt {
+	if got := d.State(); got != layout.StateNotBuilt {
 		t.Errorf("State after failed fallback = %q; want not_built", got)
 	}
 	if got := d.BuildID(); got != "" {
@@ -342,7 +343,7 @@ func TestSwapThroughHardenedExecutor(t *testing.T) {
 	dir := t.TempDir()
 	spec := testSpec(0.2)
 	hash := specHash(t, spec)
-	l := build.Layout{Dir: dir, Name: catalog}
+	l := layout.Layout{Dir: dir, Name: catalog}
 	d := mustOpen(t, dir, spec)
 	exec, err := executor.New(ctx, executor.Config{
 		Harden: executor.HardenConfig{AllowedExternalPaths: d.ExternalPaths()},

@@ -215,7 +215,7 @@ func (p *colRun) noisyNumbers(needs Needs, s Settings, jitter *rng.Stream, out *
 	if hi <= lo {
 		n = 1
 	}
-	counts, err := p.binCounts(e, lo, hi, n, bounded)
+	counts, err := p.binCounts(e, lo, hi, n, bounded || s.Clip == nil)
 	if err != nil {
 		return err
 	}
@@ -298,6 +298,8 @@ func (p *colRun) binCounts(e string, lo, hi float64, n int, clamp bool) ([]int64
 	var args []any
 	width := (hi - lo) / float64(n)
 	switch {
+	case clamp && width == 0:
+		q = "SELECT 0 AS b, count(*) FROM " + p.from + " WHERE isfinite(" + e + ")"
 	case clamp:
 		q = "SELECT least(greatest(CAST(floor((least(greatest(" + e + ", ?), ?) - ?) / ?) AS BIGINT), 0), ?) AS b, count(*) FROM " +
 			p.from + " WHERE isfinite(" + e + ") GROUP BY b"

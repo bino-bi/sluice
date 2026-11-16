@@ -15,6 +15,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/synth/build"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 )
 
 const synthSeedEnv = "SLUICE_TEST_SYNTH_SEED"
@@ -126,12 +127,12 @@ func TestSynthBuild_SucceedsAndReports(t *testing.T) {
 		t.Errorf("audit record: %v", rec)
 	}
 
-	l := build.Layout{Dir: out, Name: "crmsynth"}
+	l := layout.Layout{Dir: out, Name: "crmsynth"}
 	id, err := l.ReadCurrent()
 	if err != nil || id == "" {
 		t.Fatalf("current: %q, %v", id, err)
 	}
-	rep, err := l.ReadReport(id)
+	rep, err := build.ReadReport(l, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestSynthBuild_ExitCodes(t *testing.T) {
 	}
 
 	// The failed build keeps its report but does not publish.
-	l := build.Layout{Dir: lowOut, Name: "crmsynth"}
+	l := layout.Layout{Dir: lowOut, Name: "crmsynth"}
 	if id, err := l.ReadCurrent(); err != nil || id != "" {
 		t.Errorf("current after a failed build: %q, %v", id, err)
 	}

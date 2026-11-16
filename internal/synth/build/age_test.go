@@ -11,6 +11,7 @@ import (
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -101,7 +102,7 @@ func TestAgeAndTimeOfDay(t *testing.T) {
 		"seen":  {Generator: apitypes.GenTimeOfDay},
 	})
 	rep, dir := mustRun(t, opts{spec: spec, source: src})
-	db := lifeQuery(t, src, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := lifeQuery(t, src, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	const ages = "SELECT CASE WHEN a < 35 THEN '25-29' WHEN a < 50 THEN '40-44' WHEN a < 70 THEN '60-64' ELSE 'old' END, " +
 		"count(*) / sum(count(*)) OVER () FROM (SELECT date_sub('year', birth, DATE '2024-06-30') AS a FROM %s.crm.life) GROUP BY 1"
@@ -135,7 +136,7 @@ func TestAgeDefaultReference(t *testing.T) {
 	src := lifeFixture(t)
 	spec := lifeSpec(map[string]apitypes.SyntheticColumn{"birth": {Generator: apitypes.GenAge, Args: map[string]any{"granularity": "month"}}})
 	rep, dir := mustRun(t, opts{spec: spec, source: src})
-	db := lifeQuery(t, src, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := lifeQuery(t, src, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	if n := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.life WHERE day(birth) <> 1"); n != 0 {
 		t.Errorf("%d dates not cut to the month", n)
 	}
@@ -167,7 +168,7 @@ func TestAgeAndTimeOfDayNoise(t *testing.T) {
 	if c := reportColumn(t, rep, "tod"); c.Range != "" {
 		t.Errorf("tod range = %q, want none", c.Range)
 	}
-	db := lifeQuery(t, src, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := lifeQuery(t, src, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	if n := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.life WHERE date_sub('year', birth, DATE '2024-06-30') NOT BETWEEN 25 AND 64"); n != 0 {
 		t.Errorf("%d rows with a rare age", n)
 	}
@@ -187,7 +188,7 @@ func TestAgeClipNoiseBounds(t *testing.T) {
 	})
 	spec.Privacy.Noise = &apitypes.SyntheticNoise{Epsilon: 10}
 	rep, dir := mustRun(t, opts{spec: spec, source: src})
-	db := lifeQuery(t, src, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := lifeQuery(t, src, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	const age = "date_sub('year', birth, DATE '2024-06-30')"
 	if n := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.life WHERE "+age+" < 35"); n != 0 {
 		t.Errorf("%d rows with an age the clip drops", n)

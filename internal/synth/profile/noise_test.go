@@ -166,12 +166,15 @@ func TestNoisyNumbersBounds(t *testing.T) {
 		t.Errorf("without bounds: noisy [%v, %v], phase 2 [%v, %v]", noisy.Lo, noisy.Hi, plain.Lo, plain.Hi)
 	}
 
-	// Range only, without bounds: the spike check still runs.
-	rng, err := peopleColumn(t, r, "bonus", Needs{Parts: PartRange}, Effective(), testNoise(1, "seed-12", "bonus"))
+	// Range only, without bounds: the spike check still runs. A clip that
+	// keeps the far value lets it find a spike.
+	clip := Effective()
+	clip.Clip = &apitypes.ClipOutliers{Lower: 0, Upper: 1}
+	rng, err := peopleColumn(t, r, "bonus", Needs{Parts: PartRange}, clip, testNoise(1, "seed-12", "bonus"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want, _ := peopleColumn(t, r, "bonus", Needs{Parts: PartRange}, Effective(), nil); len(want.Spikes) == 0 || !reflect.DeepEqual(rng.Spikes, want.Spikes) {
+	if want, _ := peopleColumn(t, r, "bonus", Needs{Parts: PartRange}, clip, nil); len(want.Spikes) == 0 || !reflect.DeepEqual(rng.Spikes, want.Spikes) {
 		t.Errorf("range only: spikes %v, phase 2 %v", rng.Spikes, want.Spikes)
 	}
 

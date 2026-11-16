@@ -19,10 +19,11 @@ import (
 const testBuildID = "20261102T101500Z-a1b2c3"
 
 type fakeSynth struct {
-	running  bool
-	startErr error
-	gotName  string
-	gotIP    string
+	running   bool
+	startErr  error
+	cancelErr error
+	gotName   string
+	gotIP     string
 }
 
 func (f *fakeSynth) Start(_ context.Context, name, remoteIP string) (build.BuildView, bool, error) {
@@ -34,6 +35,17 @@ func (f *fakeSynth) Start(_ context.Context, name, remoteIP string) (build.Build
 		return build.BuildView{}, false, f.startErr
 	}
 	return build.BuildView{BuildID: testBuildID, State: build.StateRunning, Origin: "admin"}, f.running, nil
+}
+
+func (f *fakeSynth) Cancel(name string) (build.BuildView, error) {
+	f.gotName = name
+	if name != "crmsynth" {
+		return build.BuildView{}, build.ErrNotFound
+	}
+	if f.cancelErr != nil {
+		return build.BuildView{}, f.cancelErr
+	}
+	return build.BuildView{BuildID: testBuildID, State: build.StateRunning, Origin: "admin"}, nil
 }
 
 func (f *fakeSynth) Status(name string) (build.StatusView, error) {
@@ -69,6 +81,7 @@ func TestSynth_NotEnabled501(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/admin/synthetic/crmsynth/build"},
+		{http.MethodPost, "/admin/synthetic/crmsynth/cancel"},
 		{http.MethodGet, "/admin/synthetic/crmsynth"},
 	} {
 		if w := serveSynth(t, nil, "", tc.method, tc.path, ""); w.Code != http.StatusNotImplemented {
@@ -106,6 +119,7 @@ func TestSynth_UnknownName404(t *testing.T) {
 	f := &fakeSynth{}
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/admin/synthetic/crm/build"},
+		{http.MethodPost, "/admin/synthetic/crm/cancel"},
 		{http.MethodGet, "/admin/synthetic/crm"},
 	} {
 		w := serveSynth(t, f, "", tc.method, tc.path, "")
@@ -125,6 +139,44 @@ func TestSynth_AuditUnavailable503(t *testing.T) {
 	var body map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body["code"] != "ERR_AUDIT_UNAVAILABLE" {
 		t.Errorf("body %v, %v", body, err)
+	}
+}
+
+func TestSynth_Cancel(t *testing.T) {
+	t.Parallel()
+	w := serveSynth(t, &fakeSynth{}, "", http.MethodPost, "/admin/synthetic/crmsynth/cancel", "")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202: %s", w.Code, w.Body)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["name"] != "crmsynth" || body["build_id"] != testBuildID || body["state"] != "running" {
+		t.Errorf("body: %v", body)
+	}
+}
+
+// A busy service and a cancel without a running build give 409.
+func TestSynth_Conflict409(t *testing.T) {
+	t.Parallel()
+	busy := &fakeSynth{startErr: pkgerr.Wrap(pkgerr.CodeConflict, build.ErrBusy).WithMessage("another synthetic build runs")}
+	idle := &fakeSynth{cancelErr: pkgerr.Wrap(pkgerr.CodeConflict, build.ErrNotRunning)}
+	for _, tc := range []struct {
+		f    *fakeSynth
+		path string
+	}{
+		{busy, "/admin/synthetic/crmsynth/build"},
+		{idle, "/admin/synthetic/crmsynth/cancel"},
+	} {
+		w := serveSynth(t, tc.f, "", http.MethodPost, tc.path, "")
+		if w.Code != http.StatusConflict {
+			t.Fatalf("%s: status %d, want 409", tc.path, w.Code)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body["code"] != "ERR_CONFLICT" {
+			t.Errorf("%s: body %v, %v", tc.path, body, err)
+		}
 	}
 }
 
@@ -163,6 +215,7 @@ func TestSynth_AuthRequired(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/admin/synthetic/crmsynth/build"},
+		{http.MethodPost, "/admin/synthetic/crmsynth/cancel"},
 		{http.MethodGet, "/admin/synthetic/crmsynth"},
 	} {
 		f := &fakeSynth{}

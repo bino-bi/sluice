@@ -15,6 +15,7 @@ import (
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/version"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -24,16 +25,22 @@ import (
 // ErrNotFound is returned for a name that is not a synthetic data source.
 var ErrNotFound = errors.New("no synthetic data source with this name")
 
-// StateRunning is the state of a build that has not finished. A finished
-// build has ResultSucceeded or ResultFailed.
-const StateRunning = "running"
+// ErrBusy is returned by Start while a build of another name runs. Each
+// server build opens its own DuckDB instance, so only one runs at a time.
+var ErrBusy = errors.New("another synthetic build runs")
 
-// Driver states, as the synthetic driver reports them. The driver
-// imports this package, so it cannot be imported here.
-const (
-	stateNotBuilt = "not_built"
-	stateStale    = "stale"
+// ErrNotRunning is returned by Cancel when no build of the name runs.
+var ErrNotRunning = errors.New("no build of this synthetic data source runs")
+
+// Causes of a canceled server build. They end up in the report error.
+var (
+	errBuildTimeout = errors.New("the build ran longer than synthetic.buildTimeout")
+	errCancelCall   = errors.New("the admin API canceled the build")
 )
+
+// StateRunning is the state of a build that has not finished. A finished
+// build has ResultSucceeded, ResultFailed or ResultPublishedNotAttached.
+const StateRunning = "running"
 
 // keepBuilds is the number of finished builds kept per name.
 const keepBuilds = 10
@@ -92,6 +99,8 @@ type ServiceOptions struct {
 	Dir      string
 	MaxRatio float64
 	Harden   executor.HardenConfig
+	// BuildTimeout cancels a build that runs longer. Zero is no limit.
+	BuildTimeout time.Duration
 	// Audit gets a start and an end record per build. FailClosed refuses
 	// a build whose start record cannot be queued.
 	Audit      Auditor
@@ -111,8 +120,8 @@ type swapper interface {
 	Swap(ctx context.Context, conn *sql.Conn, buildID, specHash string) error
 }
 
-// Service runs synthetic builds in the server, one at a time per name,
-// in the background.
+// Service runs synthetic builds in the server in the background, one at
+// a time.
 type Service struct {
 	opts   ServiceOptions
 	ctx    context.Context
@@ -123,11 +132,16 @@ type Service struct {
 	closed  bool
 	running map[string]*job
 	done    map[string][]BuildView
+	// attach is swap; tests replace it.
+	attach func(name string, rep *Report) error
 }
 
 type job struct {
 	view     BuildView
 	remoteIP string
+	// ctx is the build context. cancel ends it with a cause.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
 	// started closes once the start audit record is decided. startErr is
 	// set before that when the record was refused and no build runs.
 	started  chan struct{}
@@ -136,7 +150,8 @@ type job struct {
 }
 
 // NewService returns a Service. It logs every source whose snapshot was
-// built from another spec and sets the stale and spike gauges.
+// built from another spec, sets the stale and spike gauges, and removes
+// the temp files of builds that were killed.
 func NewService(opts ServiceOptions) *Service {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
@@ -152,19 +167,21 @@ func NewService(opts ServiceOptions) *Service {
 		running: map[string]*job{},
 		done:    map[string][]BuildView{},
 	}
+	s.attach = s.swap
 	for _, ds := range opts.DataSources {
 		if !isSynthetic(ds) {
 			continue
 		}
 		name := ds.Metadata.Name
+		layout.Layout{Dir: opts.Dir, Name: name}.RemoveTemps()
 		state := s.state(name)
-		setStale(name, state == stateStale)
-		if state == stateStale {
+		setStale(name, state == layout.StateStale)
+		if state == layout.StateStale {
 			opts.Log.Warn("synthetic: the current snapshot was built from another spec; run a new build",
 				"name", name)
 		}
 		spikes := 0
-		if state != stateNotBuilt {
+		if state != layout.StateNotBuilt {
 			if rep, err := s.currentReport(name); err == nil && rep != nil {
 				spikes = len(rep.Spikes)
 			}
@@ -225,7 +242,7 @@ func (s *Service) currentID(name string) (string, error) {
 			}
 		}
 	}
-	return Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
+	return layout.Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
 }
 
 func (s *Service) currentReport(name string) (*Report, error) {
@@ -233,7 +250,7 @@ func (s *Service) currentReport(name string) (*Report, error) {
 	if err != nil || id == "" {
 		return nil, err
 	}
-	return Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
+	return ReadReport(layout.Layout{Dir: s.opts.Dir, Name: name}, id)
 }
 
 // Start starts a build of name. When a build of name runs, it returns
@@ -251,14 +268,14 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 	if ds == nil {
 		return nil, BuildView{}, false, ErrNotFound
 	}
-	specHash, err := SpecHash(ds.Spec.Synthetic)
+	specHash, err := layout.SpecHash(ds.Spec.Synthetic)
 	if err != nil {
 		return nil, BuildView{}, false, fmt.Errorf("synthetic %s: spec hash: %w", name, err)
 	}
 	now := s.opts.Clock()
 	// A build that finished in the same second as this one would make
-	// publish fail with ErrNewerCurrent.
-	prev, _ := Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
+	// publish fail with layout.ErrNewerCurrent.
+	prev, _ := layout.Layout{Dir: s.opts.Dir, Name: name}.ReadCurrent()
 	id, err := newerBuildID(now, prev)
 	if err != nil {
 		return nil, BuildView{}, false, fmt.Errorf("synthetic %s: build id: %w", name, err)
@@ -286,9 +303,17 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 		s.mu.Unlock()
 		return j, v, true, nil
 	}
+	if len(s.running) > 0 {
+		s.mu.Unlock()
+		return nil, BuildView{}, false, pkgerr.Wrap(pkgerr.CodeConflict, ErrBusy).
+			WithMessage("another synthetic build runs; wait for it or cancel it")
+	}
+	jctx, jcancel := context.WithCancelCause(s.ctx)
 	j := &job{
 		view:     BuildView{BuildID: id, State: StateRunning, Origin: origin, StartedAt: now.UTC()},
 		remoteIP: remoteIP,
+		ctx:      jctx,
+		cancel:   jcancel,
 		started:  make(chan struct{}),
 		finished: make(chan struct{}),
 	}
@@ -313,6 +338,7 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 			s.mu.Lock()
 			delete(s.running, name)
 			s.mu.Unlock()
+			j.cancel(nil)
 			s.wg.Done()
 			close(j.started)
 			close(j.finished)
@@ -330,7 +356,7 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 // second resolution, so in the second of prev the id takes the next
 // second.
 func newerBuildID(now time.Time, prev string) (string, error) {
-	id, err := newBuildID(now)
+	id, err := layout.NewBuildID(now)
 	if err != nil || id > prev {
 		return id, err
 	}
@@ -338,7 +364,7 @@ func newerBuildID(now time.Time, prev string) (string, error) {
 	if perr != nil {
 		return id, nil
 	}
-	return newBuildID(t.Add(time.Second))
+	return layout.NewBuildID(t.Add(time.Second))
 }
 
 // audit writes the synthetic-build record of r for phase.
@@ -354,7 +380,10 @@ func (s *Service) audit(ctx context.Context, r *Report, phase, origin, remoteIP 
 	} else {
 		rec.Subject = audit.Subject{ID: "system"}
 	}
-	if errors.Is(buildErr, ErrCanceled) {
+	switch {
+	case errors.Is(buildErr, errBuildTimeout):
+		rec.ErrorCode = string(pkgerr.CodeTimeout)
+	case errors.Is(buildErr, ErrCanceled):
 		rec.ErrorCode = string(pkgerr.CodeCanceled)
 	}
 	return s.opts.Audit.Enqueue(ctx, rec)
@@ -363,34 +392,42 @@ func (s *Service) audit(ctx context.Context, r *Report, phase, origin, remoteIP 
 func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 	defer s.wg.Done()
 	defer close(j.finished)
+	defer j.cancel(nil)
 	origin := j.view.Origin
 	start := time.Now()
 
-	rep, err := s.build(j, ds, src)
+	ctx := j.ctx
+	if s.opts.BuildTimeout > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeoutCause(ctx, s.opts.BuildTimeout, errBuildTimeout)
+		defer stop()
+	}
+	rep, err := s.build(ctx, j, ds, src)
+	result := ResultSucceeded
 	if err == nil {
-		if serr := s.swap(name, rep); serr != nil {
+		if serr := s.attach(name, rep); serr != nil {
 			s.opts.Log.Error("synthetic: the build is published but cannot be attached",
 				"name", name, "build_id", rep.BuildID, "error", serr)
 			// The report file says succeeded: the snapshot is current and
 			// is attached at the next start.
-			failed := *rep
-			failed.Result = ResultFailed
-			failed.Error = "the build is published but cannot be attached; it is attached at the next start"
-			rep, err = &failed, serr
+			na := *rep
+			na.Result = ResultPublishedNotAttached
+			na.Error = "the build is published but cannot be attached; it is attached at the next start"
+			rep, result = &na, na.Result
 		}
 	}
-	result := ResultSucceeded
-	if err != nil {
+	switch {
+	case err != nil:
 		result = ResultFailed
 		s.opts.Log.Error("synthetic: build failed", "name", name, "build_id", rep.BuildID, "origin", origin, "error", rep.Error)
-	} else {
+	case result == ResultSucceeded:
 		s.opts.Log.Info("synthetic: build succeeded", "name", name, "build_id", rep.BuildID, "origin", origin)
 	}
 	observeBuild(result, time.Since(start))
 	if err == nil {
 		setSpikes(name, len(rep.Spikes))
 	}
-	setStale(name, s.state(name) == stateStale)
+	setStale(name, s.state(name) == layout.StateStale)
 
 	// The service context may be canceled already. The dispatcher closes
 	// after the service, so the end record still gets through.
@@ -416,7 +453,7 @@ func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 
 // build runs the build. It always returns a report: a build that fails
 // before it has one gets a report that holds only the error.
-func (s *Service) build(j *job, ds, src *apitypes.DataSource) (*Report, error) {
+func (s *Service) build(ctx context.Context, j *job, ds, src *apitypes.DataSource) (*Report, error) {
 	in := Input{
 		DataSource: ds,
 		Source:     src,
@@ -440,7 +477,7 @@ func (s *Service) build(j *job, ds, src *apitypes.DataSource) (*Report, error) {
 		}
 	}
 	if err == nil {
-		rep, err = Run(s.ctx, in)
+		rep, err = Run(ctx, in)
 	}
 	if rep == nil {
 		now := s.opts.Clock()
@@ -494,7 +531,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	if ds == nil {
 		return StatusView{}, ErrNotFound
 	}
-	specHash, err := SpecHash(ds.Spec.Synthetic)
+	specHash, err := layout.SpecHash(ds.Spec.Synthetic)
 	if err != nil {
 		return StatusView{}, fmt.Errorf("synthetic %s: spec hash: %w", name, err)
 	}
@@ -512,7 +549,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	v.Builds = append(v.Builds, s.done[name]...)
 	s.mu.Unlock()
 
-	if v.Status == stateNotBuilt {
+	if v.Status == layout.StateNotBuilt {
 		return v, nil
 	}
 	id, err := s.currentID(name)
@@ -522,7 +559,7 @@ func (s *Service) Status(name string) (StatusView, error) {
 	if id == "" {
 		return v, nil
 	}
-	rep, err := Layout{Dir: s.opts.Dir, Name: name}.ReadReport(id)
+	rep, err := ReadReport(layout.Layout{Dir: s.opts.Dir, Name: name}, id)
 	if errors.Is(err, fs.ErrNotExist) {
 		// Retention of later CLI builds removed the report of the
 		// served build.
@@ -543,7 +580,7 @@ func (s *Service) StartMissing() {
 	var names []string
 	for _, ds := range s.opts.DataSources {
 		if isSynthetic(ds) && ds.Spec.Synthetic.Build.OnStart == apitypes.BuildIfMissing &&
-			s.state(ds.Metadata.Name) == stateNotBuilt {
+			s.state(ds.Metadata.Name) == layout.StateNotBuilt {
 			names = append(names, ds.Metadata.Name)
 		}
 	}
@@ -561,6 +598,17 @@ func (s *Service) StartMissing() {
 		defer s.wg.Done()
 		for _, name := range names {
 			j, _, _, err := s.start(s.ctx, name, OriginStartup, "")
+			for errors.Is(err, ErrBusy) {
+				// An admin build of another name runs: wait for it.
+				if b := s.anyRunning(); b != nil {
+					select {
+					case <-b.finished:
+					case <-s.ctx.Done():
+						return
+					}
+				}
+				j, _, _, err = s.start(s.ctx, name, OriginStartup, "")
+			}
 			if err != nil {
 				s.opts.Log.Error("synthetic: cannot start the start-time build", "name", name, "error", err)
 				continue
@@ -572,6 +620,32 @@ func (s *Service) StartMissing() {
 			}
 		}
 	}()
+}
+
+func (s *Service) anyRunning() *job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.running {
+		return j
+	}
+	return nil
+}
+
+// Cancel cancels the running build of name and returns its view. The
+// build ends as failed with ERR_CANCELED soon after.
+func (s *Service) Cancel(name string) (BuildView, error) {
+	if ds, _ := s.lookup(name); ds == nil {
+		return BuildView{}, ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.running[name]
+	if j == nil {
+		return BuildView{}, pkgerr.Wrap(pkgerr.CodeConflict, ErrNotRunning).
+			WithMessage("no build of this synthetic data source runs")
+	}
+	j.cancel(errCancelCall)
+	return j.view, nil
 }
 
 // Close cancels running builds and waits for them up to ctx. A canceled

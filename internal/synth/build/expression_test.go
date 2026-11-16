@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -23,7 +24,7 @@ func TestExpressionColumns(t *testing.T) {
 	})
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: spec, dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	if n := scalar[int64](t, db, "SELECT count(*) FROM src.crm.orders WHERE total IS NULL"); n == 0 {
 		t.Fatal("the source total has no NULL")

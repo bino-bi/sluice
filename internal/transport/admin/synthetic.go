@@ -17,6 +17,8 @@ type SynthService interface {
 	// Start starts a build of name. It returns the running build and
 	// true when one runs already.
 	Start(ctx context.Context, name, remoteIP string) (build.BuildView, bool, error)
+	// Cancel cancels the running build of name and returns it.
+	Cancel(name string) (build.BuildView, error)
 	Status(name string) (build.StatusView, error)
 }
 
@@ -25,6 +27,12 @@ type synthStartResponse struct {
 	BuildID        string `json:"build_id"`
 	State          string `json:"state"`
 	AlreadyRunning bool   `json:"already_running"`
+}
+
+type synthCancelResponse struct {
+	Name    string `json:"name"`
+	BuildID string `json:"build_id"`
+	State   string `json:"state"`
 }
 
 func (s *Server) synthNotEnabled(w http.ResponseWriter) bool {
@@ -60,6 +68,26 @@ func (s *Server) handleSynthBuild(w http.ResponseWriter, r *http.Request) {
 		State:          v.State,
 		AlreadyRunning: running,
 	})
+}
+
+// handleSynthCancel cancels the running build and answers 202 at once.
+// The build ends as failed soon after.
+func (s *Server) handleSynthCancel(w http.ResponseWriter, r *http.Request) {
+	if s.synthNotEnabled(w) {
+		return
+	}
+	name := r.PathValue("name")
+	v, err := s.deps.Synth.Cancel(name)
+	if errors.Is(err, build.ErrNotFound) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.writeAPIError(w, r, err)
+		return
+	}
+	w.Header().Set("Location", "/admin/synthetic/"+name)
+	writeJSON(w, http.StatusAccepted, synthCancelResponse{Name: name, BuildID: v.BuildID, State: v.State})
 }
 
 // handleSynthStatus returns the state, the builds of this process and

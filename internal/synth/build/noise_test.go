@@ -23,6 +23,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/synth/profile"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -180,7 +181,7 @@ func TestNoiseBuild(t *testing.T) {
 	if !strings.Contains(buf.String(), "measurements="+strconv.Itoa(baseM)) {
 		t.Errorf("log has no budget line:\n%s", buf.String())
 	}
-	db := query(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := query(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 	const share = "SELECT CAST(gender AS VARCHAR), count(*) / sum(count(*)) OVER () FROM %s.crm.customers GROUP BY 1"
 	src := shares(t, db, fmt.Sprintf(share, "src"))
 	syn := shares(t, db, fmt.Sprintf(share, "syn"))
@@ -288,7 +289,7 @@ var noisyColumns = []string{"gender", "opened", "last_seen", "revenue", "last_na
 func TestNoiseDataKeyed(t *testing.T) {
 	changed := dataFixture(t, "UPDATE crm.customers SET score = score * 1.01;")
 	values := func(rep *Report, dir, col string) []string {
-		return rowsOf(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID), "crm.customers", col)
+		return rowsOf(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID), "crm.customers", col)
 	}
 
 	a, dirA := mustRun(t, opts{spec: noiseSpec()})
@@ -485,7 +486,7 @@ func TestNoiseLeaks(t *testing.T) {
 			if (err != nil) != tc.fail {
 				t.Fatalf("err = %v", err)
 			}
-			report, rerr := os.ReadFile(Layout{Dir: o.dir, Name: "crmsynth"}.Report(rep.BuildID))
+			report, rerr := os.ReadFile(layout.Layout{Dir: o.dir, Name: "crmsynth"}.Report(rep.BuildID))
 			if rerr != nil {
 				t.Fatal(rerr)
 			}

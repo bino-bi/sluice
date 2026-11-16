@@ -32,6 +32,7 @@ MCP tool errors use the same codes.
 | `ERR_APPROVAL_PENDING` | 202 | Query requires human approval; awaiting decision |
 | `ERR_APPROVAL_REJECTED` | 403 | Query rejected by an approver |
 | `ERR_APPROVAL_EXPIRED` | 410 | Approval request expired before a decision was made |
+| `ERR_CONFLICT` | 409 | The request conflicts with the current state |
 | `ERR_INTERNAL` | 500 | Internal error |
 
 - `ERR_RESULT_TRUNCATED` is a warning in a successful response, not an error.

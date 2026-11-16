@@ -26,6 +26,7 @@ import (
 	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/synth/build"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -190,7 +191,7 @@ Exit codes:
 			if outDir == "" {
 				outDir = scfg.Synthetic.Dir
 			}
-			l := build.Layout{Dir: outDir, Name: name}
+			l := layout.Layout{Dir: outDir, Name: name}
 			id := buildID
 			if id == "" {
 				id, err = l.ReadCurrent()
@@ -200,8 +201,8 @@ Exit codes:
 				if id == "" {
 					return &exitError{Code: 1, Msg: fmt.Sprintf("no report: %s has no current build", name)}
 				}
-			} else if !build.ValidBuildID(id) {
-				return &exitError{Code: 1, Err: build.ErrInvalidBuildID}
+			} else if !layout.ValidBuildID(id) {
+				return &exitError{Code: 1, Err: layout.ErrInvalidBuildID}
 			}
 
 			if asJSON {
@@ -212,7 +213,7 @@ Exit codes:
 				_, err = cmd.OutOrStdout().Write(data)
 				return err
 			}
-			rep, err := l.ReadReport(id)
+			rep, err := build.ReadReport(l, id)
 			if err != nil {
 				return &exitError{Code: 1, Err: noReport(id, err)}
 			}

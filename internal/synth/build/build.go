@@ -26,6 +26,7 @@ import (
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/synth/generate"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/synth/profile"
 	"github.com/bino-bi/sluice/internal/synth/rng"
 	"github.com/bino-bi/sluice/internal/version"
@@ -106,24 +107,31 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 		in.MaxRatio = DefaultMaxRatio
 	}
 	spec := in.DataSource.Spec.Synthetic
-	specHash, err := SpecHash(spec)
+	specHash, err := layout.SpecHash(spec)
 	if err != nil {
 		return nil, fmt.Errorf("synthetic build: spec hash: %w", err)
 	}
 	start := in.Clock()
 	id := in.BuildID
 	if id == "" {
-		id, err = newBuildID(start)
+		id, err = layout.NewBuildID(start)
 		if err != nil {
 			return nil, fmt.Errorf("synthetic build: build id: %w", err)
 		}
-	} else if !ValidBuildID(id) {
-		return nil, fmt.Errorf("synthetic build: %w", ErrInvalidBuildID)
+	} else if !layout.ValidBuildID(id) {
+		return nil, fmt.Errorf("synthetic build: %w", layout.ErrInvalidBuildID)
 	}
-	l := Layout{Dir: in.Dir, Name: in.DataSource.Metadata.Name}
-	if err := l.mkdirs(); err != nil {
+	l := layout.Layout{Dir: in.Dir, Name: in.DataSource.Metadata.Name}
+	if err := l.Mkdirs(); err != nil {
 		return nil, fmt.Errorf("synthetic build: %w", err)
 	}
+	// Held until the temp files are renamed or removed, so a cleanup in
+	// another process leaves them alone.
+	unlock, err := l.LockBuild(id)
+	if err != nil {
+		return nil, fmt.Errorf("synthetic build: lock: %w", err)
+	}
+	defer unlock()
 	b := &builder{
 		in:   in,
 		spec: spec,
@@ -138,7 +146,7 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 			Source:        spec.Source,
 			Origin:        in.Origin,
 			SpecHash:      specHash,
-			Algorithm:     Algorithm,
+			Algorithm:     layout.Algorithm,
 			SluiceVersion: version.Current().Version,
 			StartedAt:     start.UTC(),
 			Tables:        []TableReport{},
@@ -151,7 +159,7 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 		return b.rep, nil
 	}
 	if ctx.Err() != nil {
-		err = fmt.Errorf("%w: %w", ErrCanceled, ctx.Err())
+		err = fmt.Errorf("%w: %w", ErrCanceled, context.Cause(ctx))
 	}
 	b.cleanup()
 	b.finish(ResultFailed, err)
@@ -165,7 +173,7 @@ type builder struct {
 	in   Input
 	spec *apitypes.SyntheticSpec
 	name string
-	l    Layout
+	l    layout.Layout
 	log  *slog.Logger
 	rep  *Report
 	seed []byte
@@ -199,12 +207,12 @@ func (b *builder) writeReport() error {
 	if b.in.Audit != nil {
 		b.rep.Audit = b.in.Audit(b.rep)
 	}
-	return b.l.writeReport(b.rep)
+	return writeReport(b.l, b.rep)
 }
 
 // cleanup removes the files of a failed build. The report stays.
 func (b *builder) cleanup() {
-	tmp := b.l.tempSnapshot(b.rep.BuildID)
+	tmp := b.l.TempSnapshot(b.rep.BuildID)
 	for _, p := range []string{tmp, tmp + ".wal"} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			b.log.Warn("synthetic build: cannot remove a temp file", "path", p, "error", err)
@@ -228,7 +236,7 @@ func (b *builder) run(ctx context.Context) error {
 	}
 	b.seed = seed
 
-	tmp := b.l.tempSnapshot(b.rep.BuildID)
+	tmp := b.l.TempSnapshot(b.rep.BuildID)
 	conn, closeAll, err := b.open(ctx, tmp)
 	if err != nil {
 		return err
@@ -264,21 +272,21 @@ func (b *builder) run(ctx context.Context) error {
 	if _, err := os.Stat(tmp + ".wal"); err == nil {
 		return errors.New("snapshot: a write-ahead log is left after detach")
 	}
-	if err := syncFile(tmp); err != nil {
+	if err := layout.SyncFile(tmp); err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	if err := os.Rename(tmp, b.l.Snapshot(b.rep.BuildID)); err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	b.renamed = true
-	syncDir(b.l.SnapshotsDir())
+	layout.SyncDir(b.l.SnapshotsDir())
 
 	b.rep.ContentHash = "sha256:" + hex.EncodeToString(b.hash.Sum(nil))
 	b.finish(ResultSucceeded, nil)
 	if err := b.writeReport(); err != nil {
 		return fmt.Errorf("report: %w", err)
 	}
-	return b.l.publish(b.rep.BuildID)
+	return b.l.Publish(b.rep.BuildID)
 }
 
 // open starts the builder instance (plan 1.3): the source attached
@@ -383,6 +391,19 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	schema, name, _ := strings.Cut(t.Name, ".")
 	pt := profile.Table{Catalog: b.spec.Source, Schema: schema, Name: name}
 
+	// The profile of a table reads the source in one read-only
+	// transaction, so a source that gives a snapshot shows its counts,
+	// range and groups at one state. The sample and group tables are temp
+	// tables, which a read-only transaction may write.
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY"); err != nil {
+		return fail(b.duckErr("begin the profile transaction", err))
+	}
+	inTx := true
+	defer func() {
+		if inTx {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
 	infos, err := b.sourceColumns(ctx, conn, pt)
 	if err != nil {
 		return fail(err)
@@ -473,6 +494,10 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 			return fail(err)
 		}
 	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fail(b.duckErr("end the profile transaction", err))
+	}
+	inTx = false
 	b.hashTable(t.Name, cols)
 	if rows > 0 {
 		if err := b.stage(ctx, conn, cols, order, rows, len(exact) > 0); err != nil {
@@ -751,13 +776,22 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			}
 			return nil
 		}
-		if ctx.Err() != nil || choice.Fallback == nil {
+		// A failed DuckDB query aborts the profile transaction. Then a
+		// fallback would fail too, so report the first error.
+		if ctx.Err() != nil || choice.Fallback == nil || txAborted(ctx, conn) {
 			return err
 		}
 		b.log.Debug("synthetic build: default falls back", "column", c.info.Name,
 			"from", string(choice.Generator), "to", string(choice.Fallback.Generator), "reason", err)
 		choice = *choice.Fallback
 	}
+}
+
+// txAborted reports whether the transaction on conn is aborted: every
+// query then fails.
+func txAborted(ctx context.Context, conn *sql.Conn) bool {
+	var one int
+	return conn.QueryRowContext(ctx, "SELECT 1").Scan(&one) != nil
 }
 
 // hashTable starts the content hash of a table: its name and columns.

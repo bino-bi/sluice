@@ -22,6 +22,7 @@ import (
 
 	_ "github.com/bino-bi/sluice/internal/datasource/drivers/duckdbfile"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
@@ -237,7 +238,7 @@ var mainBuild struct {
 	err  error
 }
 
-func shared(t *testing.T) (*Report, Layout) {
+func shared(t *testing.T) (*Report, layout.Layout) {
 	t.Helper()
 	mainBuild.once.Do(func() {
 		mainBuild.dir = filepath.Join(fixtureDir, "main")
@@ -246,7 +247,7 @@ func shared(t *testing.T) (*Report, Layout) {
 	if mainBuild.err != nil {
 		t.Fatalf("main build: %v", mainBuild.err)
 	}
-	return mainBuild.rep, Layout{Dir: mainBuild.dir, Name: "crmsynth"}
+	return mainBuild.rep, layout.Layout{Dir: mainBuild.dir, Name: "crmsynth"}
 }
 
 // query opens an in-memory DuckDB with the source as src and the snapshot
@@ -363,7 +364,7 @@ func TestTypeErrorHidesLabels(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ENUM") {
 		t.Fatalf("distribution on ENUM: err = %v", err)
 	}
-	report, rerr := os.ReadFile(Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
+	report, rerr := os.ReadFile(layout.Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -561,7 +562,7 @@ func TestDeterminism(t *testing.T) {
 	if first.ContentHash != second.ContentHash || first.ContentHash == "" {
 		t.Fatalf("content hash differs: %s and %s", first.ContentHash, second.ContentHash)
 	}
-	l2 := Layout{Dir: dir, Name: "crmsynth"}
+	l2 := layout.Layout{Dir: dir, Name: "crmsynth"}
 	equalRows(t, "two builds", rowsOf(t, l.Snapshot(first.BuildID), "crm.customers", allColumns),
 		rowsOf(t, l2.Snapshot(second.BuildID), "crm.customers", allColumns))
 
@@ -571,7 +572,7 @@ func TestDeterminism(t *testing.T) {
 	}
 
 	extra, dir3 := mustRun(t, opts{extraCol: true})
-	l3 := Layout{Dir: dir3, Name: "crmsynth"}
+	l3 := layout.Layout{Dir: dir3, Name: "crmsynth"}
 	equalRows(t, "extra column", rowsOf(t, l.Snapshot(first.BuildID), "crm.customers", allColumns),
 		rowsOf(t, l3.Snapshot(extra.BuildID), "crm.customers", allColumns))
 
@@ -588,22 +589,34 @@ func TestDeterminism(t *testing.T) {
 
 // Test 9.
 func TestSpike(t *testing.T) {
-	rep, _ := shared(t)
+	// Without clip the bounds are the 5th value from each end: the two far
+	// revenues neither set the output range nor give a spike.
+	rep, l := shared(t)
+	if len(rep.Spikes) != 0 {
+		t.Errorf("spikes without clip = %+v", rep.Spikes)
+	}
+	if m := scalar[float64](t, query(t, l.Snapshot(rep.BuildID)), "SELECT max(revenue) FROM syn.crm.customers"); m > 6000 {
+		t.Errorf("synthetic max revenue %v follows the outliers", m)
+	}
+
+	// A clip that keeps the far values: they are a spike.
+	spec := baseSpec()
+	c := spec.Tables[0].Columns["revenue"]
+	c.Privacy = &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0, Upper: 1}}
+	spec.Tables[0].Columns["revenue"] = c
+	kept, _ := mustRun(t, opts{spec: spec})
 	var found bool
-	for _, s := range rep.Spikes {
+	for _, s := range kept.Spikes {
 		if s.Column == "revenue" && s.Side == "high" && s.Table == "crm.customers" {
 			found = true
 		}
-		if s.Column == "score" {
-			t.Errorf("unexpected spike %+v", s)
-		}
 	}
 	if !found {
-		t.Errorf("spikes = %+v, want revenue high", rep.Spikes)
+		t.Errorf("spikes = %+v, want revenue high", kept.Spikes)
 	}
 
-	spec := baseSpec()
-	c := spec.Tables[0].Columns["revenue"]
+	spec = baseSpec()
+	c = spec.Tables[0].Columns["revenue"]
 	c.Privacy = &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0.005, Upper: 0.995}}
 	spec.Tables[0].Columns["revenue"] = c
 	clipped, _ := mustRun(t, opts{spec: spec})
@@ -677,7 +690,7 @@ func TestEmptyTable(t *testing.T) {
 	// email (pii) has no choice: rows 0 skips both.
 	spec.Tables[0].Columns["notes"] = apitypes.SyntheticColumn{Generator: apitypes.GenDistribution}
 	rep, dir := mustRun(t, opts{spec: spec})
-	l := Layout{Dir: dir, Name: "crmsynth"}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	db := query(t, l.Snapshot(rep.BuildID))
 	if n := scalar[int64](t, db, "SELECT count(*) FROM syn.crm.customers"); n != 0 {
 		t.Errorf("rows = %d", n)
@@ -697,7 +710,7 @@ func TestEmptyTable(t *testing.T) {
 // Test 17.
 func TestPublish(t *testing.T) {
 	dir := t.TempDir()
-	l := Layout{Dir: dir, Name: "crmsynth"}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	at := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	clock := func(d time.Duration) func() time.Time { return func() time.Time { return at.Add(d) } }
 
@@ -737,7 +750,7 @@ func TestPublish(t *testing.T) {
 	if cur, _ := l.ReadCurrent(); cur != ids[2] {
 		t.Errorf("current moved to %s", cur)
 	}
-	if got, err := l.ReadReport(rep.BuildID); err != nil || got.Result != ResultFailed || got.Error == "" {
+	if got, err := ReadReport(l, rep.BuildID); err != nil || got.Result != ResultFailed || got.Error == "" {
 		t.Errorf("failed report = %+v, %v", got, err)
 	}
 	if _, err := os.Stat(l.Snapshot(rep.BuildID)); !os.IsNotExist(err) {
@@ -747,7 +760,7 @@ func TestPublish(t *testing.T) {
 
 	// An older build that finishes after a newer one fails.
 	rep, err = run(t, opts{dir: dir, clock: clock(-time.Hour)})
-	if !errors.Is(err, ErrNewerCurrent) {
+	if !errors.Is(err, layout.ErrNewerCurrent) {
 		t.Fatalf("older build: err = %v", err)
 	}
 	if cur, _ := l.ReadCurrent(); cur != ids[2] {
@@ -759,13 +772,13 @@ func TestPublish(t *testing.T) {
 	if _, err := os.Stat(l.Snapshot(rep.BuildID)); !os.IsNotExist(err) {
 		t.Errorf("older snapshot kept: %v", err)
 	}
-	if got, err := l.ReadReport(rep.BuildID); err != nil || got.Result != ResultFailed {
+	if got, err := ReadReport(l, rep.BuildID); err != nil || got.Result != ResultFailed {
 		t.Errorf("older report = %+v, %v", got, err)
 	}
 	assertNoTemp(t, l)
 }
 
-func assertNoTemp(t *testing.T, l Layout) {
+func assertNoTemp(t *testing.T, l layout.Layout) {
 	t.Helper()
 	for _, d := range []string{l.SnapshotsDir(), l.ReportsDir(), l.Root()} {
 		entries, err := os.ReadDir(d)
@@ -783,7 +796,7 @@ func assertNoTemp(t *testing.T, l Layout) {
 // Test 22 (build part).
 func TestBuildIDChecks(t *testing.T) {
 	dir := t.TempDir()
-	l := Layout{Dir: dir, Name: "crmsynth"}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	if err := os.MkdirAll(l.Root(), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -792,18 +805,18 @@ func TestBuildIDChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := l.ReadCurrent()
-		if !errors.Is(err, ErrInvalidBuildID) || strings.Contains(err.Error(), bad) {
+		if !errors.Is(err, layout.ErrInvalidBuildID) || strings.Contains(err.Error(), bad) {
 			t.Errorf("current %q: err = %v", bad, err)
 		}
-		if _, err := l.ReadReport(bad); !errors.Is(err, ErrInvalidBuildID) {
+		if _, err := ReadReport(l, bad); !errors.Is(err, layout.ErrInvalidBuildID) {
 			t.Errorf("report %q: err = %v", bad, err)
 		}
 	}
 	// A build does not move a current it cannot read.
-	if _, err := run(t, opts{dir: dir}); !errors.Is(err, ErrInvalidBuildID) {
+	if _, err := run(t, opts{dir: dir}); !errors.Is(err, layout.ErrInvalidBuildID) {
 		t.Errorf("build with a bad current: err = %v", err)
 	}
-	if !ValidBuildID("20261102T101500Z-a1b2c3") {
+	if !layout.ValidBuildID("20261102T101500Z-a1b2c3") {
 		t.Error("valid id refused")
 	}
 }
@@ -821,7 +834,7 @@ func TestSeedNotLogged(t *testing.T) {
 			if (err != nil) != (name == "failing") {
 				t.Fatalf("err = %v", err)
 			}
-			report, rerr := os.ReadFile(Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
+			report, rerr := os.ReadFile(layout.Layout{Dir: dir, Name: "crmsynth"}.Report(rep.BuildID))
 			if rerr != nil {
 				t.Fatal(rerr)
 			}
@@ -839,7 +852,7 @@ func TestSeedNotLogged(t *testing.T) {
 }
 
 func TestSpecHash(t *testing.T) {
-	a, err := SpecHash(baseSpec())
+	a, err := layout.SpecHash(baseSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -848,21 +861,21 @@ func TestSpecHash(t *testing.T) {
 	s.Privacy.SpikeWarning = new(bool)
 	s.Privacy.StrictTags = []string{"secret"}
 	s.Tables[0].Privacy = &apitypes.SyntheticPrivacy{SpikeWarning: new(bool)}
-	if b, _ := SpecHash(s); b != a {
+	if b, _ := layout.SpecHash(s); b != a {
 		t.Errorf("report-only fields change the hash")
 	}
 	// R11: a table privacy with only rejectExactMatches is not report-only.
 	s.Tables[0].Privacy.RejectExactMatches = []string{"name"}
-	withList, _ := SpecHash(s)
+	withList, _ := layout.SpecHash(s)
 	if withList == a {
 		t.Errorf("rejectExactMatches keeps the hash")
 	}
 	s.Tables[0].Privacy.RejectExactMatches = []string{"name", "region"}
-	if b, _ := SpecHash(s); b == withList {
+	if b, _ := layout.SpecHash(s); b == withList {
 		t.Errorf("a rejectExactMatches change keeps the hash")
 	}
 	s.Tables[0].Columns["score"] = apitypes.SyntheticColumn{Generator: apitypes.GenUniform}
-	if b, _ := SpecHash(s); b == a {
+	if b, _ := layout.SpecHash(s); b == a {
 		t.Errorf("a generator change keeps the hash")
 	}
 	if !strings.HasPrefix(a, "sha256:") {
@@ -871,12 +884,12 @@ func TestSpecHash(t *testing.T) {
 	s = baseSpec()
 	n := int64(5000)
 	s.Tables[0].Profile = &apitypes.SyntheticProfile{SampleRows: &n}
-	sampled, _ := SpecHash(s)
+	sampled, _ := layout.SpecHash(s)
 	if sampled == a {
 		t.Errorf("sampleRows keeps the hash")
 	}
 	n = 6000
-	if b, _ := SpecHash(s); b == sampled {
+	if b, _ := layout.SpecHash(s); b == sampled {
 		t.Errorf("a sampleRows change keeps the hash")
 	}
 }
@@ -885,7 +898,7 @@ func TestSpecHash(t *testing.T) {
 func TestSpecHashNoise(t *testing.T) {
 	hash := func(s *apitypes.SyntheticSpec) string {
 		t.Helper()
-		h, err := SpecHash(s)
+		h, err := layout.SpecHash(s)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -957,7 +970,7 @@ func TestSmallFixture(t *testing.T) {
 		Tables:  []apitypes.SyntheticTable{{Name: "crm.t", Size: apitypes.SyntheticSize{Ratio: f64(0.2)}}},
 	}
 	rep, dir := mustRun(t, opts{spec: spec, source: src})
-	l := Layout{Dir: dir, Name: "crmsynth"}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	c, err := duckdb.NewConnector("", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -996,5 +1009,33 @@ func TestSnapshotType(t *testing.T) {
 		if got := snapshotType(tc.in, apitypes.GenNull); got != tc.want {
 			t.Errorf("snapshotType(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// A failed query in the profile transaction stops the fallback chain.
+func TestTxAborted(t *testing.T) {
+	c, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY"); err != nil {
+		t.Fatal(err)
+	}
+	if txAborted(ctx, conn) {
+		t.Fatal("a fresh transaction counts as aborted")
+	}
+	if _, err := conn.ExecContext(ctx, "SELECT CAST('x' AS INTEGER)"); err == nil {
+		t.Fatal("the cast did not fail")
+	}
+	if !txAborted(ctx, conn) {
+		t.Error("the transaction is not seen as aborted")
 	}
 }

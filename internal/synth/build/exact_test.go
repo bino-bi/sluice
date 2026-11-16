@@ -17,6 +17,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/synth/generate"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/internal/synth/profile"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -63,7 +64,7 @@ func TestRejectExactMatchesTooMany(t *testing.T) {
 func TestRejectExactMatchesRedraw(t *testing.T) {
 	dir := t.TempDir()
 	rep, _ := mustRun(t, opts{spec: exactSpec("First_Name", "last_name"), dir: dir, source: relationsPath(t)})
-	db := relQuery(t, Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
+	db := relQuery(t, layout.Layout{Dir: dir, Name: "crmsynth"}.Snapshot(rep.BuildID))
 
 	em := rep.Tables[0].ExactMatches
 	if em == nil {

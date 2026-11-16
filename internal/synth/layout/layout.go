@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package build
+// Package layout is the on-disk layout of a synthetic data source: build
+// ids, the snapshot and report paths, the current pointer, the publish
+// lock, the spec hash and the driver states. The synthetic driver and the
+// builder both use it.
+package layout
 
 import (
 	"crypto/rand"
@@ -30,9 +34,9 @@ var buildIDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$`)
 // checked before it is used in a path.
 func ValidBuildID(id string) bool { return buildIDPattern.MatchString(id) }
 
-// newBuildID returns the UTC time plus 6 random hex chars, so ids sort by
+// NewBuildID returns the UTC time plus 6 random hex chars, so ids sort by
 // time.
-func newBuildID(now time.Time) (string, error) {
+func NewBuildID(now time.Time) (string, error) {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -40,9 +44,16 @@ func newBuildID(now time.Time) (string, error) {
 	return now.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b[:]), nil
 }
 
+const dirMode = 0o750
+
+// ReportMode is the mode of the report and the current file.
+const ReportMode = 0o600
+
+// States of a synthetic data source, as the driver reports them.
 const (
-	dirMode    = 0o750
-	reportMode = 0o600
+	StateNotBuilt = "not_built"
+	StateReady    = "ready"
+	StateStale    = "stale"
 )
 
 // Layout is the folder of one synthetic data source:
@@ -74,7 +85,8 @@ func (l Layout) Snapshot(id string) string {
 // Report returns the report path of a build. The id must be valid.
 func (l Layout) Report(id string) string { return filepath.Join(l.ReportsDir(), id+".json") }
 
-func (l Layout) tempSnapshot(id string) string {
+// TempSnapshot returns the path a build writes to before the rename.
+func (l Layout) TempSnapshot(id string) string {
 	return filepath.Join(l.SnapshotsDir(), "."+id+".duckdb.tmp")
 }
 
@@ -97,23 +109,26 @@ func (l Layout) ReadCurrent() (string, error) {
 	return id, nil
 }
 
-// ReadReport reads the report of a build.
-func (l Layout) ReadReport(id string) (*Report, error) {
+// ReportSpecHash returns the spec_hash field of the report of a build.
+func (l Layout) ReportSpecHash(id string) (string, error) {
 	if !ValidBuildID(id) {
-		return nil, ErrInvalidBuildID
+		return "", ErrInvalidBuildID
 	}
 	b, err := os.ReadFile(l.Report(id))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var r Report
+	var r struct {
+		SpecHash string `json:"spec_hash"`
+	}
 	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, fmt.Errorf("report %s: %w", id, err)
+		return "", fmt.Errorf("report %s: %w", id, err)
 	}
-	return &r, nil
+	return r.SpecHash, nil
 }
 
-func (l Layout) mkdirs() error {
+// Mkdirs creates the snapshot and the report folder.
+func (l Layout) Mkdirs() error {
 	for _, d := range []string{l.SnapshotsDir(), l.ReportsDir()} {
 		if err := os.MkdirAll(d, dirMode); err != nil {
 			return err
@@ -122,18 +137,9 @@ func (l Layout) mkdirs() error {
 	return nil
 }
 
-// writeReport writes the report with mode 0600 through a temp file.
-func (l Layout) writeReport(r *Report) error {
-	b, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(l.Report(r.BuildID), append(b, '\n'), reportMode)
-}
-
-// writeFileAtomic writes data to a temp file in the same folder, syncs it
+// WriteFileAtomic writes data to a temp file in the same folder, syncs it
 // and renames it to path.
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
@@ -155,7 +161,8 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return err
 }
 
-func syncFile(path string) error {
+// SyncFile flushes path to disk.
+func SyncFile(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -167,17 +174,17 @@ func syncFile(path string) error {
 	return err
 }
 
-// syncDir makes a rename in dir durable. Windows cannot sync a folder,
+// SyncDir makes a rename in dir durable. Windows cannot sync a folder,
 // so the error is ignored there.
-func syncDir(dir string) {
-	_ = syncFile(dir)
+func SyncDir(dir string) {
+	_ = SyncFile(dir)
 }
 
-// publish points current at id under the publish lock (plan 1.5 step 4)
+// Publish points current at id under the publish lock (plan 1.5 step 4)
 // and runs retention. It fails with ErrNewerCurrent when current already
 // holds a newer id.
-func (l Layout) publish(id string) error {
-	unlock, err := lockFile(filepath.Join(l.Root(), "publish.lock"))
+func (l Layout) Publish(id string) error {
+	unlock, err := lockFile(filepath.Join(l.Root(), "publish.lock"), true)
 	if err != nil {
 		return err
 	}
@@ -189,19 +196,77 @@ func (l Layout) publish(id string) error {
 	if prev > id {
 		return ErrNewerCurrent
 	}
-	if err := writeFileAtomic(l.current(), []byte(id+"\n"), reportMode); err != nil {
+	if err := WriteFileAtomic(l.current(), []byte(id+"\n"), ReportMode); err != nil {
 		return err
 	}
-	syncDir(l.Root())
+	SyncDir(l.Root())
 	l.retain(id, prev)
+	l.RemoveTemps()
 	return nil
+}
+
+// buildLock returns the lock file that a running build holds.
+func (l Layout) buildLock(id string) string {
+	return filepath.Join(l.SnapshotsDir(), "."+id+".duckdb.lock")
+}
+
+// LockBuild takes the lock of build id. The build holds it until its
+// temp files are renamed or removed, so RemoveTemps leaves them alone,
+// also from another process. The returned func releases the lock and
+// removes the lock file.
+func (l Layout) LockBuild(id string) (func(), error) {
+	if !ValidBuildID(id) {
+		return nil, ErrInvalidBuildID
+	}
+	path := l.buildLock(id)
+	unlock, err := lockFile(path, true)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		unlock()
+		_ = os.Remove(path)
+	}, nil
+}
+
+// RemoveTemps removes the temp snapshot, WAL and lock files of every
+// build whose lock it can take without waiting. A killed build leaves
+// them behind; a running build holds its lock. Errors are ignored.
+func (l Layout) RemoveTemps() {
+	entries, err := os.ReadDir(l.SnapshotsDir())
+	if err != nil {
+		return
+	}
+	ids := map[string]bool{}
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), ".")
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		for _, suffix := range []string{".duckdb.tmp", ".duckdb.tmp.wal", ".duckdb.lock"} {
+			if id, ok := strings.CutSuffix(rest, suffix); ok && ValidBuildID(id) {
+				ids[id] = true
+			}
+		}
+	}
+	for id := range ids {
+		unlock, err := lockFile(l.buildLock(id), false)
+		if err != nil {
+			continue
+		}
+		tmp := l.TempSnapshot(id)
+		_ = os.Remove(tmp)
+		_ = os.Remove(tmp + ".wal")
+		unlock()
+		_ = os.Remove(l.buildLock(id))
+	}
 }
 
 // retain keeps the current and the previous build and removes finished
 // snapshots and reports whose id sorts before the previous id. current
 // only moves forward, so such an id is finished or failed. Temp files
-// are never touched. Errors are ignored: a file left behind is removed
-// by the next build.
+// are left to RemoveTemps. Errors are ignored: a file left behind is
+// removed by the next build.
 func (l Layout) retain(cur, prev string) {
 	if prev == "" {
 		return

@@ -36,7 +36,7 @@ func AuditRecord(r *Report, phase string) *audit.Record {
 			"result":         r.Result,
 		},
 	}
-	if r.Result == ResultFailed {
+	if r.Result == ResultFailed || r.Result == ResultPublishedNotAttached {
 		rec.Decision = audit.DecisionError
 		rec.Message = "synthetic build: " + r.Error
 	}

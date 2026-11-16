@@ -261,6 +261,8 @@ type SyntheticConfig struct {
 	// MaxRatio caps the synthetic rows of a table as a share of its
 	// source rows.
 	MaxRatio float64 `mapstructure:"maxRatio"`
+	// BuildTimeout cancels a server build that runs longer.
+	BuildTimeout time.Duration `mapstructure:"buildTimeout"`
 }
 
 // ApprovalConfig configures the human-approval workflow. The feature
@@ -407,8 +409,9 @@ func DefaultServerConfig() ServerConfig {
 			MinGroupRows: 10,
 		},
 		Synthetic: SyntheticConfig{
-			Dir:      "./synthetic",
-			MaxRatio: 0.2,
+			Dir:          "./synthetic",
+			MaxRatio:     0.2,
+			BuildTimeout: time.Hour,
 		},
 	}
 }

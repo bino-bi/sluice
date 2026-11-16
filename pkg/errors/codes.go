@@ -48,6 +48,9 @@ const (
 	CodeApprovalRejected Code = "ERR_APPROVAL_REJECTED"
 	CodeApprovalExpired  Code = "ERR_APPROVAL_EXPIRED"
 
+	// State
+	CodeConflict Code = "ERR_CONFLICT"
+
 	// Catch-all
 	CodeInternal Code = "ERR_INTERNAL"
 )
@@ -84,6 +87,7 @@ var httpStatusByCode = map[Code]int{
 	CodeApprovalPending:       http.StatusAccepted,
 	CodeApprovalRejected:      http.StatusForbidden,
 	CodeApprovalExpired:       http.StatusGone,
+	CodeConflict:              http.StatusConflict,
 	CodeInternal:              http.StatusInternalServerError,
 }
 
@@ -114,6 +118,7 @@ var defaultMessage = map[Code]string{
 	CodeApprovalPending:       "query requires human approval; awaiting decision",
 	CodeApprovalRejected:      "query rejected by an approver",
 	CodeApprovalExpired:       "approval request expired before a decision was made",
+	CodeConflict:              "the request conflicts with the current state",
 	CodeInternal:              "internal error",
 }
 
@@ -161,6 +166,7 @@ func AllCodes() []Code {
 		CodeApprovalPending,
 		CodeApprovalRejected,
 		CodeApprovalExpired,
+		CodeConflict,
 		CodeInternal,
 	}
 }

@@ -40,6 +40,9 @@ func TestLoadServer_Defaults_NoFile(t *testing.T) {
 	if cfg.Synthetic.Dir != "./synthetic" {
 		t.Errorf("Synthetic.Dir = %q, want ./synthetic", cfg.Synthetic.Dir)
 	}
+	if cfg.Synthetic.BuildTimeout != time.Hour {
+		t.Errorf("Synthetic.BuildTimeout = %v, want 1h", cfg.Synthetic.BuildTimeout)
+	}
 	if cfg.Synthetic.MaxRatio != 0.2 {
 		t.Errorf("Synthetic.MaxRatio = %v, want 0.2", cfg.Synthetic.MaxRatio)
 	}

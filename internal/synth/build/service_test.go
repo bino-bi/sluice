@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
+	"github.com/bino-bi/sluice/internal/synth/layout"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 )
@@ -107,7 +109,7 @@ func TestServiceAuditRecords(t *testing.T) {
 	if err != nil || running {
 		t.Fatalf("start: %v, running %v", err, running)
 	}
-	if v.State != StateRunning || !ValidBuildID(v.BuildID) || v.Origin != OriginAdmin {
+	if v.State != StateRunning || !layout.ValidBuildID(v.BuildID) || v.Origin != OriginAdmin {
 		t.Fatalf("view: %+v", v)
 	}
 	done := waitBuild(t, svc, "crmsynth", v.BuildID)
@@ -139,12 +141,12 @@ func TestServiceAuditRecords(t *testing.T) {
 		t.Errorf("end record rows: %v", end.Extras["synthetic_rows"])
 	}
 
-	l := Layout{Dir: dir, Name: "crmsynth"}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
 	cur, err := l.ReadCurrent()
 	if err != nil || cur != v.BuildID {
 		t.Fatalf("current %q, %v; want %s", cur, err, v.BuildID)
 	}
-	rep, err := l.ReadReport(cur)
+	rep, err := ReadReport(l, cur)
 	if err != nil || rep.Origin != OriginAdmin || rep.Audit != nil {
 		t.Fatalf("report: origin %q, audit %v, %v", rep.Origin, rep.Audit, err)
 	}
@@ -174,7 +176,7 @@ func TestServiceFailClosed(t *testing.T) {
 	if err != nil || len(st.Builds) != 0 {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
-	if id, err := (Layout{Dir: dir, Name: "crmsynth"}).ReadCurrent(); err != nil || id != "" {
+	if id, err := (layout.Layout{Dir: dir, Name: "crmsynth"}).ReadCurrent(); err != nil || id != "" {
 		t.Errorf("current: %q, %v", id, err)
 	}
 }
@@ -332,23 +334,170 @@ func TestServiceCloseCancels(t *testing.T) {
 	if end.ErrorCode != string(pkgerr.CodeCanceled) || end.Decision != audit.DecisionError {
 		t.Errorf("end record: code %q, decision %s", end.ErrorCode, end.Decision)
 	}
-	assertNoTemp(t, Layout{Dir: dir, Name: "crmsynth"})
+	assertNoTemp(t, layout.Layout{Dir: dir, Name: "crmsynth"})
 	if _, _, err := svc.Start(context.Background(), "crmsynth", OriginAdmin, ""); err == nil {
 		t.Error("start after close succeeded")
 	}
 }
 
 // Two server builds in one second: the second id must sort after the
-// first, or publish fails with ErrNewerCurrent.
+// first, or publish fails with layout.ErrNewerCurrent.
 func TestNewerBuildID(t *testing.T) {
 	now := time.Date(2026, 11, 2, 10, 15, 0, 0, time.UTC)
 	for _, prev := range []string{"", "20261102T101500Z-ffffff", "20261102T101500Z-000000", "20261102T101459Z-ffffff"} {
 		id, err := newerBuildID(now, prev)
-		if err != nil || !ValidBuildID(id) || id <= prev {
+		if err != nil || !layout.ValidBuildID(id) || id <= prev {
 			t.Errorf("newerBuildID(%q) = %q, %v", prev, id, err)
 		}
 	}
 	if id, _ := newerBuildID(now, "20261102T101500Z-ffffff"); !strings.HasPrefix(id, "20261102T101501Z-") {
 		t.Errorf("id after a build in the same second: %q", id)
 	}
+}
+
+// One build runs at a time: a start of another name gets ERR_CONFLICT.
+// Cancel ends the running build with ERR_CANCELED.
+func TestServiceBusyAndCancel(t *testing.T) {
+	gate := make(chan struct{})
+	aud := &fakeAuditor{gate: gate}
+	svc, _ := newTestService(t, aud, true)
+	svc.opts.DataSources = append(svc.opts.DataSources, &apitypes.DataSource{
+		Metadata: apitypes.ObjectMeta{Name: "other"},
+		Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSynthetic, Synthetic: baseSpec()},
+	})
+	if _, err := svc.Cancel("other"); !errors.Is(err, ErrNotRunning) || pkgerr.FromError(err).Code != pkgerr.CodeConflict {
+		t.Fatalf("cancel without a build: %v", err)
+	}
+	if _, err := svc.Cancel("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel of an unknown name: %v", err)
+	}
+	first := make(chan BuildView, 1)
+	go func() {
+		v, _, _ := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+		first <- v
+	}()
+	// The first start waits in its start record, after it registered.
+	deadline := time.Now().Add(10 * time.Second)
+	for svc.anyRunning() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the first build is not registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, _, err := svc.Start(context.Background(), "other", OriginAdmin, "")
+	if !errors.Is(err, ErrBusy) || pkgerr.FromError(err).Code != pkgerr.CodeConflict {
+		t.Fatalf("start of another name: %v", err)
+	}
+	v, err := svc.Cancel("crmsynth")
+	if err != nil || v.State != StateRunning {
+		t.Fatalf("cancel: %+v, %v", v, err)
+	}
+	close(gate)
+	v = <-first
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultFailed || !strings.Contains(done.Error, "admin API canceled") {
+		t.Errorf("canceled build: %+v", done)
+	}
+	recs := aud.all()
+	if end := recs[len(recs)-1]; end.ErrorCode != string(pkgerr.CodeCanceled) {
+		t.Errorf("end record code %q", end.ErrorCode)
+	}
+	// The slot is free again.
+	v, _, err = svc.Start(context.Background(), "other", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start after cancel: %v", err)
+	}
+	waitBuild(t, svc, "other", v.BuildID)
+}
+
+// A build that runs longer than BuildTimeout fails with ERR_TIMEOUT.
+func TestServiceBuildTimeout(t *testing.T) {
+	aud := &fakeAuditor{}
+	svc, dir := newTestService(t, aud, true)
+	svc.opts.BuildTimeout = time.Nanosecond
+	v, _, err := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultFailed || !strings.Contains(done.Error, "synthetic.buildTimeout") {
+		t.Errorf("build: %+v", done)
+	}
+	recs := aud.all()
+	if end := recs[len(recs)-1]; end.ErrorCode != string(pkgerr.CodeTimeout) {
+		t.Errorf("end record code %q", end.ErrorCode)
+	}
+	assertNoTemp(t, layout.Layout{Dir: dir, Name: "crmsynth"})
+}
+
+// A build that is published but cannot be attached is not reported as
+// failed: its snapshot is current and goes live at the next start.
+func TestServicePublishedNotAttached(t *testing.T) {
+	aud := &fakeAuditor{}
+	svc, dir := newTestService(t, aud, true)
+	svc.attach = func(string, *Report) error { return errors.New("attach failed") }
+	v, _, err := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultPublishedNotAttached || done.Error == "" {
+		t.Errorf("view: %+v", done)
+	}
+	recs := aud.all()
+	if len(recs) != 2 {
+		t.Fatalf("records: %d, want 2", len(recs))
+	}
+	end := recs[1]
+	if end.Extras["result"] != ResultPublishedNotAttached || end.Extras["content_hash"] == "" {
+		t.Errorf("end record extras: %v", end.Extras)
+	}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
+	if cur, _ := l.ReadCurrent(); cur != v.BuildID {
+		t.Errorf("current = %q, want %q", cur, v.BuildID)
+	}
+	if rep, err := ReadReport(l, v.BuildID); err != nil || rep.Result != ResultSucceeded {
+		t.Errorf("report file: %v, %v", rep, err)
+	}
+}
+
+// The temp files of a killed build are removed when the service starts.
+// A build that runs in another process holds its lock, so its temp file
+// stays.
+func TestServiceRemovesKilledTemps(t *testing.T) {
+	dir := t.TempDir()
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
+	if err := l.Mkdirs(); err != nil {
+		t.Fatal(err)
+	}
+	const killed, running = "20261102T101500Z-a1b2c3", "20261102T101600Z-a1b2c3"
+	for _, id := range []string{killed, running} {
+		tmp := l.TempSnapshot(id)
+		for _, p := range []string{tmp, tmp + ".wal"} {
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	unlock, err := l.LockBuild(running)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewService(ServiceOptions{
+		DataSources: []*apitypes.DataSource{{
+			Metadata: apitypes.ObjectMeta{Name: "crmsynth"},
+			Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSynthetic, Synthetic: baseSpec()},
+		}},
+		Dir: dir,
+		Log: slog.New(slog.DiscardHandler),
+	})
+	if _, err := os.Stat(l.TempSnapshot(killed)); err == nil {
+		t.Error("the temp file of the killed build is left")
+	}
+	if _, err := os.Stat(l.TempSnapshot(running)); err != nil {
+		t.Errorf("the temp file of the running build is gone: %v", err)
+	}
+	unlock()
+	l.RemoveTemps()
+	assertNoTemp(t, l)
 }

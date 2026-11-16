@@ -137,6 +137,9 @@ func (c *ServerConfig) Validate() error {
 	if !(c.Synthetic.MaxRatio > 0 && c.Synthetic.MaxRatio <= 1) {
 		errs = append(errs, fmt.Errorf("synthetic.maxRatio: %v out of range (0, 1]", c.Synthetic.MaxRatio))
 	}
+	if c.Synthetic.BuildTimeout <= 0 {
+		errs = append(errs, errors.New("synthetic.buildTimeout: must be positive"))
+	}
 	// The names that the MCP transport accepts (mcp.ParseTransport).
 	switch c.MCP.Transport {
 	case "", "stdio":
