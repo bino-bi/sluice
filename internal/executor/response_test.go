@@ -4,6 +4,8 @@ package executor_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"testing"
 	"time"
@@ -96,4 +98,34 @@ func TestExecutorCappedResultIgnoresLateDeadline(t *testing.T) {
 	if err := resp.Rows.Err(); err != nil || n != 3 || !resp.Truncated {
 		t.Fatalf("rows %d, truncated %v, Err %v; want 3, true, nil", n, resp.Truncated, err)
 	}
+}
+
+// panicValuer panics when database/sql converts it, inside QueryContext.
+type panicValuer struct{}
+
+func (panicValuer) Value() (driver.Value, error) { panic("driver bug") }
+
+// A panic inside Execute frees the read lock, so a later Exclusive (a
+// catalog swap) does not block for good, and Execute does not hang. A panic
+// inside the driver loses its connection: the pool has a second one here.
+func TestExecutorPanicFreesLock(t *testing.T) {
+	e := newExec(t, executor.Config{MaxOpen: 2, MaxIdle: 2})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Execute did not panic")
+			}
+		}()
+		_, _ = e.Execute(ctx, executor.Request{SQL: "SELECT ?::INTEGER", Params: []any{panicValuer{}}})
+	}()
+	if err := e.Exclusive(ctx, func(context.Context, *sql.Conn) error { return nil }); err != nil {
+		t.Fatalf("Exclusive after the panic: %v", err)
+	}
+	resp, err := e.Execute(ctx, executor.Request{SQL: "SELECT 2"})
+	if err != nil {
+		t.Fatalf("Execute after the panic: %v", err)
+	}
+	_ = resp.Rows.Close()
 }

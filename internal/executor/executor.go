@@ -5,9 +5,11 @@ package executor
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -123,8 +125,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	// cancel runs when the iterator closes, not when this function
-	// returns — otherwise we'd cancel the query mid-stream. Leak-proof
-	// paths below call cancel on every early-exit branch.
+	// returns — otherwise we'd cancel the query mid-stream.
 	conn, err := e.db.Conn(execCtx)
 	if err != nil {
 		cancel()
@@ -133,30 +134,55 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		}
 		return nil, fmt.Errorf("%w: %w", ErrConnUnavailable, err)
 	}
+	// Until the iterator owns rows, conn and cancel, every exit frees
+	// them, a panic in the driver or the attach hook too.
+	var rows *sql.Rows
+	handedOff := false
+	defer func() {
+		if handedOff {
+			return
+		}
+		p := recover()
+		if p == nil {
+			if rows != nil {
+				_ = rows.Close()
+			}
+			_ = conn.Close()
+			cancel()
+			return
+		}
+		cancel()
+		// A panic inside a database/sql call leaves the connection's lock
+		// held, and closing it would block for good. So the close runs
+		// apart: it frees the connection when it can, else only that
+		// connection is lost. ErrBadConn drops a half set up connection.
+		go func() {
+			if rows != nil {
+				_ = rows.Close()
+			}
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			_ = conn.Close()
+		}()
+		panic(p)
+	}()
 	// The read lock is taken after the connection, never while waiting
 	// for one: with MaxOpen=1 Exclusive holds the only connection and
-	// waits for the write lock.
+	// waits for the write lock. A held lock would block every Exclusive.
 	e.attachMu.RLock()
+	unlock := sync.OnceFunc(e.attachMu.RUnlock)
+	defer unlock()
 	if err := e.ensureInit(execCtx, conn); err != nil {
-		e.attachMu.RUnlock()
-		cancel()
-		_ = conn.Close()
 		return nil, err
 	}
 
 	began := time.Now()
-	rows, err := conn.QueryContext(execCtx, req.SQL, req.Params...)
-	e.attachMu.RUnlock()
+	rows, err = conn.QueryContext(execCtx, req.SQL, req.Params...)
+	unlock()
 	if err != nil {
-		cancel()
-		_ = conn.Close()
 		return nil, wrapRunErr(err)
 	}
 	cols, err := rows.ColumnTypes()
 	if err != nil {
-		cancel()
-		_ = rows.Close()
-		_ = conn.Close()
 		return nil, fmt.Errorf("%w: columns: %w", ErrExecute, err)
 	}
 	colInfo := make([]ColumnInfo, len(cols))
@@ -187,6 +213,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		ExecTime: time.Since(began),
 	}
 	iter.parent = resp
+	handedOff = true
 	return resp, nil
 }
 
