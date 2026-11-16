@@ -121,7 +121,7 @@ var docs = map[string]doc{
 
 	"RowFilterPolicy.filter.predicate":  {"one of two", "Filter as a tree."},
 	"RowFilterPolicy.filter.expression": {"one of two", "Filter in CEL."},
-	"RowFilterPolicy.combine":           {"", "{values}. Default `restrictive`: all filters must hold."},
+	"RowFilterPolicy.combine":           {"", "{values}. Default `restrictive`: the filter must always hold. At least one `permissive` filter must hold."},
 
 	"ColumnMaskPolicy.mask.type":                {"yes", "{values}."},
 	"ColumnMaskPolicy.mask.args.value":          {"", "`constant`: the new value."},

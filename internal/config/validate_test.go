@@ -172,6 +172,11 @@ func TestServerConfigValidate(t *testing.T) {
 			wantErr: []string{"sample.maxRows"},
 		},
 		{
+			name:    "approval per-subject cap of zero rejected",
+			mutate:  func(c *ServerConfig) { c.Approval.MaxPendingPerSubject = 0 },
+			wantErr: []string{"approval.maxPendingPerSubject"},
+		},
+		{
 			name:    "negative sample group size rejected",
 			mutate:  func(c *ServerConfig) { c.Sample.MinGroupRows = -1 },
 			wantErr: []string{"sample.minGroupRows"},

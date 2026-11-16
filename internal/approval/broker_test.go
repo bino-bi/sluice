@@ -134,6 +134,31 @@ func TestBroker_MaxPending(t *testing.T) {
 	}
 }
 
+// One subject cannot fill the queue: past MaxPendingPerSubject its new
+// requests are refused, while other subjects still get a slot.
+func TestBroker_MaxPendingPerSubject(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	b, err := New(Options{Clock: clk.now, Notifier: &recordingNotifier{}, MaxPending: 10, MaxPendingPerSubject: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, sql := range []string{"a", "b"} {
+		if _, _, err := b.Require(context.Background(), requireInput("u", sql)); err != nil {
+			t.Fatalf("Require %s: %v", sql, err)
+		}
+	}
+	if _, _, err := b.Require(context.Background(), requireInput("u", "c")); !errors.Is(err, ErrSubjectFull) {
+		t.Fatalf("3rd Require err = %v, want ErrSubjectFull", err)
+	}
+	// A repeat of a pending request still dedupes.
+	if _, created, err := b.Require(context.Background(), requireInput("u", "a")); err != nil || created {
+		t.Fatalf("dedupe: created=%v err=%v", created, err)
+	}
+	if _, _, err := b.Require(context.Background(), requireInput("v", "a")); err != nil {
+		t.Fatalf("other subject: %v", err)
+	}
+}
+
 func TestBroker_RejectAndWrongToken(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	n := &recordingNotifier{}

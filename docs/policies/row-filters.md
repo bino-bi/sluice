@@ -38,7 +38,7 @@ A [suite](testing.md) case shows the rewritten SQL:
 |---|---|---|---|
 | `spec.filter.predicate` | object | | The filter as a tree of column checks. |
 | `spec.filter.expression` | string | | The filter as a [CEL](conditions.md) expression. Set this or `predicate`, not both. |
-| `spec.combine` | string | `restrictive` | How this filter joins other filters on the same table. |
+| `spec.combine` | string | `restrictive` | How this filter joins other filters on the same table: `restrictive` or `permissive`. |
 
 Shared fields: [Policies](index.md). Selectors: [Matching](matching.md). Table names match in any letter case.
 
@@ -105,7 +105,12 @@ You can use comparisons, `&&`, `||`, `!`, `row.x in [...]` and `startsWith`, `en
 
 ### Several filters on one table
 
-Filters join in order of priority, highest first. Each filter joins the earlier ones with its own `combine`: `restrictive` is `AND`, `permissive` is `OR`.
+Filters on one table join as in PostgreSQL row level security:
+
+- The `permissive` filters join with `OR`. A row must pass at least one.
+- Each `restrictive` filter joins with `AND`. A row must pass all of them.
+
+So the result is `(permissive 1 OR permissive 2) AND restrictive 1 AND restrictive 2`. Priority does not change it. A `permissive` filter never widens a `restrictive` one. With only `restrictive` filters, the result is their `AND`. PostgreSQL returns no rows in that case, Sluice does not: access comes from a `SqlAccessPolicy`.
 
 ```yaml
 --8<-- "examples/row-filters/policies.d/filter-open-orders.yaml:2"

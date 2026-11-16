@@ -214,3 +214,67 @@ func denyPIIAll() *apitypes.SQLAccessPolicy {
 		},
 	}
 }
+
+// An exclude on a gate kind carves out tables, not the whole statement:
+// joining an excluded table must not switch the gate off for the others.
+func TestGateExclude_JoinOfExcludedTableKeepsGate(t *testing.T) {
+	pii := parser.TableRef{Catalog: "pg", Schema: "public", Table: "users"}
+	lookup := parser.TableRef{Catalog: "pg", Schema: "public", Table: "public_lookup"}
+	byTable := apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"public_lookup"}}}}}
+	bySubject := apitypes.Selector{Any: []apitypes.Clause{{Subjects: &apitypes.SubjectSelector{Groups: []string{"stewards"}}}}}
+
+	gate := approvalPolicy("gate", nil)
+	gate.Spec.Exclude = &byTable
+	reject := &apitypes.QueryRejectPolicy{
+		TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindQueryRejectPolicy},
+		Metadata: apitypes.ObjectMeta{Name: "no-pii"},
+		Spec: apitypes.QueryRejectSpec{
+			Match:   apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"*"}}}}},
+			Exclude: &byTable,
+			Reject:  apitypes.RejectSpec{Rules: []apitypes.RejectRule{{Name: "r", Message: "no"}}},
+		},
+	}
+	eval := func(user *identity.UserCtx, pol apitypes.Object, tables ...parser.TableRef) *Decision {
+		t.Helper()
+		eng := New(Options{})
+		if err := eng.ApplySnapshot(context.Background(), makeSnapshot(allowAll(0), pol)); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		dec, err := eng.Evaluate(context.Background(), Input{User: user, AST: stubAST{kind: parser.StmtSelect}, Tables: tables})
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		return dec
+	}
+	user := &identity.UserCtx{Subject: "u"}
+	if dec := eval(user, gate, pii, lookup); dec.Approval == nil {
+		t.Error("approval: JOIN of an excluded table switched the gate off")
+	}
+	if dec := eval(user, gate, lookup); dec.Approval != nil {
+		t.Error("approval: a query on the excluded table only must not be gated")
+	}
+	if dec := eval(user, reject, pii, lookup); dec.Outcome != OutcomeReject {
+		t.Errorf("reject: JOIN of an excluded table gave %s, want reject", dec.Outcome)
+	}
+	if dec := eval(user, reject, lookup); dec.Outcome != OutcomeAllow {
+		t.Errorf("reject: excluded table only gave %s, want allow", dec.Outcome)
+	}
+	gate.Spec.Exclude = &bySubject
+	if dec := eval(&identity.UserCtx{Subject: "s", Groups: []string{"stewards"}}, gate, pii, lookup); dec.Approval != nil {
+		t.Error("approval: a subject exclude must switch the gate off")
+	}
+
+	// A table the gate never matched must not keep it on.
+	hrPublic := parser.TableRef{Catalog: "pg", Schema: "public", Table: "hr_public"}
+	orders := parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"}
+	payroll := parser.TableRef{Catalog: "pg", Schema: "public", Table: "payroll"}
+	hr := approvalPolicy("hr", nil)
+	hr.Spec.Match = apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"payroll", "hr_*"}}}}}
+	hr.Spec.Exclude = &apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"hr_public"}}}}}
+	if dec := eval(user, hr, hrPublic, orders); dec.Approval != nil {
+		t.Error("approval: an unmatched joined table kept the gate on")
+	}
+	if dec := eval(user, hr, payroll, hrPublic); dec.Approval == nil {
+		t.Error("approval: a matched table that is not excluded must keep the gate")
+	}
+}

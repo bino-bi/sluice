@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -128,7 +129,7 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 
 	act := ActionOf(in)
 	acts := activation(in)
-	matched, condErr := e.selectMatching(snap, in, act, acts)
+	matched, failedShadow, condErr := e.selectMatching(snap, in, act, acts)
 	if condErr != nil {
 		// A condition that errors at runtime cannot be safely treated as
 		// true or false, so the whole request is denied.
@@ -144,7 +145,7 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 		globalMetrics.observe(dec.Duration.Seconds())
 		return dec, nil
 	}
-	fired, rejErr := firedRejectRules(matched, acts)
+	fired, rejFailed, rejErr := firedRejectRules(matched, acts)
 	if rejErr != nil {
 		dec := &Decision{
 			Outcome: OutcomeDeny,
@@ -158,6 +159,16 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 		globalMetrics.observe(dec.Duration.Seconds())
 		return dec, nil
 	}
+	if len(rejFailed) > 0 {
+		kept := make([]*CompiledPolicy, 0, len(matched))
+		for _, p := range matched {
+			if !slices.Contains(rejFailed, p) {
+				kept = append(kept, p)
+			}
+		}
+		matched = kept
+		failedShadow = append(failedShadow, rejFailed...)
+	}
 	dec := resolve(matched, in.Tables, in.User, act, fired)
 	// Approval gates an otherwise-allowed request; it runs after resolve so
 	// deny and reject take precedence. An abstained deny (no allow, or a
@@ -165,6 +176,11 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 	// another engine may allow the statement, and the gate must survive.
 	if dec.Outcome == OutcomeAllow || (dec.Outcome == OutcomeDeny && dec.Abstained) {
 		evaluateApproval(matched, in, dec)
+	}
+	// In Enforce mode an evaluation error denies, so that is what a shadow
+	// policy whose condition or rule failed would have done.
+	for _, p := range failedShadow {
+		dec.Shadow = append(dec.Shadow, apitypes.AppliedPolicy{Kind: p.Kind, Name: p.Name, Priority: p.Priority, Would: "deny"})
 	}
 	dec.Evaluated = len(snap.Policies)
 	dec.Duration = e.clock().Sub(start)
@@ -183,9 +199,10 @@ func (e *Engine) Evaluate(_ context.Context, in Input) (*Decision, error) {
 // selectMatching returns the compiled policies whose Match selector
 // includes the input and whose Exclude selector does not exclude it.
 // The returned slice preserves snapshot ordering (priority desc, name asc).
-func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.Action, acts map[string]any) ([]*CompiledPolicy, error) {
+// A shadow policy whose condition errors is left out and returned in
+// failedShadow.
+func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.Action, acts map[string]any) (out, failedShadow []*CompiledPolicy, err error) {
 	ctx := MatchContext{User: in.User, Tables: in.Tables, Action: act}
-	var out []*CompiledPolicy
 	for _, p := range snap.Policies {
 		if !p.Match.Match(ctx) {
 			continue
@@ -193,31 +210,43 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 		// Per-table policy kinds (row filter, column mask) evaluate their
 		// Exclude per table in conflict.go so that referencing an excluded
 		// table in a multi-table query does not silently drop the policy's
-		// protection on the *other* tables. Whole-query kinds (access gate,
-		// reject) keep the whole-policy Exclude here.
+		// protection on the *other* tables. The other kinds decide here.
 		if p.Exclude != nil && wholePolicyExclude(p.Kind) && p.Exclude.Match(ctx) {
-			// An access policy's Exclude carves out tables one by one. It
-			// switches the policy off only when it covers every referenced
-			// table (a subject carve-out does); denyOrAllow applies it per
-			// table. An Exclude with an `all` block combines clauses across
-			// tables (e.g. "never join A with B") and does not decompose per
-			// table, so it keeps the whole-statement drop.
-			if p.Kind != apitypes.KindSQLAccessPolicy || !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, ctx) {
+			// An Exclude carves out tables one by one. It switches the
+			// policy off only when it covers every referenced table (a
+			// subject carve-out does), so joining one excluded table does not
+			// lift a gate on the others. denyOrAllow applies an access
+			// policy's Exclude per table. An Exclude with an `all` block
+			// combines clauses across tables (e.g. "never join A with B") and
+			// does not decompose per table, so it keeps the whole-statement
+			// drop.
+			if !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, gatedTables(&p.Match, ctx)) {
 				continue
 			}
 		}
 		// Conditions gate whether the policy applies. All must be true;
-		// an evaluation error denies the whole request (caller handles it).
-		ok, err := conditionsPass(p.Conditions, acts)
-		if err != nil {
-			return nil, err
+		// an evaluation error denies the whole request (caller handles it),
+		// unless the policy only runs in shadow mode.
+		ok, cerr := conditionsPass(p.Conditions, acts)
+		if cerr != nil {
+			if isShadow(p) {
+				e.logger.Debug("policy: condition failed in shadow policy", slog.String("policy", p.Name), slog.String("error", cerr.Error()))
+				failedShadow = append(failedShadow, p)
+				continue
+			}
+			return nil, nil, cerr
 		}
 		if !ok {
 			continue
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, failedShadow, nil
+}
+
+// isShadow reports whether p runs in Audit or DryRun mode.
+func isShadow(p *CompiledPolicy) bool {
+	return p.Enforcement == apitypes.EnforcementAudit || p.Enforcement == apitypes.EnforcementDryRun
 }
 
 // perTableExclude reports whether ex can be applied one table at a time.
@@ -225,6 +254,19 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 // only has meaning at query scope.
 func perTableExclude(ex *CompiledSelector) bool {
 	return ex == nil || len(ex.All) == 0
+}
+
+// gatedTables narrows ctx to the tables match covers on their own, so a
+// table the policy never matched cannot keep it on. An `all` block does not
+// decompose per table and keeps every referenced table.
+func gatedTables(match *CompiledSelector, ctx MatchContext) MatchContext {
+	if !perTableExclude(match) {
+		return ctx
+	}
+	if ts := match.MatchingTables(ctx); len(ts) > 0 {
+		ctx.Tables = ts
+	}
+	return ctx
 }
 
 // excludesEveryTable reports whether ex matches each referenced table on
@@ -258,25 +300,34 @@ func conditionsPass(conds []CompiledCondition, acts map[string]any) (bool, error
 // firedRejectRules returns, per policy, the reject rules that fire —
 // rules with no expression always fire; expression rules fire only when
 // their program evaluates true. An evaluation error is surfaced so the
-// caller can deny the request.
-func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (map[*CompiledPolicy][]CompiledRejectRule, error) {
-	var out map[*CompiledPolicy][]CompiledRejectRule
+// caller can deny the request. A shadow policy whose rule errors is
+// returned in failedShadow instead.
+func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (out map[*CompiledPolicy][]CompiledRejectRule, failedShadow []*CompiledPolicy, err error) {
 	for _, p := range matched {
 		if p.Kind != apitypes.KindQueryRejectPolicy || p.Reject == nil {
 			continue
 		}
 		var fired []CompiledRejectRule
+		failed := false
 		for _, r := range p.Reject.Rules {
 			if r.Prog != nil {
-				ok, err := evalBool(r.Prog, acts)
-				if err != nil {
-					return nil, fmt.Errorf("reject rule %q: %w", r.Name, err)
+				ok, rerr := evalBool(r.Prog, acts)
+				if rerr != nil {
+					if isShadow(p) {
+						failed = true
+						break
+					}
+					return nil, nil, fmt.Errorf("reject rule %q: %w", r.Name, rerr)
 				}
 				if !ok {
 					continue
 				}
 			}
 			fired = append(fired, r)
+		}
+		if failed {
+			failedShadow = append(failedShadow, p)
+			continue
 		}
 		if len(fired) > 0 {
 			if out == nil {
@@ -285,7 +336,7 @@ func firedRejectRules(matched []*CompiledPolicy, acts map[string]any) (map[*Comp
 			out[p] = fired
 		}
 	}
-	return out, nil
+	return out, failedShadow, nil
 }
 
 // ActionOf maps the parsed statement kind to the policy Action verb used
@@ -313,9 +364,9 @@ func ActionOf(in Input) apitypes.Action {
 	}
 }
 
-// wholePolicyExclude reports whether an Exclude selector should drop the
-// entire policy when it matches at query scope. True for whole-query kinds
-// (SqlAccess gate, QueryReject); false for per-table kinds (RowFilter,
+// wholePolicyExclude reports whether selectMatching decides if an Exclude
+// drops the entire policy. True for the gate kinds (SqlAccess, QueryReject,
+// QueryRewrite, Approval); false for per-table kinds (RowFilter,
 // ColumnMask) whose Exclude is applied per table during conflict
 // resolution so a carve-out on one table cannot lift protection on others.
 func wholePolicyExclude(k apitypes.Kind) bool {
@@ -335,6 +386,11 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 	if err != nil {
 		return nil, err
 	}
+	return e.ExplainDecision(in, dec), nil
+}
+
+// ExplainDecision builds the ExplainResult of a decision Evaluate made for in.
+func (e *Engine) ExplainDecision(in Input, dec *Decision) *apitypes.ExplainResult {
 	out := &apitypes.ExplainResult{
 		Subject:   subjectLabel(in.User),
 		Resource:  resourceLabel(in.Tables),
@@ -359,7 +415,7 @@ func (e *Engine) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult
 			Reason: dec.DenyReason.Message,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func effectiveDecision(dec *Decision) apitypes.EffectiveDecision {

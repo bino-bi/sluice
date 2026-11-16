@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -37,6 +39,15 @@ func (s *Service) awaitApproval(
 	start time.Time,
 	sqlHash, subjectKey string,
 ) (*QueryResult, error) {
+	// The grant covers the full statement, so the approver must see all of
+	// it. A cut sample could hide the part that matters.
+	if limit := s.opts.Limits.ApprovalSQLSampleBytes; limit > 0 && len(req.SQL) > limit {
+		msg := fmt.Sprintf("the SQL is %d bytes, longer than approval.sqlSampleBytes (%d), so an approver cannot see all of it; shorten the statement", len(req.SQL), limit)
+		rec.Decision = audit.DecisionReject
+		rec.Message = msg
+		s.emit(ctx, rec, start)
+		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(msg)
+	}
 	names := make([]string, 0, len(dec.Approval.Policies))
 	for _, p := range dec.Approval.Policies {
 		names = append(names, p.Name)
@@ -60,8 +71,11 @@ func (s *Service) awaitApproval(
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodeRateLimited)
 		s.emit(ctx, rec, start)
-		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithQueryID(qid).
-			WithMessage("approval queue full; try again later")
+		msg := "approval queue full; try again later"
+		if errors.Is(err, approval.ErrSubjectFull) {
+			msg = "too many pending approvals of this subject; try again later"
+		}
+		return nil, pkgerr.New(pkgerr.CodeRateLimited).WithQueryID(qid).WithMessage(msg)
 	}
 	if created {
 		// Best-effort lifecycle record; the webhook fired inside Require.
@@ -211,14 +225,12 @@ func approvalSubject(u *identity.UserCtx) approval.Subject {
 	return approval.Subject{ID: u.Subject, Issuer: u.Issuer, Email: u.Email, Groups: u.Groups}
 }
 
-// sqlSampleFor truncates sql to limit bytes. Zero or negative means no
-// sample — the operator disabled it; there is no hidden fallback.
+// sqlSampleFor returns the SQL for the approver. Zero or negative means no
+// sample: the operator disabled it, there is no hidden fallback. It never
+// cuts: awaitApproval refuses SQL longer than limit.
 func sqlSampleFor(sql string, limit int) string {
 	if limit <= 0 {
 		return ""
 	}
-	if len(sql) <= limit {
-		return sql
-	}
-	return sql[:limit]
+	return sql
 }

@@ -68,13 +68,14 @@ func buildApprovalBroker(
 	}
 
 	broker, err := approval.New(approval.Options{
-		Logger:     log,
-		Notifier:   notifier,
-		Auditor:    &approvalAuditor{disp: auditDisp, origin: hostname()},
-		Store:      store,
-		RequestTTL: scfg.Approval.RequestTTL,
-		GrantTTL:   scfg.Approval.GrantTTL,
-		MaxPending: scfg.Approval.MaxPending,
+		Logger:               log,
+		Notifier:             notifier,
+		Auditor:              &approvalAuditor{disp: auditDisp, origin: hostname()},
+		Store:                store,
+		RequestTTL:           scfg.Approval.RequestTTL,
+		GrantTTL:             scfg.Approval.GrantTTL,
+		MaxPending:           scfg.Approval.MaxPending,
+		MaxPendingPerSubject: scfg.Approval.MaxPendingPerSubject,
 	})
 	if err != nil {
 		return nil, err

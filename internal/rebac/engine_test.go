@@ -201,3 +201,31 @@ func TestReBAC_AuditModeFailedCheckIsShadowDeny(t *testing.T) {
 		t.Errorf("shadow = %+v, want fga-finance with would=deny", dec.Shadow)
 	}
 }
+
+// The check cache is scoped by backend: an allow from one store must not
+// answer the same tuple for a policy on another store.
+func TestReBAC_CacheIsScopedByBackend(t *testing.T) {
+	allowA := relPolicy()
+	allowA.Metadata.Name = "store-a"
+	storeB := relPolicy()
+	storeB.Metadata.Name = "store-b"
+	storeB.Spec.Backend.StoreID = "s2"
+	e := rebac.New(rebac.Options{
+		NewChecker: func(b apitypes.RelationshipBackend, _ []byte) rebac.RelationChecker {
+			if b.StoreID == "s1" {
+				return &rebac.Fake{Tuples: map[string]bool{"table:finance.ledger#viewer@user:alice": true}}
+			}
+			return &rebac.Fake{Tuples: map[string]bool{}}
+		},
+	})
+	if err := e.ApplySnapshot(context.Background(), &config.Snapshot{RelationshipPolicies: []*apitypes.RelationshipPolicy{allowA, storeB}}); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	dec, err := e.Evaluate(context.Background(), input())
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if dec.Outcome != policy.OutcomeDeny || dec.Abstained || dec.DenyReason.PolicyName != "store-b" {
+		t.Errorf("outcome = %s abstained=%v reason=%+v, want store-b to deny", dec.Outcome, dec.Abstained, dec.DenyReason)
+	}
+}

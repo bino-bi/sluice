@@ -92,7 +92,7 @@ The decision is `allow`. The deny shows under `shadow`, with `would: deny`. The 
 
 ## Limits
 
-- A failing condition still denies the query in `Audit` and `DryRun` mode: `ACL_DENIED`.
+- In `Audit` and `DryRun` mode a failing condition does not deny. The policy shows under `shadow` with `would: deny`.
 - `--strict` does not check the keys under `spec.mask.args`.
 - A missing path validates as 0 objects, exit status 0.
 

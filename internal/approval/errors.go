@@ -9,6 +9,9 @@ var (
 	// ErrBrokerFull is returned by Require when the pending-request cap is
 	// reached. Fail-closed: a new query cannot park.
 	ErrBrokerFull = errors.New("approval: pending request limit reached")
+	// ErrSubjectFull is returned by Require when the subject already has
+	// MaxPendingPerSubject pending requests.
+	ErrSubjectFull = errors.New("approval: pending request limit of the subject reached")
 	// ErrNotFound is returned when an approval id is unknown.
 	ErrNotFound = errors.New("approval: request not found")
 	// ErrTokenMismatch is returned when a capability token does not match.

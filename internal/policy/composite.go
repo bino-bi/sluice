@@ -89,12 +89,16 @@ func (c *Composite) Evaluate(ctx context.Context, in Input) (*Decision, error) {
 		}
 		decisions = append(decisions, d)
 	}
+	return c.merge(decisions, start), nil
+}
 
+// merge folds the member decisions into one.
+func (c *Composite) merge(decisions []*Decision, start time.Time) *Decision {
 	// Deny-overrides: first explicit (non-abstained) deny wins.
 	for _, d := range decisions {
 		if d.Outcome == OutcomeDeny && !d.Abstained {
 			d.Duration = c.clock().Sub(start)
-			return d, nil
+			return d
 		}
 	}
 
@@ -118,7 +122,7 @@ func (c *Composite) Evaluate(ctx context.Context, in Input) (*Decision, error) {
 	if len(merged.Rejections) > 0 {
 		merged.Outcome = OutcomeReject
 		merged.Duration = c.clock().Sub(start)
-		return merged, nil
+		return merged
 	}
 	if !anyAllow {
 		// All members abstained → default-deny at the composite level.
@@ -126,7 +130,7 @@ func (c *Composite) Evaluate(ctx context.Context, in Input) (*Decision, error) {
 		merged.Abstained = true
 		merged.DenyReason = &DenyReason{Message: "no engine allowed the request (default-deny)", Code: "ACL_DENIED"}
 		merged.Duration = c.clock().Sub(start)
-		return merged, nil
+		return merged
 	}
 
 	// Merge grants from ALL members (restriction is always safe).
@@ -162,7 +166,7 @@ func (c *Composite) Evaluate(ctx context.Context, in Input) (*Decision, error) {
 		}
 	}
 	merged.Duration = c.clock().Sub(start)
-	return merged, nil
+	return merged
 }
 
 // mergeRewrite folds a member's RewriteEffect into the merged decision in
@@ -184,15 +188,32 @@ func mergeRewrite(merged *Decision, r *RewriteEffect) {
 	eff.Policies = append(eff.Policies, r.Policies...)
 }
 
-// Explain concatenates each member's Explain output.
+// decisionExplainer is a PolicyEngine that builds its ExplainResult from a
+// decision it already made, so Composite.Explain evaluates it only once.
+type decisionExplainer interface {
+	ExplainDecision(in Input, dec *Decision) *apitypes.ExplainResult
+}
+
+// Explain concatenates each member's Explain output. Each member is
+// evaluated once when it can explain a given decision; the effective
+// decision merges those same decisions.
 func (c *Composite) Explain(ctx context.Context, in Input) (*apitypes.ExplainResult, error) {
+	start := c.clock()
 	out := &apitypes.ExplainResult{
 		Subject:  subjectLabel(in.User),
 		Resource: resourceLabel(in.Tables),
 	}
+	decisions := make([]*Decision, 0, len(c.members))
 	for _, m := range c.members {
-		r, err := m.Explain(ctx, in)
+		d, err := m.Evaluate(ctx, in)
 		if err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, d)
+		var r *apitypes.ExplainResult
+		if de, ok := m.(decisionExplainer); ok {
+			r = de.ExplainDecision(in, d)
+		} else if r, err = m.Explain(ctx, in); err != nil {
 			return nil, err
 		}
 		out.Matched = append(out.Matched, r.Matched...)
@@ -200,11 +221,7 @@ func (c *Composite) Explain(ctx context.Context, in Input) (*apitypes.ExplainRes
 		out.Rejected = append(out.Rejected, r.Rejected...)
 		out.ApprovalRequired = append(out.ApprovalRequired, r.ApprovalRequired...)
 	}
-	dec, err := c.Evaluate(ctx, in)
-	if err != nil {
-		return nil, err
-	}
-	out.Effective = effectiveDecision(dec)
+	out.Effective = effectiveDecision(c.merge(decisions, start))
 	return out, nil
 }
 

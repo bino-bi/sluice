@@ -18,8 +18,8 @@ import (
 //     deny supplies the DenyReason).
 //  2. Allow required: if no SqlAccessPolicy with effect=allow matched,
 //     the request is denied even without an explicit deny.
-//  3. Row filters on each table are combined per the policy's Combine
-//     mode; restrictive policies AND together, permissive ones OR.
+//  3. Row filters on each table combine like PostgreSQL RLS: the
+//     permissive ones OR together, and each restrictive one ANDs on top.
 //  4. Masks per column follow priority desc, specificity desc, name asc.
 //  5. Reject rules are appended verbatim (one per firing rule).
 func resolve(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, firedRejects map[*CompiledPolicy][]CompiledRejectRule) *Decision {
@@ -220,10 +220,13 @@ func uncoveredTable(allows []*CompiledPolicy, tables []parser.TableRef, user *id
 	return ""
 }
 
-// collectRowFilters walks every matched RowFilterPolicy and folds its
-// predicate into dec.RowFilters[tableKey]. Multiple filters on the same
-// table are combined per the policy's Combine mode.
+// collectRowFilters walks every matched RowFilterPolicy and builds one
+// predicate per table in dec.RowFilters[tableKey]. Like PostgreSQL RLS the
+// permissive filters OR together and every restrictive filter ANDs on top,
+// so a permissive filter can never widen a restrictive one.
 func collectRowFilters(matched []*CompiledPolicy, tables []parser.TableRef, user *identity.UserCtx, action apitypes.Action, dec *Decision) {
+	type parts struct{ restrictive, permissive []*CompiledPredicate }
+	byTable := map[string]*parts{}
 	for _, p := range matched {
 		if p.Kind != apitypes.KindRowFilterPolicy || p.RowFilter == nil {
 			continue
@@ -250,16 +253,36 @@ func collectRowFilters(matched []*CompiledPolicy, tables []parser.TableRef, user
 			seen[key] = true
 			existing, ok := dec.RowFilters[key]
 			if !ok {
-				dec.RowFilters[key] = &CompiledFilter{
-					TableKey:  key,
-					Predicate: p.RowFilter.Predicate,
-					Combine:   p.RowFilter.Combine,
-					Policies:  []string{p.Name},
-				}
-				continue
+				existing = &CompiledFilter{TableKey: key, Combine: p.RowFilter.Combine}
+				dec.RowFilters[key] = existing
+				byTable[key] = &parts{}
 			}
-			existing.Predicate = combinePredicates(existing.Predicate, p.RowFilter.Predicate, p.RowFilter.Combine)
 			existing.Policies = append(existing.Policies, p.Name)
+			if pred := p.RowFilter.Predicate; pred != nil {
+				pt := byTable[key]
+				if p.RowFilter.Combine == apitypes.CombinePermissive {
+					pt.permissive = append(pt.permissive, pred)
+				} else {
+					pt.restrictive = append(pt.restrictive, pred)
+				}
+			}
+		}
+	}
+	for key, pt := range byTable {
+		all := pt.restrictive
+		switch len(pt.permissive) {
+		case 0:
+		case 1:
+			all = append([]*CompiledPredicate{pt.permissive[0]}, all...)
+		default:
+			all = append([]*CompiledPredicate{{Any: pt.permissive}}, all...)
+		}
+		switch len(all) {
+		case 0:
+		case 1:
+			dec.RowFilters[key].Predicate = all[0]
+		default:
+			dec.RowFilters[key].Predicate = &CompiledPredicate{All: all}
 		}
 	}
 }
@@ -329,7 +352,7 @@ func collectColumnMasks(matched []*CompiledPolicy, tables []parser.TableRef, use
 			// audit. Use the selector's column patterns verbatim (plus any
 			// tag-derived columns for this table) so the rewriter can
 			// resolve them against the actual columns.
-			cols = rawColumns(c.policy, c.table)
+			cols = rawColumns(c.policy, MatchContext{User: user, Tables: []parser.TableRef{c.table}, Action: action})
 		}
 		for _, col := range cols {
 			key := c.tableKey + "." + col
@@ -379,12 +402,15 @@ func collectRewrites(matched []*CompiledPolicy, dec *Decision) {
 // rewriter layer); return nil so the rawColumns fallback takes over.
 func knownColumns(_ parser.TableRef) []string { return nil }
 
-// rawColumns returns the column patterns the policy masks on table t: the
-// explicit resources.columns patterns plus, for tag-referencing selectors,
-// the column patterns of classification rules whose table part matches t.
-// Wildcard patterns are returned verbatim so the rewriter can expand them
-// against the schema cache.
-func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
+// rawColumns returns the column patterns the policy masks on the one table
+// of ctx: the explicit resources.columns patterns plus, for tag-referencing
+// selectors, the column patterns of classification rules whose table part
+// matches it. Only clauses that match ctx (table and subject) count; the
+// `all` clauses count only when all of them match. Wildcard patterns are
+// returned verbatim so the rewriter can expand them against the schema
+// cache.
+func rawColumns(p *CompiledPolicy, ctx MatchContext) []string {
+	t := ctx.Tables[0]
 	seen := map[string]struct{}{}
 	var out []string
 	add := func(pat string) {
@@ -407,8 +433,20 @@ func rawColumns(p *CompiledPolicy, t parser.TableRef) []string {
 			}
 		}
 	}
-	collect(p.Match.Any)
-	collect(p.Match.All)
+	var anyHit []CompiledClause
+	for _, c := range p.Match.Any {
+		if c.Match(ctx) {
+			anyHit = append(anyHit, c)
+		}
+	}
+	collect(anyHit)
+	allHit := len(p.Match.All) > 0
+	for _, c := range p.Match.All {
+		allHit = allHit && c.Match(ctx)
+	}
+	if allHit {
+		collect(p.Match.All)
+	}
 	return out
 }
 

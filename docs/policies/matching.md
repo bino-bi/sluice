@@ -44,7 +44,7 @@ A [selector](../reference/glossary.md) works per table or per query:
 | Kind | `match` | `exclude` |
 |---|---|---|
 | `SqlAccessPolicy`, `RowFilterPolicy`, `ColumnMaskPolicy` | Covers each table that matches. | Removes single tables. |
-| `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy` | One matching table is enough. | One excluded table switches the policy off. |
+| `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy` | One matching table is enough. | Switches the policy off only when it covers every table of the query that the policy matches. |
 
 ### Subjects
 
@@ -156,7 +156,7 @@ One mask applies per column: the one with the highest [priority](index.md). At e
 - An unknown `op` or `actions` value loads, but it never matches.
 - In SQL, a table without catalog matches only `*` and `**` in `catalogs` and `schemas`.
 - A claim name that holds a dot cannot be checked.
-- An `exclude` with `all` on a `SqlAccessPolicy` works per query, not per table.
+- An `exclude` with `all` works per query, not per table. When it matches, it switches the whole policy off.
 
 ## See also
 

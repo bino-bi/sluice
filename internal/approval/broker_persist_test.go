@@ -180,6 +180,62 @@ func (erroringStore) PutGrant(context.Context, StoredGrant) error { return error
 func (erroringStore) DeleteGrant(context.Context, string) error   { return errors.New("disk full") }
 func (erroringStore) Close(context.Context) error                 { return nil }
 
+// ctxStore records the store calls and whether each had a deadline.
+type ctxStore struct {
+	erroringStore
+	calls       []string
+	noDeadlines int
+}
+
+func (s *ctxStore) note(ctx context.Context, op string) error {
+	s.calls = append(s.calls, op)
+	if _, ok := ctx.Deadline(); !ok {
+		s.noDeadlines++
+	}
+	return nil
+}
+func (s *ctxStore) PutRequest(ctx context.Context, _ StoredRequest) error {
+	return s.note(ctx, "put-request")
+}
+func (s *ctxStore) PutGrant(ctx context.Context, _ StoredGrant) error {
+	return s.note(ctx, "put-grant")
+}
+func (s *ctxStore) DeleteGrant(ctx context.Context, _ string) error {
+	return s.note(ctx, "delete-grant")
+}
+
+// A grant miss, the normal first query of an approval-gated statement,
+// must not write to the store. Store calls on the query path carry a
+// deadline, since they run under the broker mutex.
+func TestBroker_ConsumeGrantMissSkipsStore(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	n := &recordingNotifier{}
+	store := &ctxStore{}
+	b, err := New(Options{Clock: clk.now, Notifier: n, Store: store})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, ok := b.ConsumeGrant("iss\x00erin", "hash-x"); ok {
+		t.Fatal("ConsumeGrant found a grant that does not exist")
+	}
+	if len(store.calls) != 0 {
+		t.Fatalf("store calls on a grant miss: %v, want none", store.calls)
+	}
+	tk, _, err := b.Require(context.Background(), requireInput("erin", "x"))
+	if err != nil {
+		t.Fatalf("Require: %v", err)
+	}
+	if _, err := b.Accept(tk.ID, tokenFromURL(n.accept), ""); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if _, ok := b.ConsumeGrant("iss\x00erin", "hash-x"); !ok {
+		t.Fatal("ConsumeGrant missed the grant")
+	}
+	if store.noDeadlines != 0 {
+		t.Errorf("%d of %d store calls had no deadline: %v", store.noDeadlines, len(store.calls), store.calls)
+	}
+}
+
 func TestBroker_StoreWriteFailureFailsClosed(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	n := &recordingNotifier{}
