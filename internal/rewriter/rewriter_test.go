@@ -4,6 +4,7 @@ package rewriter_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -114,6 +115,19 @@ func TestRewriter_PassThrough(t *testing.T) {
 	}
 	if res.SQL != "SELECT id FROM pg.public.orders" {
 		t.Errorf("SQL = %q", res.SQL)
+	}
+}
+
+// Text the parser could not read is never served, also on a plain allow.
+func TestRewriter_NilASTRefused(t *testing.T) {
+	rw := buildRewriter(t)
+	dec, _ := evaluate(t, "SELECT id FROM pg.public.orders", nil, allowAll(0))
+	res, err := rw.Rewrite(context.Background(), rewriter.RewriteRequest{
+		Decision: dec,
+		Raw:      "COPY pg.public.orders TO '/tmp/x'",
+	})
+	if err == nil || !errors.Is(err, rewriter.ErrUnsupportedSyntax) {
+		t.Fatalf("Rewrite = %+v, %v; want ErrUnsupportedSyntax", res, err)
 	}
 }
 
