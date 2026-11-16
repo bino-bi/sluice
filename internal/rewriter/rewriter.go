@@ -64,9 +64,8 @@ func New(opts Options) *Rewriter {
 	return &Rewriter{opts: opts, snippets: &snippetMemo{pc: opts.ParseCheck}}
 }
 
-// RewriteRequest carries everything Rewrite needs. AST may be nil if the
-// caller has the raw SQL but couldn't parse it — the rewriter attempts
-// the pass-through / regex-fallback path.
+// RewriteRequest carries everything Rewrite needs. AST is required:
+// Rewrite refuses a request without one.
 type RewriteRequest struct {
 	AST      parser.AST
 	Decision *policy.Decision
