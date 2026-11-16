@@ -111,7 +111,7 @@ With `enforcementMode: Audit`, Sluice holds nothing. `sluice policy explain --js
 | `approval.grantTtl` | 5m | Life of a grant. |
 | `approval.maxPending` | 1000 | Maximum pending approvals. A further query gets 429 `ERR_RATE_LIMITED`. |
 | `approval.maxPendingPerSubject` | 10 | Maximum pending approvals of one subject. A further query of that subject gets 429 `ERR_RATE_LIMITED`. |
-| `approval.sqlSampleBytes` | 2048 | Longest `sql` in the webhook. 0 sends none. |
+| `approval.sqlSampleBytes` | 2048 | Longest SQL that can wait for an approval. The webhook carries it in full in `sql`. A longer query gets 403 `ACL_REJECTED`. 0 sends no `sql` and sets no limit. |
 | `approval.persist` | `false` | Keeps approvals, grants and links in `approval.stateDir`. |
 
 Sluice tries each webhook 3 times. A failed delivery is logged and does not fail the query.
@@ -121,6 +121,7 @@ Sluice tries each webhook 3 times. A failed delivery is logged and does not fail
 | Situation | Status | Answer |
 |---|---|---|
 | No decision within `syncWait` | 202 | `ERR_APPROVAL_PENDING` |
+| SQL longer than `approval.sqlSampleBytes` | 403 | `ACL_REJECTED`, no approval |
 | Accept within `syncWait` | 200 | Rows |
 | Reject within `syncWait` | 403 | `ERR_APPROVAL_REJECTED` |
 | The approval expires within `syncWait` | 410 | `ERR_APPROVAL_EXPIRED` |

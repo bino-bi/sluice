@@ -154,6 +154,39 @@ func TestApproval_EndToEndRejectPath(t *testing.T) {
 	_ = policy.OutcomeAllow
 }
 
+// A statement longer than approval.sqlSampleBytes is not parked: the
+// approver would see only a prefix but grant the full statement.
+func TestApproval_SQLLongerThanSampleIsRefused(t *testing.T) {
+	broker, err := approval.New(approval.Options{RequestTTL: time.Minute})
+	if err != nil {
+		t.Fatalf("approval.New: %v", err)
+	}
+	svc := queryservice.New(queryservice.Options{
+		Parser:           &fakeParser{},
+		Policy:           &fakePolicy{decision: approvalDecision()},
+		Rewriter:         &fakeRewriter{},
+		Executor:         &fakeExecutor{},
+		Audit:            &fakeAudit{},
+		Approvals:        broker,
+		ApprovalSyncWait: 20 * time.Millisecond,
+		Limits:           queryservice.Limits{ApprovalSQLSampleBytes: 32},
+	})
+	sql := "SELECT ssn FROM t /* " + strings.Repeat("x", 32) + " */"
+	_, err = svc.Execute(context.Background(), queryservice.QueryRequest{SQL: sql})
+	ae := pkgerr.FromError(err)
+	if ae == nil || ae.Code != pkgerr.CodeACLRejected || !strings.Contains(ae.Message, "approval.sqlSampleBytes") {
+		t.Fatalf("err = %v, want ACL_REJECTED naming approval.sqlSampleBytes", err)
+	}
+	if n := len(broker.Pending()); n != 0 {
+		t.Errorf("pending approvals = %d, want 0", n)
+	}
+	// A statement within the limit still parks.
+	_, err = svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT ssn FROM t"})
+	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeApprovalPending {
+		t.Fatalf("short SQL err = %v, want ERR_APPROVAL_PENDING", err)
+	}
+}
+
 func tokenFromCapabilityURL(t *testing.T, raw string) string {
 	t.Helper()
 	u, err := url.Parse(raw)

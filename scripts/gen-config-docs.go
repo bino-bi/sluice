@@ -158,7 +158,7 @@ var meaning = map[string]string{
 	"approval.grantTtl":              "Lifetime of a grant.",
 	"approval.maxPending":            "Maximum pending approvals.",
 	"approval.maxPendingPerSubject":  "Maximum pending approvals of one subject.",
-	"approval.sqlSampleBytes":        "SQL bytes in the webhook.",
+	"approval.sqlSampleBytes":        "Longest SQL that can wait for an approval. `0` sends no SQL in the webhook.",
 	"approval.persist":               "Keep approvals over a restart.",
 	"approval.stateDir":              "Directory of the approval store.",
 
