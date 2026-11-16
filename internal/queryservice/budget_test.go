@@ -4,6 +4,8 @@ package queryservice_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ type fakeBudget struct {
 	blockAfter int64
 	rows       int64
 	recorded   int64
+	cpu        time.Duration
 }
 
 func (b *fakeBudget) Check(_ context.Context, _, _ string) error {
@@ -28,7 +31,8 @@ func (b *fakeBudget) Check(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (b *fakeBudget) Record(_, _ string, _ time.Duration, rows int64) {
+func (b *fakeBudget) Record(_, _ string, cpu time.Duration, rows int64) {
+	b.cpu += cpu
 	b.rows += rows
 	b.recorded++
 }
@@ -83,5 +87,68 @@ func TestBudget_NoUserSkipsBudget(t *testing.T) {
 	_ = res.Rows.Close()
 	if fb.recorded != 0 {
 		t.Errorf("budget recorded for anonymous request")
+	}
+}
+
+// steppingClock advances by step on every read.
+func steppingClock(step time.Duration) func() time.Time {
+	var mu sync.Mutex
+	now := time.Unix(1713600000, 0)
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(step)
+		return now
+	}
+}
+
+// A query that fails, for example on a timeout, is charged its wall time
+// with 0 rows. Before, only a query that served rows was charged.
+func TestBudget_FailedQueryIsCharged(t *testing.T) {
+	fb := &fakeBudget{}
+	ex := &fakeExecutor{err: fmt.Errorf("%w: %w", executor.ErrExecute, context.DeadlineExceeded)}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    &fakeAudit{},
+		Budget:   fb,
+		Clock:    steppingClock(time.Second),
+	})
+	_, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id FROM t", User: &identity.UserCtx{Subject: "alice"}})
+	if ae := pkgerr.FromError(err); ae == nil || ae.Code != pkgerr.CodeTimeout {
+		t.Fatalf("err = %v, want ERR_TIMEOUT", err)
+	}
+	if fb.recorded != 1 || fb.rows != 0 || fb.cpu <= 0 {
+		t.Fatalf("Record calls %d, rows %d, cpu %s; want one call with 0 rows and the wall time", fb.recorded, fb.rows, fb.cpu)
+	}
+}
+
+// A served query is charged the executor's run time, not the time since
+// the request started.
+func TestBudget_ChargesExecutorTime(t *testing.T) {
+	fb := &fakeBudget{}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "id"}}, rows: [][]any{{int64(1)}}, execTime: 1500 * time.Millisecond}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: ex,
+		Audit:    &fakeAudit{},
+		Budget:   fb,
+		Clock:    steppingClock(time.Minute),
+	})
+	res, err := svc.Execute(context.Background(), queryservice.QueryRequest{SQL: "SELECT id FROM t", User: &identity.UserCtx{Subject: "alice"}})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for res.Rows.Next() {
+		var v any
+		_ = res.Rows.Scan(&v)
+	}
+	_ = res.Rows.Close()
+	if fb.recorded != 1 || fb.rows != 1 || fb.cpu != 1500*time.Millisecond {
+		t.Fatalf("Record calls %d, rows %d, cpu %s; want one call with 1 row and 1.5s", fb.recorded, fb.rows, fb.cpu)
 	}
 }

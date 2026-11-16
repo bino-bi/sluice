@@ -106,7 +106,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	}
 
 	// 0c. Per-subject daily budget (pre-admission). A subject over its
-	// budget is refused before any work. Usage is recorded post-execution.
+	// budget is refused before any work. Every later exit is charged: the
+	// wall time with 0 rows here, unless the result iterator took over.
+	budgetDone := false
 	if s.opts.Budget != nil && req.User != nil {
 		if err := s.opts.Budget.Check(ctx, req.User.Subject, req.User.Issuer); err != nil {
 			rec := s.buildAuditBase(req, qid, nil)
@@ -116,6 +118,12 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			s.emit(ctx, rec, start)
 			return nil, pkgerr.FromError(err).WithQueryID(qid)
 		}
+		subject, issuer := req.User.Subject, req.User.Issuer
+		defer func() {
+			if !budgetDone {
+				s.opts.Budget.Record(subject, issuer, s.opts.Clock().Sub(start), 0)
+			}
+		}()
 	}
 
 	if len(req.SQL) > s.opts.Limits.MaxSQLBytes {
@@ -313,6 +321,8 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
 		} else {
 			releaseSlot() // never hold the admission slot while parked
+			// The wait is no usage. The resumed pass charges its own run.
+			budgetDone = true
 			return s.awaitApproval(ctx, req, dec, rec, qid, start, sqlHash, subjectKey)
 		}
 	}
@@ -470,14 +480,15 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		origin:   rec.Origin,
 		remoteIP: rec.RemoteIP,
 	}
-	// Budget usage: capture the execute duration now (excludes client
-	// streaming so a slow reader does not burn budget); rows are known at
-	// Close. Record fires once in Close.
+	// Budget usage: the executor's run time, without the wait for a pool
+	// connection and without client streaming. Rows are known at Close,
+	// which records once.
 	if s.opts.Budget != nil && req.User != nil {
 		ar.budgetSubject = req.User.Subject
 		ar.budgetIssuer = req.User.Issuer
-		ar.execDur = s.opts.Clock().Sub(start)
+		ar.execDur = resp.ExecTime
 		ar.recordBudget = true
+		budgetDone = true
 	}
 	qr.Rows = ar
 	openRows = nil

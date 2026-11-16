@@ -138,6 +138,9 @@ The third run:
 - Without `rateLimit`, `limits.defaultSubjectRps` and `limits.defaultSubjectBurst` apply.
 - A reload resets all rate limits.
 - Sluice counts usage after a query. One large query can pass the budget.
+- A query that serves rows counts the DuckDB run time, without the wait for a DuckDB connection.
+- A query that fails or times out counts the time since the request started, with 0 rows.
+- The check sees only finished queries. Queries of one subject that run at the same time all pass it, so a subject can go over its budget by that much.
 - `budget.db` in `budget.stateDir` holds one row per UTC day, subject id and issuer. At start, Sluice deletes rows older than `budget.retentionDays` (default 35).
 
 ## See also

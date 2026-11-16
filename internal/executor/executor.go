@@ -72,6 +72,10 @@ type Response struct {
 	Rows      RowIterator
 	RowCount  *int64
 	Truncated bool
+	// ExecTime is the time DuckDB took to run the statement, from after a
+	// pool connection was acquired to the first row. The driver builds the
+	// whole result in that time. Budgets charge it.
+	ExecTime time.Duration
 }
 
 // RowIterator is a streaming result iterator. Callers must call Close
@@ -138,6 +142,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		return nil, err
 	}
 
+	began := time.Now()
 	rows, err := conn.QueryContext(execCtx, req.SQL, req.Params...)
 	e.attachMu.RUnlock()
 	if err != nil {
@@ -177,6 +182,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Response, error) 
 		Columns:  colInfo,
 		Rows:     iter,
 		RowCount: rowCount,
+		ExecTime: time.Since(began),
 	}
 	iter.parent = resp
 	return resp, nil
