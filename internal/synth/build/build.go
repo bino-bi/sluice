@@ -152,7 +152,7 @@ func Run(ctx context.Context, in Input) (*Report, error) {
 		return b.rep, nil
 	}
 	if ctx.Err() != nil {
-		err = fmt.Errorf("%w: %w", ErrCanceled, ctx.Err())
+		err = fmt.Errorf("%w: %w", ErrCanceled, context.Cause(ctx))
 	}
 	b.cleanup()
 	b.finish(ResultFailed, err)

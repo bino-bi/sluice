@@ -25,6 +25,19 @@ import (
 // ErrNotFound is returned for a name that is not a synthetic data source.
 var ErrNotFound = errors.New("no synthetic data source with this name")
 
+// ErrBusy is returned by Start while a build of another name runs. Each
+// server build opens its own DuckDB instance, so only one runs at a time.
+var ErrBusy = errors.New("another synthetic build runs")
+
+// ErrNotRunning is returned by Cancel when no build of the name runs.
+var ErrNotRunning = errors.New("no build of this synthetic data source runs")
+
+// Causes of a canceled server build. They end up in the report error.
+var (
+	errBuildTimeout = errors.New("the build ran longer than synthetic.buildTimeout")
+	errCancelCall   = errors.New("the admin API canceled the build")
+)
+
 // StateRunning is the state of a build that has not finished. A finished
 // build has ResultSucceeded, ResultFailed or ResultPublishedNotAttached.
 const StateRunning = "running"
@@ -86,6 +99,8 @@ type ServiceOptions struct {
 	Dir      string
 	MaxRatio float64
 	Harden   executor.HardenConfig
+	// BuildTimeout cancels a build that runs longer. Zero is no limit.
+	BuildTimeout time.Duration
 	// Audit gets a start and an end record per build. FailClosed refuses
 	// a build whose start record cannot be queued.
 	Audit      Auditor
@@ -105,8 +120,8 @@ type swapper interface {
 	Swap(ctx context.Context, conn *sql.Conn, buildID, specHash string) error
 }
 
-// Service runs synthetic builds in the server, one at a time per name,
-// in the background.
+// Service runs synthetic builds in the server in the background, one at
+// a time.
 type Service struct {
 	opts   ServiceOptions
 	ctx    context.Context
@@ -124,6 +139,9 @@ type Service struct {
 type job struct {
 	view     BuildView
 	remoteIP string
+	// ctx is the build context. cancel ends it with a cause.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
 	// started closes once the start audit record is decided. startErr is
 	// set before that when the record was refused and no build runs.
 	started  chan struct{}
@@ -286,9 +304,17 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 		s.mu.Unlock()
 		return j, v, true, nil
 	}
+	if len(s.running) > 0 {
+		s.mu.Unlock()
+		return nil, BuildView{}, false, pkgerr.Wrap(pkgerr.CodeConflict, ErrBusy).
+			WithMessage("another synthetic build runs; wait for it or cancel it")
+	}
+	jctx, jcancel := context.WithCancelCause(s.ctx)
 	j := &job{
 		view:     BuildView{BuildID: id, State: StateRunning, Origin: origin, StartedAt: now.UTC()},
 		remoteIP: remoteIP,
+		ctx:      jctx,
+		cancel:   jcancel,
 		started:  make(chan struct{}),
 		finished: make(chan struct{}),
 	}
@@ -313,6 +339,7 @@ func (s *Service) start(ctx context.Context, name, origin, remoteIP string) (*jo
 			s.mu.Lock()
 			delete(s.running, name)
 			s.mu.Unlock()
+			j.cancel(nil)
 			s.wg.Done()
 			close(j.started)
 			close(j.finished)
@@ -354,7 +381,10 @@ func (s *Service) audit(ctx context.Context, r *Report, phase, origin, remoteIP 
 	} else {
 		rec.Subject = audit.Subject{ID: "system"}
 	}
-	if errors.Is(buildErr, ErrCanceled) {
+	switch {
+	case errors.Is(buildErr, errBuildTimeout):
+		rec.ErrorCode = string(pkgerr.CodeTimeout)
+	case errors.Is(buildErr, ErrCanceled):
 		rec.ErrorCode = string(pkgerr.CodeCanceled)
 	}
 	return s.opts.Audit.Enqueue(ctx, rec)
@@ -363,10 +393,17 @@ func (s *Service) audit(ctx context.Context, r *Report, phase, origin, remoteIP 
 func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 	defer s.wg.Done()
 	defer close(j.finished)
+	defer j.cancel(nil)
 	origin := j.view.Origin
 	start := time.Now()
 
-	rep, err := s.build(j, ds, src)
+	ctx := j.ctx
+	if s.opts.BuildTimeout > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeoutCause(ctx, s.opts.BuildTimeout, errBuildTimeout)
+		defer stop()
+	}
+	rep, err := s.build(ctx, j, ds, src)
 	result := ResultSucceeded
 	if err == nil {
 		if serr := s.attach(name, rep); serr != nil {
@@ -417,7 +454,7 @@ func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 
 // build runs the build. It always returns a report: a build that fails
 // before it has one gets a report that holds only the error.
-func (s *Service) build(j *job, ds, src *apitypes.DataSource) (*Report, error) {
+func (s *Service) build(ctx context.Context, j *job, ds, src *apitypes.DataSource) (*Report, error) {
 	in := Input{
 		DataSource: ds,
 		Source:     src,
@@ -441,7 +478,7 @@ func (s *Service) build(j *job, ds, src *apitypes.DataSource) (*Report, error) {
 		}
 	}
 	if err == nil {
-		rep, err = Run(s.ctx, in)
+		rep, err = Run(ctx, in)
 	}
 	if rep == nil {
 		now := s.opts.Clock()
@@ -562,6 +599,17 @@ func (s *Service) StartMissing() {
 		defer s.wg.Done()
 		for _, name := range names {
 			j, _, _, err := s.start(s.ctx, name, OriginStartup, "")
+			for errors.Is(err, ErrBusy) {
+				// An admin build of another name runs: wait for it.
+				if b := s.anyRunning(); b != nil {
+					select {
+					case <-b.finished:
+					case <-s.ctx.Done():
+						return
+					}
+				}
+				j, _, _, err = s.start(s.ctx, name, OriginStartup, "")
+			}
 			if err != nil {
 				s.opts.Log.Error("synthetic: cannot start the start-time build", "name", name, "error", err)
 				continue
@@ -573,6 +621,32 @@ func (s *Service) StartMissing() {
 			}
 		}
 	}()
+}
+
+func (s *Service) anyRunning() *job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.running {
+		return j
+	}
+	return nil
+}
+
+// Cancel cancels the running build of name and returns its view. The
+// build ends as failed with ERR_CANCELED soon after.
+func (s *Service) Cancel(name string) (BuildView, error) {
+	if ds, _ := s.lookup(name); ds == nil {
+		return BuildView{}, ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.running[name]
+	if j == nil {
+		return BuildView{}, pkgerr.Wrap(pkgerr.CodeConflict, ErrNotRunning).
+			WithMessage("no build of this synthetic data source runs")
+	}
+	j.cancel(errCancelCall)
+	return j.view, nil
 }
 
 // Close cancels running builds and waits for them up to ctx. A canceled

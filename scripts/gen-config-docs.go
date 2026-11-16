@@ -168,10 +168,11 @@ var meaning = map[string]string{
 	"budget.failClosed":    "Stop at start when the store cannot open.",
 	"budget.retentionDays": "Days of usage kept.",
 
-	"sample.maxRows":      "Most rows of one sample.",
-	"sample.minGroupRows": "Smallest group a stratified sample keeps.",
-	"synthetic.dir":       "Folder of the synthetic snapshots and reports. Sluice reads it. Builds write to it.",
-	"synthetic.maxRatio":  "Largest share of source rows a synthetic table may have. A build over it fails.",
+	"sample.maxRows":         "Most rows of one sample.",
+	"sample.minGroupRows":    "Smallest group a stratified sample keeps.",
+	"synthetic.dir":          "Folder of the synthetic snapshots and reports. Sluice reads it. Builds write to it.",
+	"synthetic.maxRatio":     "Largest share of source rows a synthetic table may have. A build over it fails.",
+	"synthetic.buildTimeout": "Longest run of a server build. A longer build is canceled and fails.",
 }
 
 const header = `<!-- SPDX-License-Identifier: CC-BY-4.0 -->

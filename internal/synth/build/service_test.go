@@ -355,6 +355,81 @@ func TestNewerBuildID(t *testing.T) {
 	}
 }
 
+// One build runs at a time: a start of another name gets ERR_CONFLICT.
+// Cancel ends the running build with ERR_CANCELED.
+func TestServiceBusyAndCancel(t *testing.T) {
+	gate := make(chan struct{})
+	aud := &fakeAuditor{gate: gate}
+	svc, _ := newTestService(t, aud, true)
+	svc.opts.DataSources = append(svc.opts.DataSources, &apitypes.DataSource{
+		Metadata: apitypes.ObjectMeta{Name: "other"},
+		Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSynthetic, Synthetic: baseSpec()},
+	})
+	if _, err := svc.Cancel("other"); !errors.Is(err, ErrNotRunning) || pkgerr.FromError(err).Code != pkgerr.CodeConflict {
+		t.Fatalf("cancel without a build: %v", err)
+	}
+	if _, err := svc.Cancel("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel of an unknown name: %v", err)
+	}
+	first := make(chan BuildView, 1)
+	go func() {
+		v, _, _ := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+		first <- v
+	}()
+	// The first start waits in its start record, after it registered.
+	deadline := time.Now().Add(10 * time.Second)
+	for svc.anyRunning() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the first build is not registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, _, err := svc.Start(context.Background(), "other", OriginAdmin, "")
+	if !errors.Is(err, ErrBusy) || pkgerr.FromError(err).Code != pkgerr.CodeConflict {
+		t.Fatalf("start of another name: %v", err)
+	}
+	v, err := svc.Cancel("crmsynth")
+	if err != nil || v.State != StateRunning {
+		t.Fatalf("cancel: %+v, %v", v, err)
+	}
+	close(gate)
+	v = <-first
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultFailed || !strings.Contains(done.Error, "admin API canceled") {
+		t.Errorf("canceled build: %+v", done)
+	}
+	recs := aud.all()
+	if end := recs[len(recs)-1]; end.ErrorCode != string(pkgerr.CodeCanceled) {
+		t.Errorf("end record code %q", end.ErrorCode)
+	}
+	// The slot is free again.
+	v, _, err = svc.Start(context.Background(), "other", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start after cancel: %v", err)
+	}
+	waitBuild(t, svc, "other", v.BuildID)
+}
+
+// A build that runs longer than BuildTimeout fails with ERR_TIMEOUT.
+func TestServiceBuildTimeout(t *testing.T) {
+	aud := &fakeAuditor{}
+	svc, dir := newTestService(t, aud, true)
+	svc.opts.BuildTimeout = time.Nanosecond
+	v, _, err := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultFailed || !strings.Contains(done.Error, "synthetic.buildTimeout") {
+		t.Errorf("build: %+v", done)
+	}
+	recs := aud.all()
+	if end := recs[len(recs)-1]; end.ErrorCode != string(pkgerr.CodeTimeout) {
+		t.Errorf("end record code %q", end.ErrorCode)
+	}
+	assertNoTemp(t, layout.Layout{Dir: dir, Name: "crmsynth"})
+}
+
 // A build that is published but cannot be attached is not reported as
 // failed: its snapshot is current and goes live at the next start.
 func TestServicePublishedNotAttached(t *testing.T) {

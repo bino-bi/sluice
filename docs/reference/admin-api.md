@@ -34,6 +34,7 @@ Every route needs the header `Authorization: Bearer <token>` with the value of `
 | `POST` | `/admin/reload` | Loads the policy directory again. | `ok`, `digest` |
 | `GET` | `/admin/audit/tail` | Returns the newest audit records. | One JSON record per line |
 | `POST` | `/admin/synthetic/{name}/build` | Starts a build of a synthetic data source. | 202 with `name`, `build_id`, `state`, `already_running`. See [Synthetic builds](#synthetic-builds) |
+| `POST` | `/admin/synthetic/{name}/cancel` | Cancels the running build of a synthetic data source. | 202 with `name`, `build_id`, `state`. See [Synthetic builds](#synthetic-builds) |
 | `GET` | `/admin/synthetic/{name}` | Shows the state, the builds and the report of a synthetic data source. | `name`, `source`, `status`, `spec_hash`, `current`, `builds`, `report` |
 | `GET` | `/admin/approvals` | Lists the pending approvals, without tokens. | `pending`, `count`. 501 when approvals are off |
 | `GET` | `/admin/healthz` | Reports the health of the server. | `status`, `version`, `config_digest`, `config_version`. 503 when a data source is unhealthy |
@@ -82,12 +83,15 @@ Every response has an `X-Admin-Request-Id` header.
 `POST /admin/synthetic/{name}/build` answers at once. The build runs in the server and replaces the snapshot when it succeeds. See [Synthetic data](../operations/synthetic-data.md).
 
 - A second call during a build returns the running build with `already_running: true`. A retry is harmless.
+- One build runs at a time in the server. A build of another name during a build gives 409 `ERR_CONFLICT`.
+- `POST /admin/synthetic/{name}/cancel` cancels the running build of that name. The build ends soon after as `failed`, and its end audit record has `ERR_CANCELED`. Without a running build of that name the call gives 409 `ERR_CONFLICT`.
+- A build that runs longer than `synthetic.buildTimeout` (default `1h`) is canceled. It ends as `failed`, and its end audit record has `ERR_TIMEOUT`.
 - `status` is `not_built`, `ready` or `stale`. `GET /admin/datasources` shows it too.
 - `builds` lists only the builds of this server process. `current` and `report` are `null` when no snapshot exists.
 - The `state` of a build is `running`, `succeeded`, `failed` or `published_not_attached`. `published_not_attached` means: the snapshot is current on disk, but the server could not attach it. The server serves it after the next start.
 - `current` and `report` show the build that the server serves. After `sluice synth build`, the server serves the old snapshot until a restart or the next server build. `GET` shows that old build.
 - An unknown name, or a data source that is not synthetic, gives 404 with an empty body.
-- Without a synthetic data source, both routes give 501.
+- Without a synthetic data source, all three routes give 501.
 - With `audit.failClosed`, a build whose start record the audit log does not take gives 503 `ERR_AUDIT_UNAVAILABLE`.
 
 ## Limits

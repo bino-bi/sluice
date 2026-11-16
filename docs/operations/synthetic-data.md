@@ -380,6 +380,14 @@ Three things start a build:
 - `POST /admin/synthetic/<name>/build` on the [admin API](../reference/admin-api.md#synthetic-builds) builds in the running server.
 - `build.onStart: ifMissing` builds at server start when no snapshot exists. The server serves queries during the build.
 
+A server build runs in the server process. It opens a second DuckDB instance next to the query pool, with the same `duckdb.memoryLimit` and `duckdb.threads`. So a build can use up to twice the memory and threads of the query pool, and more Go memory on top. To keep this bounded:
+
+- One build runs at a time in the server. A build of another name during a build gives 409 `ERR_CONFLICT`. Builds at start wait for a running build.
+- A build that runs longer than `synthetic.buildTimeout` of the server config (default `1h`) is canceled and fails.
+- `POST /admin/synthetic/<name>/cancel` cancels a running build. See the [admin API](../reference/admin-api.md#synthetic-builds).
+
+`sluice synth build` runs in its own process and has none of these limits.
+
 The size check runs before the profile. A `ratio` above `synthetic.maxRatio` of the server config fails the build, and so does a `rows` count above that share.
 
 A build writes into `synthetic.dir`:
