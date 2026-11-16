@@ -51,6 +51,9 @@ type compiledRel struct {
 	enforcement apitypes.EnforcementMode
 	checks      []apitypes.RelationCheck
 	checker     RelationChecker
+	// cacheScope keeps cached answers of different backends, stores and
+	// models apart.
+	cacheScope string
 }
 
 // New builds the engine.
@@ -121,6 +124,8 @@ func (e *Engine) Prepare(ctx context.Context, src *config.Snapshot) (func(), err
 			token = bytes.TrimRight(token, " \t\r\n")
 		}
 		cr.checker = e.opts.NewChecker(rp.Spec.Backend, token)
+		b := rp.Spec.Backend
+		cr.cacheScope = b.Endpoint + "\x00" + b.StoreID + "\x00" + b.AuthorizationModelID
 		out = append(out, cr)
 	}
 	return func() {
@@ -213,7 +218,7 @@ func (e *Engine) checkTable(ctx context.Context, cr *compiledRel, user *identity
 			subjectTmpl = "user:{{subject.id}}"
 		}
 		subject := renderTemplate(subjectTmpl, user, t)
-		key := object + "#" + chk.Relation + "@" + subject
+		key := cr.cacheScope + "\x00" + object + "#" + chk.Relation + "@" + subject
 		if v, ok := e.cache.Get(key); ok {
 			if !v {
 				return false, nil

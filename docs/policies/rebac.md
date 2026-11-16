@@ -71,7 +71,7 @@ For Bob, Sluice sent this body to `POST <endpoint>/stores/<storeId>/check`.
 
 Templates know `{{catalog}}`, `{{schema}}`, `{{table}}`, `{{subject.id}}` and `{{subject.email}}`. `exclude` takes single tables out of the check.
 
-Sluice caches each answer for `policies.rebac.cacheTtl` (default 10s). A reload clears the cache.
+Sluice caches each answer for `policies.rebac.cacheTtl` (default 10s), also a `false` one. So a new tuple in OpenFGA can take up to that long to allow access. A reload clears the cache.
 
 ## Limits
 
