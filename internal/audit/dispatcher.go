@@ -165,6 +165,7 @@ func NewDispatcher(opts DispatcherOptions) (*Dispatcher, error) {
 
 // sealRecord computes the hash of a new record, keyed when key is set.
 func sealRecord(key []byte, prior string, r *Record) (string, error) {
+	sanitizeRecord(r)
 	if len(key) > 0 {
 		r.HashAlg = HashAlgHMAC
 	}

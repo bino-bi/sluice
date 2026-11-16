@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bino-bi/sluice/internal/audit"
 	"github.com/bino-bi/sluice/internal/executor"
@@ -22,11 +23,8 @@ import (
 // policies + decision are applied later once they're known.
 func (s *Service) buildAuditBase(req QueryRequest, qid string, tables []parser.TableRef) *audit.Record {
 	sample := ""
-	if n := s.opts.Limits.SQLSampleBytes; n > 0 && len(req.SQL) > 0 {
-		if n > len(req.SQL) {
-			n = len(req.SQL)
-		}
-		sample = req.SQL[:n]
+	if n := s.opts.Limits.SQLSampleBytes; n > 0 {
+		sample = cutUTF8(req.SQL, n)
 	}
 	rec := &audit.Record{
 		EventType: audit.EventQuery,
@@ -66,7 +64,7 @@ const (
 
 // clientMetaFor copies and caps caller metadata for the audit record.
 // Deterministic: keys are sorted, the first maxClientMetaEntries kept,
-// oversized keys/values byte-truncated. Map iteration order must never
+// oversized keys/values cut on a rune boundary. Map iteration order must never
 // decide what gets audited.
 func clientMetaFor(meta map[string]string) map[string]string {
 	if len(meta) == 0 {
@@ -88,16 +86,21 @@ func clientMetaFor(meta map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(keys))
 	for _, k := range keys {
-		v := meta[k]
-		if len(v) > maxClientMetaValueBytes {
-			v = v[:maxClientMetaValueBytes]
-		}
-		if len(k) > maxClientMetaKeyBytes {
-			k = k[:maxClientMetaKeyBytes]
-		}
-		out[k] = v
+		out[cutUTF8(k, maxClientMetaKeyBytes)] = cutUTF8(meta[k], maxClientMetaValueBytes)
 	}
 	return out
+}
+
+// cutUTF8 returns the longest prefix of s with at most n bytes that does
+// not end inside a rune. A cut rune would be invalid UTF-8 in the record.
+func cutUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // applyDecisionToAudit stamps the policy decision onto rec. Applied
@@ -220,7 +223,10 @@ func (s *Service) emit(ctx context.Context, rec *audit.Record, start time.Time) 
 }
 
 // emitAccess is the fail-closed audit gate for the data-serving (allow)
-// path. It durably records the access decision before any row is returned.
+// path. It queues the access record before any row is returned; the file
+// write and the fsync come later. Enqueue fails when the queue stays full
+// or the file sink cannot write. A record that is queued and then lost to
+// a failed write is covered only by the audit-gap record that follows.
 // When the enqueue fails and the service is fail-closed (the default), it
 // returns ERR_AUDIT_UNAVAILABLE so the caller refuses to serve; in
 // best-effort mode the failure is logged and nil is returned.
