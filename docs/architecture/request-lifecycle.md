@@ -152,6 +152,7 @@ Policies see no table in `SET` and `SHOW`. An allow policy that names a table do
 - A SELECT with `OFFSET` but no `LIMIT`, a `LIMIT` written as an expression, and a sample get no added `LIMIT`. DuckDB builds their full result, and Sluice cuts it to the row limit.
 - The query timeout covers the run and the sending of the rows. A slow client can hit it after DuckDB is done. The second audit record then carries `ERR_TIMEOUT`.
 - With `cache.rewrite.enabled`, a cached rewrite keeps the old column list of a masked table until `cache.rewrite.ttl` ends or a reload.
+- A cached rewrite also keeps the mask salt it was made with. After a salt changes without a reload, the old salt can stay in use for 10 minutes plus `cache.rewrite.ttl`. A reload clears both caches.
 
 ## See also
 
