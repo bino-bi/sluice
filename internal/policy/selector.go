@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -542,16 +543,16 @@ func walkClaimPath(claims map[string]any, path []string) (any, bool) {
 }
 
 // matches reports whether a single TableRef satisfies the resource
-// selector. An empty Catalog on the ref is treated as "any catalog" so
-// unqualified SQL still matches catalog-scoped policies.
+// selector. An empty Catalog or Schema on the ref is matched as DuckDB's
+// default database or schema, the one DuckDB reads for such a name.
 func (r *compiledResource) matches(t parser.TableRef) bool {
 	if r == nil || r.empty {
 		return true
 	}
-	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(t.Catalog)) {
+	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(cmp.Or(t.Catalog, parser.DefaultDatabase))) {
 		return false
 	}
-	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(t.Schema)) {
+	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(cmp.Or(t.Schema, parser.DefaultSchema))) {
 		return false
 	}
 	if len(r.tables) > 0 && !matchAny(r.tables, parser.FoldASCII(t.Table)) {

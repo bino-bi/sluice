@@ -108,6 +108,23 @@ WHERE function_type = 'aggregate' OR function_name IN (`+
 	}
 }
 
+// TestDefaultDatabaseAndSchema checks where DuckDB reads a table written
+// without catalog or schema. Policy selectors match such a name there.
+func TestDefaultDatabaseAndSchema(t *testing.T) {
+	e := newExec(t, executor.Config{})
+	var db, schema string
+	if err := e.DB().QueryRowContext(context.Background(), "SELECT current_database(), current_schema()").Scan(&db, &schema); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if db != parser.DefaultDatabase || schema != parser.DefaultSchema {
+		t.Fatalf("default is %s.%s, want %s.%s", db, schema, parser.DefaultDatabase, parser.DefaultSchema)
+	}
+	got, err := e.CurrentDatabase(context.Background())
+	if err != nil || got != parser.DefaultDatabase {
+		t.Fatalf("CurrentDatabase = %q, %v; want %q", got, err, parser.DefaultDatabase)
+	}
+}
+
 // TestWrapperAliasKeywords checks the unsafe alias list against DuckDB.
 // For every word of duckdb_keywords() it deparses a subquery aliased with
 // that word and joined to a table, the shape a row-filter wrapper takes,

@@ -34,9 +34,18 @@ type AST interface {
 	Source() string
 }
 
-// TableRef is a reference to a table inside an AST. Catalog is empty when
-// the query used an unqualified or two-part name; the rewriter fills it in
-// from the default catalog.
+// DuckDB reads a table written without a catalog in its default database,
+// and one written without a schema in its default schema. Sluice runs
+// DuckDB in memory, so both are fixed. TestDefaultDatabaseAndSchema in
+// internal/executor checks them.
+const (
+	DefaultDatabase = "memory"
+	DefaultSchema   = "main"
+)
+
+// TableRef is a reference to a table inside an AST. Catalog and Schema are
+// empty when the query did not write them. Policy selectors then match
+// DefaultDatabase and DefaultSchema, the names DuckDB reads.
 type TableRef struct {
 	Catalog string
 	Schema  string

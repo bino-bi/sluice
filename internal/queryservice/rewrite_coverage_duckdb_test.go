@@ -1015,6 +1015,65 @@ func TestExecute_UnicodeCTENameDoesNotHideTable(t *testing.T) {
 	}
 }
 
+const allowBareKundenPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-kunden
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          tables: ["kunden"]
+`
+
+const denyMemoryPolicy = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: deny-memory
+  priority: 200
+spec:
+  effect: deny
+  match:
+    any:
+      - resources:
+          catalogs: ["memory"]
+          schemas: ["main"]
+`
+
+// DuckDB reads a table written without catalog in its default database.
+// A deny scoped to that catalog and schema must apply to the short name.
+func TestExecute_CatalogScopedDenyAppliesToBareName(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t, allowBareKundenPolicy, denyMemoryPolicy)
+	if _, err := ex.inner.DB().ExecContext(context.Background(), "CREATE TABLE memory.main.kunden AS SELECT 1 AS x"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for _, sql := range []string{
+		"SELECT x FROM kunden",
+		"SELECT x FROM main.kunden",
+		"SELECT x FROM memory.main.kunden",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			t.Errorf("%s: served %v, want ACL_DENIED", sql, drainRows(t, res))
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+			t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
 // A FROM alias that is a DuckDB join keyword is refused before execution:
 // otherwise DuckDB restructures the join and the row filter and mask are
 // skipped. (A pre-existing deparse divergence, closed at the parser.)

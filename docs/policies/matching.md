@@ -80,6 +80,8 @@ Types must agree: the number `3` does not equal the text `"3"`.
 | `tags` | Tables and columns with a [tag](classification.md). |
 | `actions` | The statement type. See [Access control](access-control.md). |
 
+A query can write a table without catalog or schema, such as `orders` or `main.orders`. DuckDB then reads it in its default database `memory` and schema `main`. `catalogs` and `schemas` match those names. Data sources are separate catalogs, so `catalogs: ["shop"]` never matches `orders` alone.
+
 A pattern must match the whole name.
 
 | Pattern | Meaning |
