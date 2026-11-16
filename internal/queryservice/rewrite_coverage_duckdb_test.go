@@ -1074,6 +1074,67 @@ func TestExecute_CatalogScopedDenyAppliesToBareName(t *testing.T) {
 	}
 }
 
+// DuckDB system views list the tables and columns of every catalog, also
+// admin_users, which the subject may not read. Even a broad allow must not
+// open them, in any form DuckDB reads them by.
+func TestExecute_SystemObjectsRefused(t *testing.T) {
+	allows := map[string]string{
+		"tables *":        `tables: ["*"]`,
+		"schemas main":    `schemas: ["main"]`,
+		"catalogs memory": `catalogs: ["memory"]`,
+	}
+	sqls := []string{
+		"SELECT table_name, column_name FROM duckdb_columns",
+		"SELECT * FROM duckdb_tables",
+		"SELECT * FROM DuckDB_Views",
+		"SELECT * FROM main.duckdb_tables",
+		"SELECT * FROM system.duckdb_tables",
+		"SELECT * FROM system.main.duckdb_tables",
+		"SELECT * FROM sqlite_master",
+		"SELECT * FROM pg_class",
+		"SELECT * FROM pg_catalog.pg_class",
+		"SELECT * FROM information_schema.tables",
+		"SELECT * FROM information_schema.columns",
+		"SELECT * FROM system.information_schema.tables",
+		"SELECT * FROM temp.main.t",
+		"SELECT c.id FROM shop.main.customers c, (SELECT count(*) FROM duckdb_columns) x",
+	}
+	for name, res := range allows {
+		t.Run(name, func(t *testing.T) {
+			svc, ex, _ := newHelloSluiceService(t, `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: SqlAccessPolicy
+metadata:
+  name: allow-broad
+  priority: 100
+spec:
+  effect: allow
+  match:
+    any:
+      - subjects:
+          groups: ["analytics"]
+        resources:
+          `+res+`
+`)
+			for _, sql := range sqls {
+				out, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+					SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+				})
+				if err == nil {
+					t.Errorf("%s: served %v, want ACL_DENIED", sql, drainRows(t, out))
+					continue
+				}
+				if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+					t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+				}
+			}
+			if ex.calls != 0 {
+				t.Fatalf("executor ran %d times, want 0", ex.calls)
+			}
+		})
+	}
+}
+
 // A FROM alias that is a DuckDB join keyword is refused before execution:
 // otherwise DuckDB restructures the join and the row filter and mask are
 // skipped. (A pre-existing deparse divergence, closed at the parser.)

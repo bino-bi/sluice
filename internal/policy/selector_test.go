@@ -202,7 +202,8 @@ func TestCompile_BareNameMatchesDefaultCatalogAndSchema(t *testing.T) {
 			t.Errorf("matches(%+v) = false, want true", ref)
 		}
 	}
-	for _, ref := range []parser.TableRef{{Schema: "other", Table: "t"}, {Catalog: "shop", Schema: "main", Table: "t"}} {
+	// DuckDB reads a system view from its system catalog, not from memory.
+	for _, ref := range []parser.TableRef{{Schema: "other", Table: "t"}, {Catalog: "shop", Schema: "main", Table: "t"}, {Table: "duckdb_tables"}} {
 		if r.matches(ref) {
 			t.Errorf("matches(%+v) = true, want false", ref)
 		}

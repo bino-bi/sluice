@@ -544,15 +544,21 @@ func walkClaimPath(claims map[string]any, path []string) (any, bool) {
 
 // matches reports whether a single TableRef satisfies the resource
 // selector. An empty Catalog or Schema on the ref is matched as DuckDB's
-// default database or schema, the one DuckDB reads for such a name.
+// default database or schema, the one DuckDB reads for such a name. A
+// DuckDB system object keeps the empty parts: DuckDB reads it from the
+// system catalog, and queryservice refuses it before policy.
 func (r *compiledResource) matches(t parser.TableRef) bool {
 	if r == nil || r.empty {
 		return true
 	}
-	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(cmp.Or(t.Catalog, parser.DefaultDatabase))) {
+	catalog, schema := t.Catalog, t.Schema
+	if !parser.IsSystemObject(t) {
+		catalog, schema = cmp.Or(catalog, parser.DefaultDatabase), cmp.Or(schema, parser.DefaultSchema)
+	}
+	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(catalog)) {
 		return false
 	}
-	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(cmp.Or(t.Schema, parser.DefaultSchema))) {
+	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(schema)) {
 		return false
 	}
 	if len(r.tables) > 0 && !matchAny(r.tables, parser.FoldASCII(t.Table)) {
