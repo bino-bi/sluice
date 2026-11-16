@@ -89,6 +89,15 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - **`GET /v1/approvals/{id}` is rate limited before the login.** The status poll runs the login but was outside `limits.globalRps` and `limits.perIpRps`, so a flood could spend JWKS fetches and key hashing.
 
 
+### Security
+
+- **A `partial` mask no longer shows a short value in full.** A value with `showFirst` + `showLast` characters or fewer came back unmasked: `showFirst: 4, showLast: 4` showed `abcdef` as it is. Such a value is now masked in full, one `maskChar` per character. **Behavior change:** short values that were shown are now masked.
+- **Breaking: `jitter` and `fake` masks need `seed`.** Without a seed the HMAC key was empty, so anyone with the Sluice source could compute the real value back, for example the input of a `uuid` fake. A `jitter` or `fake` mask without `seed` now fails `sluice policy validate` and the start. A `secret://` seed that cannot be resolved because no secret store is set now fails the query. Before, the text of the reference was the key. Add `seed`, for example `seed: "secret://env/SLUICE_MASK_SEED"`. A new seed changes every masked value.
+
+### Fixed
+
+- **`jitter` works on all number columns.** It accepted only `INTEGER`, `BIGINT`, `FLOAT` and `DOUBLE`, and failed on `DECIMAL`, `TINYINT`, `SMALLINT`, `HUGEINT` and the unsigned types, with HTTP 200 and a cut body. A `DECIMAL` keeps its scale. The result stays inside the range of the column type.
+
 ## [0.1.0-rc.3] - 2026-10-13
 
 Third release candidate for v0.1.0. It holds the fixes from a security review of the query path and from an audit of the docs against the code. Several changes are marked **Breaking**: read the **Changed** and **Removed** sections before an upgrade from `v0.1.0-rc.2`.

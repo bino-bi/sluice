@@ -33,6 +33,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: "secret://env/SLUICE_MASK_SEED"
 ---
 # The column is a pattern. A suite writes the pattern, not the column name.
 apiVersion: sluice.bino.bi/v1alpha1

@@ -318,6 +318,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: s
 `
 
 // errorCode asserts the code the server returns for a refused rewrite,

@@ -50,11 +50,13 @@ A mask runs in one of two places. "SQL" means the mask is part of the rewritten 
 | `regex` | The text with every match of `pattern` replaced | `pattern`: required, a regular expression in RE2 syntax, at most 512 bytes. `replacement`: default empty | SQL |
 | `truncate` | The first `length` characters | `length`: required, 1 or more. `suffix`: text to add after a cut | SQL |
 | `fpe` | The characters of the alphabet, encrypted. Other characters stay. | `keyRef`: required, a `secret://` reference to the key. `alphabet`: `numeric`, `lower` or `alphanumeric`, default `numeric`. `customAlphabet`: 2 to 36 characters. `tweak`: hex, at most 16 bytes | Post-query |
-| `jitter` | The number, moved by up to `range` | `range`: required, between 0 and 1. 0.1 means 10 percent. `seed` | Post-query |
-| `fake` | An invented value | `fakeType`: required, one of `name`, `first_name`, `last_name`, `email`, `phone`, `company`, `city`, `country`, `uuid`. `seed` | Post-query |
+| `jitter` | The number, moved by up to `range` | `range`: required, between 0 and 1. 0.1 means 10 percent. `seed`: required | Post-query |
+| `fake` | An invented value | `fakeType`: required, one of `name`, `first_name`, `last_name`, `email`, `phone`, `company`, `city`, `country`, `uuid`. `seed`: required | Post-query |
 
 - `hash`, `fpe`, `jitter` and `fake` give the same output for the same input.
-- `seed` is plain text or a `secret://` reference. See [Server config](../operations/server-config.md) for secrets.
+- `seed` is plain text or a `secret://` reference. See [Server config](../operations/server-config.md) for secrets. It is the key of the keyed hash. Without it, anyone with the Sluice source could compute the real value back.
+- `partial` masks the whole value when the value has `showFirst` + `showLast` characters or fewer. `showFirst: 4, showLast: 4` turns `abcdef` into `******`.
+- `jitter` works on integer, unsigned, `HUGEINT`, `FLOAT`, `DOUBLE` and `DECIMAL` columns. The result keeps the column type and the `DECIMAL` scale. It stays inside the range of the type.
 - Another `type` and most wrong `args` fail `sluice policy validate`. So does a `saltRef` or `keyRef` that is not a `secret://` reference. It does not check the type of `value`. Unknown keys in `args` pass.
 
 ## More examples

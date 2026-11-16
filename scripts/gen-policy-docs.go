@@ -135,7 +135,7 @@ var docs = map[string]doc{
 	"ColumnMaskPolicy.mask.args.length":         {"", "`truncate`: characters kept."},
 	"ColumnMaskPolicy.mask.args.suffix":         {"", "`truncate`: text added at the end."},
 	"ColumnMaskPolicy.mask.args.range":          {"", "`jitter`: largest change. Above 0, below 1."},
-	"ColumnMaskPolicy.mask.args.seed":           {"", "`jitter`, `fake`: seed. Plain text or a secret reference."},
+	"ColumnMaskPolicy.mask.args.seed":           {"", "`jitter`, `fake`: required. The key of the keyed hash. Plain text or a secret reference."},
 	"ColumnMaskPolicy.mask.args.keyRef":         {"", "`fpe`: secret reference to the key."},
 	"ColumnMaskPolicy.mask.args.tweak":          {"", "`fpe`: tweak in hex."},
 	"ColumnMaskPolicy.mask.args.alphabet":       {"", "`fpe`: `numeric` (default), `lower` or `alphanumeric`."},

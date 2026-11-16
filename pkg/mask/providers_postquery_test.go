@@ -191,3 +191,26 @@ func TestHashHMAC_PostQuery(t *testing.T) {
 		t.Error("hmac_sha256 without saltRef accepted")
 	}
 }
+
+func TestJitterAndFake_RequireSeed(t *testing.T) {
+	t.Parallel()
+	if err := newJitterProvider().ValidateArgs(Args{Range: 0.1}); err == nil {
+		t.Error("jitter without seed accepted")
+	}
+	if err := newJitterProvider().ValidateArgs(Args{Range: 0.1, Seed: "s"}); err != nil {
+		t.Errorf("jitter with seed: %v", err)
+	}
+	if err := newFakeProvider().ValidateArgs(Args{FakeType: "uuid"}); err == nil {
+		t.Error("fake without seed accepted")
+	}
+	if err := newFakeProvider().ValidateArgs(Args{FakeType: "uuid", Seed: "s"}); err != nil {
+		t.Errorf("fake with seed: %v", err)
+	}
+	// A secret:// seed without a salt store must not become the key itself.
+	ref := Args{Range: 0.1, FakeType: "uuid", Seed: "secret://env/SEED"}
+	for _, p := range []RowMasker{newJitterProvider().(RowMasker), newFakeProvider().(RowMasker)} {
+		if _, err := p.NewRowMask(RowMaskContext{Ctx: context.Background(), Args: ref}); !errors.Is(err, ErrResolveSecret) {
+			t.Errorf("%s: err = %v, want ErrResolveSecret", p.Type(), err)
+		}
+	}
+}

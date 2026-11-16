@@ -386,6 +386,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: s
 `
 
 // A post-query mask is applied in Go to a bare select item of the outer
@@ -484,6 +485,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: s
 `
 
 // The wrapper passes a post-query masked column through raw, and the mask
@@ -800,6 +802,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: s
 `
 
 // The sample wrap selects * from the statement, and DuckDB renames a
@@ -1774,6 +1777,7 @@ spec:
     type: fake
     args:
       fakeType: name
+      seed: s
 `
 
 // pg_query parses a bare CURRENT_DATE, LOCALTIME or CURRENT_TIMESTAMP as a

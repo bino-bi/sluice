@@ -290,8 +290,8 @@ func TestPostMask_EveryTypeRefusesUnnamedReads(t *testing.T) {
 	rw := buildRewriter(t)
 	for name, spec := range map[string]apitypes.MaskSpec{
 		"fpe":         fpeMask("employees", "ssn").Spec.Mask,
-		"jitter":      {Type: apitypes.MaskJitter, Args: apitypes.MaskArgs{Range: 0.1}},
-		"fake":        {Type: apitypes.MaskFake, Args: apitypes.MaskArgs{FakeType: "name"}},
+		"jitter":      {Type: apitypes.MaskJitter, Args: apitypes.MaskArgs{Range: 0.1, Seed: "s"}},
+		"fake":        {Type: apitypes.MaskFake, Args: apitypes.MaskArgs{FakeType: "name", Seed: "s"}},
 		"hmac_sha256": {Type: apitypes.MaskHash, Args: apitypes.MaskArgs{Algorithm: apitypes.HashHMACSHA256, SaltRef: "secret://env/K"}},
 	} {
 		m := maskPolicy("post-ssn", "employees", []string{"ssn"}, spec)
