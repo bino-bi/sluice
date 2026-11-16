@@ -220,7 +220,7 @@ func (e *Engine) selectMatching(snap *CompiledSnapshot, in Input, act apitypes.A
 			// combines clauses across tables (e.g. "never join A with B") and
 			// does not decompose per table, so it keeps the whole-statement
 			// drop.
-			if !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, ctx) {
+			if !perTableExclude(p.Exclude) || excludesEveryTable(p.Exclude, gatedTables(&p.Match, ctx)) {
 				continue
 			}
 		}
@@ -254,6 +254,19 @@ func isShadow(p *CompiledPolicy) bool {
 // only has meaning at query scope.
 func perTableExclude(ex *CompiledSelector) bool {
 	return ex == nil || len(ex.All) == 0
+}
+
+// gatedTables narrows ctx to the tables match covers on their own, so a
+// table the policy never matched cannot keep it on. An `all` block does not
+// decompose per table and keeps every referenced table.
+func gatedTables(match *CompiledSelector, ctx MatchContext) MatchContext {
+	if !perTableExclude(match) {
+		return ctx
+	}
+	if ts := match.MatchingTables(ctx); len(ts) > 0 {
+		ctx.Tables = ts
+	}
+	return ctx
 }
 
 // excludesEveryTable reports whether ex matches each referenced table on

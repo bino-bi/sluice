@@ -44,7 +44,7 @@ A [selector](../reference/glossary.md) works per table or per query:
 | Kind | `match` | `exclude` |
 |---|---|---|
 | `SqlAccessPolicy`, `RowFilterPolicy`, `ColumnMaskPolicy` | Covers each table that matches. | Removes single tables. |
-| `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy` | One matching table is enough. | Switches the policy off only when it covers every table of the query. |
+| `QueryRejectPolicy`, `QueryRewritePolicy`, `ApprovalPolicy` | One matching table is enough. | Switches the policy off only when it covers every table of the query that the policy matches. |
 
 ### Subjects
 

@@ -263,4 +263,18 @@ func TestGateExclude_JoinOfExcludedTableKeepsGate(t *testing.T) {
 	if dec := eval(&identity.UserCtx{Subject: "s", Groups: []string{"stewards"}}, gate, pii, lookup); dec.Approval != nil {
 		t.Error("approval: a subject exclude must switch the gate off")
 	}
+
+	// A table the gate never matched must not keep it on.
+	hrPublic := parser.TableRef{Catalog: "pg", Schema: "public", Table: "hr_public"}
+	orders := parser.TableRef{Catalog: "pg", Schema: "public", Table: "orders"}
+	payroll := parser.TableRef{Catalog: "pg", Schema: "public", Table: "payroll"}
+	hr := approvalPolicy("hr", nil)
+	hr.Spec.Match = apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"payroll", "hr_*"}}}}}
+	hr.Spec.Exclude = &apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"hr_public"}}}}}
+	if dec := eval(user, hr, hrPublic, orders); dec.Approval != nil {
+		t.Error("approval: an unmatched joined table kept the gate on")
+	}
+	if dec := eval(user, hr, payroll, hrPublic); dec.Approval == nil {
+		t.Error("approval: a matched table that is not excluded must keep the gate")
+	}
 }
