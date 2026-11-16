@@ -46,6 +46,12 @@ func (f *fakeBroker) Wait(ctx context.Context, _ string, _ time.Duration) (appro
 	return f.waitState, f.waitErr
 }
 
+func (f *fakeBroker) HasGrant(_, _ string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.grantOK
+}
+
 func (f *fakeBroker) ConsumeGrant(_, _ string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

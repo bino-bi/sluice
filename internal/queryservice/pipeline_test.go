@@ -88,6 +88,38 @@ func TestApproval_WaitErrorIsAudited(t *testing.T) {
 	}
 }
 
+// A query that fails in the rewrite does not use up its approval grant,
+// so the client can fix the cause and run it again without a new approval.
+func TestApproval_RewriteErrorKeepsGrant(t *testing.T) {
+	fb := &fakeBroker{grantOK: true}
+	ex := &fakeExecutor{columns: []executor.ColumnInfo{{Name: "ssn"}}, rows: [][]any{{"x"}}}
+	rw := &fakeRewriter{err: pkgerr.New(pkgerr.CodeUnsupportedSyntax)}
+	svc := queryservice.New(queryservice.Options{
+		Parser:    &fakeParser{},
+		Policy:    &fakePolicy{decision: approvalDecision()},
+		Rewriter:  rw,
+		Executor:  ex,
+		Audit:     &fakeAudit{},
+		Approvals: fb,
+	})
+	req := queryservice.QueryRequest{SQL: "SELECT ssn FROM t"}
+	if _, err := svc.Execute(context.Background(), req); pkgerr.FromError(err).Code != pkgerr.CodeUnsupportedSyntax {
+		t.Fatalf("err = %v, want the rewrite error", err)
+	}
+	if !fb.grantOK {
+		t.Fatal("the rewrite error used up the grant")
+	}
+	rw.err = nil
+	res, err := svc.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second execute: %v", err)
+	}
+	_ = res.Rows.Close()
+	if fb.grantOK || ex.execCount != 1 {
+		t.Fatalf("grant left %v, executor runs %d; want the grant used by the one run", fb.grantOK, ex.execCount)
+	}
+}
+
 // A stream cut by the query timeout ends without a Scan error. The
 // completion record must still say so, not report a clean allow.
 func TestAuditedRows_TimeoutDuringDeliveryIsAudited(t *testing.T) {

@@ -268,6 +268,7 @@ type rewriteCache interface {
 type approvalBroker interface {
 	Require(ctx context.Context, in approval.RequireInput) (approval.Ticket, bool, error)
 	Wait(ctx context.Context, id string, maxWait time.Duration) (approval.State, error)
+	HasGrant(subjectKey, sqlHash string) bool
 	ConsumeGrant(subjectKey, sqlHash string) (string, bool)
 	Get(id string) (approval.View, bool)
 }

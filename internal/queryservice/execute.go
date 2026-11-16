@@ -294,9 +294,10 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	}
 
 	// 3b. Approval gate. A decision carrying an approval requirement holds
-	// the query until a human decides. On a consumed grant we proceed and
-	// note the approval id; otherwise we park (releasing the admission slot
-	// first) and either resolve inline or return ERR_APPROVAL_PENDING.
+	// the query until a human decides. With a grant we proceed and consume
+	// it right before execution; otherwise we park (releasing the admission
+	// slot first) and either resolve inline or return ERR_APPROVAL_PENDING.
+	var sqlHash, subjectKey string
 	if dec.Approval != nil {
 		if s.opts.Approvals == nil {
 			// Policy requires approval but no broker is wired — fail closed.
@@ -306,14 +307,11 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			return nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid).
 				WithMessage("approval required but no approval broker configured")
 		}
-		sqlHash := approvalHash(req)
-		subjectKey := subjectKeyOf(req.User)
-		if apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash); ok {
-			if rec.Extras == nil {
-				rec.Extras = map[string]any{}
-			}
-			rec.Extras["approval_id"] = apprID
-			// Fall through to rewrite + execute with the grant consumed.
+		sqlHash = approvalHash(req)
+		subjectKey = subjectKeyOf(req.User)
+		if s.opts.Approvals.HasGrant(subjectKey, sqlHash) {
+			// Fall through to rewrite. A rewrite error must not use up
+			// the approval, so the grant is consumed before step 5.
 		} else if resumed {
 			// Resumed pass but the grant vanished (expired/raced). Do not
 			// re-park — that would recurse. Surface pending.
@@ -380,6 +378,22 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			"sample":     eff.Sample != nil,
 			"policies":   eff.Policies,
 		}
+	}
+
+	// 5a. Consume the grant. It can be gone since the check: expired, or
+	// used by a parallel request.
+	if dec.Approval != nil {
+		apprID, ok := s.opts.Approvals.ConsumeGrant(subjectKey, sqlHash)
+		if !ok {
+			rec.Decision = audit.DecisionError
+			rec.ErrorCode = string(pkgerr.CodeApprovalPending)
+			s.emit(ctx, rec, start)
+			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
+		}
+		if rec.Extras == nil {
+			rec.Extras = map[string]any{}
+		}
+		rec.Extras["approval_id"] = apprID
 	}
 
 	// 5. Execute.

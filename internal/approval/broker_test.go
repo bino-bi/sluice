@@ -92,14 +92,20 @@ func TestBroker_AcceptFlow(t *testing.T) {
 		t.Errorf("state = %s, want approved", res.State)
 	}
 
-	// Grant is consumable exactly once.
+	// Grant is consumable exactly once. HasGrant does not consume it.
 	in := requireInput("alice", "SELECT 1")
+	if !b.HasGrant(in.SubjectKey, in.SQLHash) || !b.HasGrant(in.SubjectKey, in.SQLHash) {
+		t.Fatal("HasGrant miss")
+	}
 	id, ok := b.ConsumeGrant(in.SubjectKey, in.SQLHash)
 	if !ok || id != ticket.ID {
 		t.Fatalf("ConsumeGrant miss: ok=%v id=%q", ok, id)
 	}
 	if _, ok := b.ConsumeGrant(in.SubjectKey, in.SQLHash); ok {
 		t.Error("grant consumed twice")
+	}
+	if b.HasGrant(in.SubjectKey, in.SQLHash) {
+		t.Error("HasGrant after the grant was consumed")
 	}
 }
 
