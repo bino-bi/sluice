@@ -6,6 +6,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"time"
 
@@ -33,7 +34,7 @@ func (s *Service) Execute(ctx context.Context, req QueryRequest) (*QueryResult, 
 // execute is the pipeline body. resumed is true on the second pass after
 // an approval was granted: it consumes the grant instead of parking again,
 // which bounds recursion to one level.
-func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (*QueryResult, error) {
+func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (out *QueryResult, outErr error) {
 	start := s.opts.Clock()
 	qid := pkgerr.NewQueryID()
 
@@ -60,6 +61,35 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			WithMessage("service saturated")
 	}
 	releaseSlot := s.releaseFn()
+	defer releaseSlot()
+	// openRows is a result not yet handed to the caller, closed on a panic.
+	var openRows executor.RowIterator
+	// A panic in a stage (cgo parser, DuckDB, a mask provider, CEL) must
+	// not skip the audit record. The REST and MCP transports then get a
+	// normal ERR_INTERNAL.
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		s.opts.Logger.Error("query pipeline panic",
+			"query_id", qid,
+			"panic", fmt.Sprint(p),
+			"stack", string(debug.Stack()),
+		)
+		if openRows != nil {
+			_ = openRows.Close()
+		}
+		rec := finalRec
+		if rec == nil {
+			rec = s.buildAuditBase(req, qid, nil)
+			finalRec = rec
+		}
+		rec.Decision = audit.DecisionError
+		rec.ErrorCode = string(pkgerr.CodeInternal)
+		s.emit(ctx, rec, start)
+		out, outErr = nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid)
+	}()
 
 	// 0b. Per-subject rate limit.
 	if s.opts.RateLimiter != nil && req.User != nil {
@@ -69,7 +99,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeRateLimited)
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeRateLimited).
 				WithQueryID(qid).
 				WithMessage("per-subject rate limit exceeded")
@@ -85,7 +114,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeBudgetExceeded)
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.FromError(err).WithQueryID(qid)
 		}
 	}
@@ -96,7 +124,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionError
 		rec.ErrorCode = string(pkgerr.CodePayloadTooLarge)
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodePayloadTooLarge).WithQueryID(qid)
 	}
 	if req.Timeout <= 0 {
@@ -141,7 +168,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionReject
 			rec.Message = "cross-catalog queries are disabled (limits.disableCrossCatalog)"
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).
 				WithMessage("cross-catalog queries are disabled (limits.disableCrossCatalog)")
 		}
@@ -155,7 +181,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionReject
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
 	// Also before the cache: a $n reads the values the rewriter binds (row
@@ -165,7 +190,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, apiErr
 	}
 
@@ -178,7 +202,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionReject
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLRejected).WithQueryID(qid).WithMessage(reason)
 	}
 
@@ -191,7 +214,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		rec.Decision = audit.DecisionDeny
 		rec.Message = reason
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, pkgerr.New(pkgerr.CodeACLDenied).WithQueryID(qid).WithMessage(reason)
 	}
 
@@ -227,7 +249,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			setErrorCode(rec, apiErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, apiErr
 		}
 	}
@@ -241,7 +262,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
 		}
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, denyToAPIError(dec, qid)
 	}
 	if dec.Outcome == policy.OutcomeReject {
@@ -249,7 +269,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			s.opts.Cache.Put(cacheKey, &policycache.Entry{Decision: dec})
 		}
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, rejectToAPIError(dec, qid)
 	}
 
@@ -263,7 +282,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		return nil, apiErr
 	}
 
@@ -277,7 +295,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			rec.Decision = audit.DecisionError
 			rec.ErrorCode = string(pkgerr.CodeInternal)
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeInternal).WithQueryID(qid).
 				WithMessage("approval required but no approval broker configured")
 		}
@@ -293,7 +310,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			// Resumed pass but the grant vanished (expired/raced). Do not
 			// re-park — that would recurse. Surface pending.
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, pkgerr.New(pkgerr.CodeApprovalPending).WithQueryID(qid)
 		} else {
 			releaseSlot() // never hold the admission slot while parked
@@ -325,7 +341,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 				rec.Decision = audit.DecisionError
 			}
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, apiErr
 		}
 		if cacheable {
@@ -383,7 +398,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		setErrorCode(rec, apiErr)
 		rec.Decision = audit.DecisionError
 		s.emit(ctx, rec, start)
-		releaseSlot()
 		if stderrors.Is(execErr, executor.ErrRejected) {
 			// The client only gets the code. The fault can also be in the
 			// SQL sluice wrote, so the cause must be in the log.
@@ -394,6 +408,7 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		}
 		return nil, apiErr
 	}
+	openRows = resp.Rows
 
 	// 5b. Post-query mask decorators (FPE, fake, jitter, hmac). Build them
 	// before the audit gate so a construction failure refuses the query
@@ -411,7 +426,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 			setErrorCode(rec, mErr)
 			rec.Decision = audit.DecisionError
 			s.emit(ctx, rec, start)
-			releaseSlot()
 			return nil, toAPIError(mErr, qid)
 		}
 		resp.Rows = masked
@@ -432,7 +446,6 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 	rec.Decision = audit.DecisionAllow
 	if err := s.emitAccess(ctx, rec, start); err != nil {
 		_ = resp.Rows.Close()
-		releaseSlot()
 		return nil, err
 	}
 
@@ -467,12 +480,9 @@ func (s *Service) execute(ctx context.Context, req QueryRequest, resumed bool) (
 		ar.recordBudget = true
 	}
 	qr.Rows = ar
-	// Release concurrency slot when the iterator is closed — but don't
-	// leak semaphore slots if the caller forgets. We release now because
-	// DuckDB holds its own connection pool slot for the duration, and
-	// Service.MaxConcurrent is a higher-level gate on request
-	// throughput, not on executor resources.
-	releaseSlot()
+	openRows = nil
+	// The deferred release frees the slot now, not at Close: the slot gates
+	// request throughput, and the DuckDB pool bounds the connections.
 	return qr, nil
 }
 
