@@ -219,3 +219,49 @@ func TestCELInvalidExpressionFailsCompile(t *testing.T) {
 		t.Fatal("invalid CEL expression compiled successfully")
 	}
 }
+
+// A condition or reject rule that errors in a DryRun or Audit policy must
+// not deny live traffic. The policy is recorded as shadow with would: deny.
+func TestCELEvalErrorInShadowPolicyDoesNotDeny(t *testing.T) {
+	match := apitypes.Selector{Any: []apitypes.Clause{{Resources: &apitypes.ResourceSelector{Tables: []string{"*"}}}}}
+	dryDeny := &apitypes.SQLAccessPolicy{
+		TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindSQLAccessPolicy},
+		Metadata: apitypes.ObjectMeta{Name: "dry-deny"},
+		Spec: apitypes.SQLAccessSpec{
+			EnforcementMode: apitypes.EnforcementDryRun,
+			Effect:          apitypes.EffectDeny,
+			Match:           match,
+			Conditions:      []apitypes.Condition{{Name: "needs-claim", Expression: `subject.claims["tier"] == "gold"`}},
+		},
+	}
+	auditReject := &apitypes.QueryRejectPolicy{
+		TypeMeta: apitypes.TypeMeta{APIVersion: apitypes.GroupVersionAlpha1, Kind: apitypes.KindQueryRejectPolicy},
+		Metadata: apitypes.ObjectMeta{Name: "audit-reject"},
+		Spec: apitypes.QueryRejectSpec{
+			EnforcementMode: apitypes.EnforcementAudit,
+			Match:           match,
+			Reject:          apitypes.RejectSpec{Rules: []apitypes.RejectRule{{Name: "r", Expression: `subject.claims["tier"] == "gold"`}}},
+		},
+	}
+	eng := New(Options{})
+	if err := eng.ApplySnapshot(context.Background(), makeSnapshot(allowAll(0), dryDeny, auditReject)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	dec, err := eng.Evaluate(context.Background(), Input{
+		User:   &identity.UserCtx{Subject: "u", Claims: map[string]any{}},
+		Tables: []parser.TableRef{{Catalog: "pg", Schema: "public", Table: "orders"}},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if dec.Outcome != OutcomeAllow {
+		t.Fatalf("outcome = %s (%+v), want allow", dec.Outcome, dec.DenyReason)
+	}
+	got := map[string]string{}
+	for _, s := range dec.Shadow {
+		got[s.Name] = s.Would
+	}
+	if got["dry-deny"] != "deny" || got["audit-reject"] != "deny" || len(dec.Shadow) != 2 {
+		t.Errorf("shadow = %+v, want dry-deny and audit-reject with would: deny", dec.Shadow)
+	}
+}

@@ -27,6 +27,10 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
   - `//` and `%` by zero raise an error instead of returning NULL. `~` matches a part of the text, as in PostgreSQL. `X'..'` is a BLOB. An error inside an explicit transaction aborts it. S3 URL parameters such as `?s3_region=` are off; use a secret.
   - A synthetic build gives other rows than on 1.5.5, because DuckDB computes `avg` and `stddev_samp` a little differently. The spec hash algorithm is now `synth/v2`, so a snapshot built before the upgrade shows `stale` and needs a rebuild. Snapshot files written by DuckDB 2.0 cannot be read by DuckDB 1.5, so a rollback needs a rebuild too.
 
+### Fixed
+
+- **A shadow policy whose condition fails no longer denies live traffic.** A CEL condition or reject rule that fails at run time, for example on a missing claim, denied the whole query also in `Audit` and `DryRun` mode. Now Sluice skips such a policy and lists it under `shadow` with `would: deny`. An `Enforce` policy still denies with `ACL_DENIED`.
+
 ## [0.1.0-rc.3] - 2026-10-13
 
 Third release candidate for v0.1.0. It holds the fixes from a security review of the query path and from an audit of the docs against the code. Several changes are marked **Breaking**: read the **Changed** and **Removed** sections before an upgrade from `v0.1.0-rc.2`.

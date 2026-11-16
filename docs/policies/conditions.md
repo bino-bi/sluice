@@ -78,6 +78,8 @@ A `LIMIT` that is not a plain number still passes, so this is not a row limit. F
 
 A lookup of a missing claim is an error, not `false`. Sluice then denies the whole query with `ACL_DENIED`, also when another policy allows the table.
 
+In `Audit` and `DryRun` mode the error does not deny. Sluice skips the policy and lists it under `shadow` with `would: deny`. The same holds for a reject rule that fails.
+
 ```yaml
 --8<-- "examples/conditions/policies.d/mask-card-number.yaml:2"
 ```
