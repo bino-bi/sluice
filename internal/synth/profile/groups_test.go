@@ -8,6 +8,8 @@ import (
 	"errors"
 	"testing"
 
+	duckdb "github.com/duckdb/duckdb-go/v2"
+
 	"github.com/bino-bi/sluice/internal/synth/rng"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -98,6 +100,57 @@ func TestGroupsCap(t *testing.T) {
 	}
 	if n := scalar[int64](t, r, "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'sluice_group'"); n != 0 {
 		t.Error("group table left behind")
+	}
+}
+
+// The builder profiles a table in one read-only transaction. Groups works
+// in it, and rows that another connection adds meanwhile stay unseen.
+func TestGroupsInReadOnlyTransaction(t *testing.T) {
+	c, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "CREATE TABLE t AS SELECT 'a' AS g, CAST(i AS DOUBLE) AS x FROM range(20) r(i)"); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{Conn: conn}
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY"); err != nil {
+		t.Fatal(err)
+	}
+	// DuckDB takes the snapshot of a database at its first read in the
+	// transaction.
+	var n int64
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM t").Scan(&n); err != nil || n != 20 {
+		t.Fatalf("count %d, %v", n, err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO t SELECT 'a', 1000 FROM range(20)"); err != nil {
+		t.Fatal(err)
+	}
+	s := Effective()
+	s.JitterOff = true
+	groups, _, err := r.Groups(ctx, Table{Catalog: "memory", Schema: "main", Name: "t"}, ColumnInfo{Name: "x", Type: "DOUBLE"},
+		[]ColumnInfo{{Name: "g", Type: "VARCHAR"}}, Needs{Parts: PartRange}, s, func(string) *rng.Stream { return jitterStream(0) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("%d groups", len(groups))
+	}
+	// 20 rows from 0 to 19: the 5th largest is 15, the rows at 1000 are
+	// not seen.
+	if p := groups[0].Profile; p.InRange != 20 || p.Hi != 15 {
+		t.Errorf("in range %d, hi %v", p.InRange, p.Hi)
 	}
 }
 

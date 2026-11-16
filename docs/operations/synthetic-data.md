@@ -4,7 +4,7 @@
 
 A `synthetic` data source serves generated rows that look like the rows of another data source. Use it to give developers and tests realistic data without real values.
 
-Sluice reads the source once, builds a profile of each column, and writes generated rows to a snapshot file. Clients query the snapshot like any other catalog.
+A build reads the source, builds a profile of each column, and writes generated rows to a snapshot file. Clients query the snapshot like any other catalog.
 
 ## Example
 
@@ -358,7 +358,7 @@ A `template` is `NULL` when a column it reads is `NULL`. A `dateOffset` is `NULL
 
 ## Profile on a sample
 
-By default a build reads the full source table, once for each profile query. For a large table, set `profile.sampleRows` on the table, such as `profile: { sampleRows: 1000000 }`.
+By default a build reads the full source table, once for each profile query. See [Consistency](#consistency). For a large table, set `profile.sampleRows` on the table, such as `profile: { sampleRows: 1000000 }`.
 
 - When the table has more rows than `sampleRows`, Sluice reads it once and keeps a sample of about `sampleRows` rows in the builder. Every profile query and the source side of the report then read the sample.
 - Sluice keeps each row by a hash of its values, its copy number among equal rows and the seed. So the sample size varies a little around `sampleRows`.
@@ -401,6 +401,21 @@ A build writes into `synthetic.dir`:
 Sluice changes `current` only after every check passed. A failed build writes its report and leaves `current` as it was. Sluice keeps the current and the previous snapshot and deletes older ones. Clients can read only the `snapshots` folder.
 
 A build writes the snapshot to `snapshots/.<build-id>.duckdb.tmp` first and renames it at the end. A build that was killed, for example by the out-of-memory killer, leaves this file behind. Sluice removes such files at server start and each time a later build publishes. So do not start the server while `sluice synth build` runs: the server removes the file of that build, and the build fails.
+
+### Consistency
+
+A build reads a source table many times: once for each profile query. On a live source, rows can change between two reads. Sluice runs the profile of one table in one read-only DuckDB transaction. Whether the reads in it see one state depends on the source:
+
+- `duckdb_file`: yes. DuckDB reads one version of the file, and no other process can write it while Sluice has it open.
+- `postgres` and `mysql`: the DuckDB extension runs the reads of one DuckDB transaction in one transaction of the database. Postgres with `REPEATABLE READ` and MySQL with InnoDB then show one state. Sluice does not check this.
+- Other sources, such as `s3`, `http`, `sqlite` and `motherduck`: no promise. Each query reads the files or the database again.
+
+Some reads are outside the transaction of a table and can see another state:
+
+- Each table has its own transaction. Two tables are read at different times.
+- The source side of the report, `rejectExactMatches` and the noise fingerprint read the source again.
+
+For a fixed state, build from a copy or a snapshot of the source, or build when the source does not change.
 
 The same spec, seed and source data give the same rows on the same CPU architecture. With `noise`, the DuckDB version must be the same too. The report holds a `content_hash` of the rows to compare builds.
 

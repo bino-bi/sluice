@@ -384,6 +384,19 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 	schema, name, _ := strings.Cut(t.Name, ".")
 	pt := profile.Table{Catalog: b.spec.Source, Schema: schema, Name: name}
 
+	// The profile of a table reads the source in one read-only
+	// transaction, so a source that gives a snapshot shows its counts,
+	// range and groups at one state. The sample and group tables are temp
+	// tables, which a read-only transaction may write.
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY"); err != nil {
+		return fail(b.duckErr("begin the profile transaction", err))
+	}
+	inTx := true
+	defer func() {
+		if inTx {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
 	infos, err := b.sourceColumns(ctx, conn, pt)
 	if err != nil {
 		return fail(err)
@@ -474,6 +487,10 @@ func (b *builder) table(ctx context.Context, conn *sql.Conn, runner *profile.Run
 			return fail(err)
 		}
 	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fail(b.duckErr("end the profile transaction", err))
+	}
+	inTx = false
 	b.hashTable(t.Name, cols)
 	if rows > 0 {
 		if err := b.stage(ctx, conn, cols, order, rows, len(exact) > 0); err != nil {
@@ -752,7 +769,9 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			}
 			return nil
 		}
-		if ctx.Err() != nil || choice.Fallback == nil {
+		// A failed query aborts the profile transaction, so a fallback
+		// cannot run either.
+		if ctx.Err() != nil || choice.Fallback == nil || errors.Is(err, profile.ErrQuery) {
 			return err
 		}
 		b.log.Debug("synthetic build: default falls back", "column", c.info.Name,

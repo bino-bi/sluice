@@ -16,8 +16,8 @@ import (
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
-// sampleTable is the builder table that holds a profile sample. It lives
-// in the default catalog of the builder instance.
+// sampleTable is the builder table that holds a profile sample. It is a
+// temp table, so the read-only profile transaction can write it.
 const sampleTable = "sluice_sample"
 
 // sampleHash names the row hash column of the sample query. A source
@@ -62,11 +62,7 @@ func (b *builder) profileTable(ctx context.Context, conn *sql.Conn, t *apitypes.
 	if size <= n {
 		return src, nil
 	}
-	var catalog string
-	if err := conn.QueryRowContext(ctx, "SELECT current_database()").Scan(&catalog); err != nil {
-		return nil, b.duckErr("read the builder catalog", err)
-	}
-	sample := profile.Table{Catalog: catalog, Schema: "main", Name: sampleTable}
+	sample := profile.Table{Catalog: "temp", Schema: "main", Name: sampleTable}
 	cols := make([]string, len(infos))
 	for i, c := range infos {
 		if strings.EqualFold(c.Name, sampleHash) {
@@ -86,7 +82,7 @@ func (b *builder) profileTable(ctx context.Context, conn *sql.Conn, t *apitypes.
 	if f := float64(n) / float64(size); f < 1 {
 		threshold = uint64(f * math.MaxUint64)
 	}
-	q := "CREATE OR REPLACE TABLE " + tableSQL(sample) + " AS SELECT * EXCLUDE (" + sampleHash + ") FROM (" +
+	q := "CREATE OR REPLACE TEMP TABLE " + parser.QuoteIdent(sampleTable) + " AS SELECT * EXCLUDE (" + sampleHash + ") FROM (" +
 		"SELECT *, hash(" + strings.Join(cols, ", ") + ") AS " + sampleHash + " FROM " + tableSQL(pt) + ")" +
 		" QUALIFY hash(CAST(" + strconv.FormatUint(r.Uint64(), 10) + " AS UBIGINT), " + sampleHash +
 		", row_number() OVER (PARTITION BY " + sampleHash + ")) < CAST(" + strconv.FormatUint(threshold, 10) + " AS UBIGINT)"
