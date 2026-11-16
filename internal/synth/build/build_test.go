@@ -1011,3 +1011,31 @@ func TestSnapshotType(t *testing.T) {
 		}
 	}
 }
+
+// A failed query in the profile transaction stops the fallback chain.
+func TestTxAborted(t *testing.T) {
+	c, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION READ ONLY"); err != nil {
+		t.Fatal(err)
+	}
+	if txAborted(ctx, conn) {
+		t.Fatal("a fresh transaction counts as aborted")
+	}
+	if _, err := conn.ExecContext(ctx, "SELECT CAST('x' AS INTEGER)"); err == nil {
+		t.Fatal("the cast did not fail")
+	}
+	if !txAborted(ctx, conn) {
+		t.Error("the transaction is not seen as aborted")
+	}
+}

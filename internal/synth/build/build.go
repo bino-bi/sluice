@@ -776,15 +776,22 @@ func (b *builder) prepare(ctx context.Context, conn *sql.Conn, runner *profile.R
 			}
 			return nil
 		}
-		// A failed query aborts the profile transaction, so a fallback
-		// cannot run either.
-		if ctx.Err() != nil || choice.Fallback == nil || errors.Is(err, profile.ErrQuery) {
+		// A failed DuckDB query aborts the profile transaction. Then a
+		// fallback would fail too, so report the first error.
+		if ctx.Err() != nil || choice.Fallback == nil || txAborted(ctx, conn) {
 			return err
 		}
 		b.log.Debug("synthetic build: default falls back", "column", c.info.Name,
 			"from", string(choice.Generator), "to", string(choice.Fallback.Generator), "reason", err)
 		choice = *choice.Fallback
 	}
+}
+
+// txAborted reports whether the transaction on conn is aborted: every
+// query then fails.
+func txAborted(ctx context.Context, conn *sql.Conn) bool {
+	var one int
+	return conn.QueryRowContext(ctx, "SELECT 1").Scan(&one) != nil
 }
 
 // hashTable starts the content hash of a table: its name and columns.
