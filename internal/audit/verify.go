@@ -20,6 +20,32 @@ type VerifyReport struct {
 	LastHash string
 	// Keyed counts the records with a keyed hash. 0 means a plain chain.
 	Keyed int
+	// Gaps lists the audit-gap records: records lost to a failed write,
+	// not to a change of the files.
+	Gaps []VerifyGap
+}
+
+// VerifyGap is an audit-gap record. Lost is the number of records that
+// the gap record says are missing before it.
+type VerifyGap struct {
+	File string
+	Line int
+	Lost int
+}
+
+// gapFits reports whether r is an audit-gap record that names prior as
+// the last record before the gap. Only then may r break the chain.
+func gapFits(r *Record, prior string) bool {
+	if r.EventType != EventAuditGap {
+		return false
+	}
+	last, _ := r.Extras[GapLastWritten].(string)
+	return last == prior
+}
+
+func gapLost(r *Record) int {
+	n, _ := r.Extras[GapLostRecords].(float64)
+	return int(n)
 }
 
 // VerifyError describes a broken link. File and Line pinpoint where the
@@ -57,6 +83,10 @@ func (e *VerifyError) Is(target error) bool {
 // directory must not verify. So is a chain without any keyed record when
 // a key is given: a writer without the key can turn a keyed chain into
 // such a chain.
+//
+// An audit-gap record may break the chain when its last_written_hash is
+// the hash of the record before it: the dispatcher lost the records in
+// between to a failed write. Verify lists each audit-gap record in Gaps.
 func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -110,7 +140,7 @@ func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 				}
 				prior = r.PriorHash
 			}
-			if r.PriorHash != prior {
+			if r.PriorHash != prior && !gapFits(&r, prior) {
 				_ = f.Close()
 				return nil, &VerifyError{
 					File: name, Line: line,
@@ -142,6 +172,9 @@ func Verify(dir, anchor string, key []byte) (*VerifyReport, error) {
 					File: name, Line: line,
 					Msg: fmt.Sprintf("hash mismatch: stored=%s recomputed=%s", r.Hash, computed),
 				}
+			}
+			if r.EventType == EventAuditGap {
+				rep.Gaps = append(rep.Gaps, VerifyGap{File: name, Line: line, Lost: gapLost(&r)})
 			}
 			prior = r.Hash
 			rep.Records++

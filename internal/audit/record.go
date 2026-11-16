@@ -35,6 +35,17 @@ const (
 	// EventSyntheticBuild is written at the start and the end of a
 	// synthetic snapshot build.
 	EventSyntheticBuild EventType = "synthetic-build"
+	// EventAuditGap follows records that the primary sink lost after a
+	// failed write. Its extras hold GapLostRecords and GapLastWritten.
+	EventAuditGap EventType = "audit-gap"
+)
+
+// Extras keys of an EventAuditGap record.
+const (
+	// GapLostRecords is the number of sealed records the file lacks.
+	GapLostRecords = "lost_records"
+	// GapLastWritten is the hash of the last record before the gap.
+	GapLastWritten = "last_written_hash"
 )
 
 // Decision labels used in Record.Decision. They mirror policy.Outcome plus

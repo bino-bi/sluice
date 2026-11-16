@@ -10,6 +10,10 @@ import "errors"
 // persistently full queue is a configuration problem, not a client one.
 var ErrQueueFull = errors.New("audit: queue full")
 
+// ErrSinkDown is returned by Dispatcher.Enqueue while the primary sink
+// cannot write. It clears once the dispatcher wrote the gap record.
+var ErrSinkDown = errors.New("audit: the primary sink cannot write")
+
 // ErrClosed is returned by any Dispatcher method called after Close.
 var ErrClosed = errors.New("audit: dispatcher closed")
 
