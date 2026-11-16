@@ -26,7 +26,7 @@ import (
 var ErrNotFound = errors.New("no synthetic data source with this name")
 
 // StateRunning is the state of a build that has not finished. A finished
-// build has ResultSucceeded or ResultFailed.
+// build has ResultSucceeded, ResultFailed or ResultPublishedNotAttached.
 const StateRunning = "running"
 
 // keepBuilds is the number of finished builds kept per name.
@@ -117,6 +117,8 @@ type Service struct {
 	closed  bool
 	running map[string]*job
 	done    map[string][]BuildView
+	// attach is swap; tests replace it.
+	attach func(name string, rep *Report) error
 }
 
 type job struct {
@@ -148,6 +150,7 @@ func NewService(opts ServiceOptions) *Service {
 		running: map[string]*job{},
 		done:    map[string][]BuildView{},
 	}
+	s.attach = s.swap
 	for _, ds := range opts.DataSources {
 		if !isSynthetic(ds) {
 			continue
@@ -364,23 +367,24 @@ func (s *Service) run(j *job, name string, ds, src *apitypes.DataSource) {
 	start := time.Now()
 
 	rep, err := s.build(j, ds, src)
+	result := ResultSucceeded
 	if err == nil {
-		if serr := s.swap(name, rep); serr != nil {
+		if serr := s.attach(name, rep); serr != nil {
 			s.opts.Log.Error("synthetic: the build is published but cannot be attached",
 				"name", name, "build_id", rep.BuildID, "error", serr)
 			// The report file says succeeded: the snapshot is current and
 			// is attached at the next start.
-			failed := *rep
-			failed.Result = ResultFailed
-			failed.Error = "the build is published but cannot be attached; it is attached at the next start"
-			rep, err = &failed, serr
+			na := *rep
+			na.Result = ResultPublishedNotAttached
+			na.Error = "the build is published but cannot be attached; it is attached at the next start"
+			rep, result = &na, na.Result
 		}
 	}
-	result := ResultSucceeded
-	if err != nil {
+	switch {
+	case err != nil:
 		result = ResultFailed
 		s.opts.Log.Error("synthetic: build failed", "name", name, "build_id", rep.BuildID, "origin", origin, "error", rep.Error)
-	} else {
+	case result == ResultSucceeded:
 		s.opts.Log.Info("synthetic: build succeeded", "name", name, "build_id", rep.BuildID, "origin", origin)
 	}
 	observeBuild(result, time.Since(start))

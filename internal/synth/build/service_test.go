@@ -355,6 +355,37 @@ func TestNewerBuildID(t *testing.T) {
 	}
 }
 
+// A build that is published but cannot be attached is not reported as
+// failed: its snapshot is current and goes live at the next start.
+func TestServicePublishedNotAttached(t *testing.T) {
+	aud := &fakeAuditor{}
+	svc, dir := newTestService(t, aud, true)
+	svc.attach = func(string, *Report) error { return errors.New("attach failed") }
+	v, _, err := svc.Start(context.Background(), "crmsynth", OriginAdmin, "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	done := waitBuild(t, svc, "crmsynth", v.BuildID)
+	if done.State != ResultPublishedNotAttached || done.Error == "" {
+		t.Errorf("view: %+v", done)
+	}
+	recs := aud.all()
+	if len(recs) != 2 {
+		t.Fatalf("records: %d, want 2", len(recs))
+	}
+	end := recs[1]
+	if end.Extras["result"] != ResultPublishedNotAttached || end.Extras["content_hash"] == "" {
+		t.Errorf("end record extras: %v", end.Extras)
+	}
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
+	if cur, _ := l.ReadCurrent(); cur != v.BuildID {
+		t.Errorf("current = %q, want %q", cur, v.BuildID)
+	}
+	if rep, err := ReadReport(l, v.BuildID); err != nil || rep.Result != ResultSucceeded {
+		t.Errorf("report file: %v, %v", rep, err)
+	}
+}
+
 // The temp files of a killed build are removed when the service starts.
 func TestServiceRemovesKilledTemps(t *testing.T) {
 	dir := t.TempDir()

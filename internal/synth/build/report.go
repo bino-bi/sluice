@@ -19,6 +19,10 @@ const ReportVersion = 1
 const (
 	ResultSucceeded = "succeeded"
 	ResultFailed    = "failed"
+	// ResultPublishedNotAttached is a server build that is current on
+	// disk but that the query pool could not attach. The server serves
+	// it after the next start. The report file says succeeded.
+	ResultPublishedNotAttached = "published_not_attached"
 )
 
 // Report is the build report, written to reports/<build-id>.json. It

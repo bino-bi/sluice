@@ -84,6 +84,7 @@ Every response has an `X-Admin-Request-Id` header.
 - A second call during a build returns the running build with `already_running: true`. A retry is harmless.
 - `status` is `not_built`, `ready` or `stale`. `GET /admin/datasources` shows it too.
 - `builds` lists only the builds of this server process. `current` and `report` are `null` when no snapshot exists.
+- The `state` of a build is `running`, `succeeded`, `failed` or `published_not_attached`. `published_not_attached` means: the snapshot is current on disk, but the server could not attach it. The server serves it after the next start.
 - `current` and `report` show the build that the server serves. After `sluice synth build`, the server serves the old snapshot until a restart or the next server build. `GET` shows that old build.
 - An unknown name, or a data source that is not synthetic, gives 404 with an empty body.
 - Without a synthetic data source, both routes give 501.
