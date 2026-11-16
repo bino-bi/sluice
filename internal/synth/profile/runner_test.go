@@ -170,7 +170,13 @@ func TestNumberProfile(t *testing.T) {
 	all := Needs{Parts: PartRange | PartStats | PartQuantiles | PartBins, Bins: 20}
 	c := mustProfile(t, r, "revenue", all, s)
 
-	lo, hi := 10.0, 1000000.0
+	// The bounds are the 5th value from each end, so the two far values
+	// do not set the range.
+	lo := scalar[float64](t, r, "SELECT min(CAST(revenue AS DOUBLE), 5)[-1] FROM src.crm.t")
+	hi := scalar[float64](t, r, "SELECT max(CAST(revenue AS DOUBLE), 5)[-1] FROM src.crm.t")
+	if hi > 2000 {
+		t.Fatalf("5th largest value %v", hi)
+	}
 	rng := hi - lo
 	if d := math.Abs(c.Lo - lo); d < 0.01*rng || d > 0.02*rng {
 		t.Errorf("lo' = %v moved %v, want [%v, %v]", c.Lo, d, 0.01*rng, 0.02*rng)
@@ -178,6 +184,7 @@ func TestNumberProfile(t *testing.T) {
 	if d := math.Abs(c.Hi - hi); d < 0.01*rng || d > 0.02*rng {
 		t.Errorf("hi' = %v moved %v", c.Hi, d)
 	}
+	// Rows past the bounds count at the bound.
 	if c.InRange != fixtureRows {
 		t.Errorf("InRange = %d", c.InRange)
 	}
@@ -189,13 +196,12 @@ func TestNumberProfile(t *testing.T) {
 			t.Fatalf("quantiles not sorted at %d", i)
 		}
 	}
-	wantMean := scalar[float64](t, r, "SELECT avg(CAST(revenue AS DOUBLE)) FROM src.crm.t")
+	wantMean := scalar[float64](t, r, fmt.Sprintf("SELECT avg(least(greatest(CAST(revenue AS DOUBLE), %v), %v)) FROM src.crm.t", lo, hi))
 	if math.Abs(c.Mean-wantMean) > 1e-6*wantMean {
 		t.Errorf("mean = %v, want %v", c.Mean, wantMean)
 	}
-	// The two far values sit alone at the top: a spike. The bins between
-	// them and the bulk are empty and merged away.
-	if !reflect.DeepEqual(c.Spikes, []Spike{{Side: SideHigh, Rows: 2}}) {
+	// At least k rows sit at each bound: no spike.
+	if len(c.Spikes) != 0 {
 		t.Errorf("spikes = %v", c.Spikes)
 	}
 	var total int64
@@ -208,8 +214,8 @@ func TestNumberProfile(t *testing.T) {
 		}
 		total += b.Count
 	}
-	if total != fixtureRows || c.MergedBins == 0 {
-		t.Errorf("bins: total %d, merges %d", total, c.MergedBins)
+	if total != fixtureRows {
+		t.Errorf("bins: total %d", total)
 	}
 
 	// With clipOutliers the far values are cut: no spike, bounds near
@@ -223,10 +229,60 @@ func TestNumberProfile(t *testing.T) {
 		t.Errorf("clip not applied: hi' %v, in range %d", c.Hi, c.InRange)
 	}
 
-	s = Effective()
+	// A clip that keeps the far values: the two of them are a spike.
+	s.Clip = &apitypes.ClipOutliers{Lower: 0, Upper: 1}
+	c = mustProfile(t, r, "revenue", all, s)
+	if !reflect.DeepEqual(c.Spikes, []Spike{{Side: SideHigh, Rows: 2}}) {
+		t.Errorf("spikes = %v", c.Spikes)
+	}
 	s.SpikeWarning = false
 	if c := mustProfile(t, r, "revenue", Needs{Parts: PartRange}, s); c.Spikes != nil {
 		t.Errorf("spikeWarning off still found %v", c.Spikes)
+	}
+}
+
+// TestOutlierDoesNotMoveRange: moving the largest value far away does not
+// change the profile range.
+func TestOutlierDoesNotMoveRange(t *testing.T) {
+	r, _ := newRunner(t)
+	if _, err := r.Conn.ExecContext(context.Background(), `
+CREATE TABLE src.crm.plain AS SELECT CAST(i AS DOUBLE) AS x FROM range(1, 101) r(i);
+CREATE TABLE src.crm.spiked AS SELECT CAST(CASE WHEN i = 100 THEN 2000000 ELSE i END AS DOUBLE) AS x FROM range(1, 101) r(i);`); err != nil {
+		t.Fatal(err)
+	}
+	col := ColumnInfo{Name: "x", Type: "DOUBLE"}
+	needs := Needs{Parts: PartRange | PartQuantiles | PartStats}
+	prof := func(name string) *Column {
+		tb := Table{Catalog: "src", Schema: "crm", Name: name}
+		counts, err := r.Base(context.Background(), tb, []ColumnInfo{col})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := r.Column(context.Background(), tb, col, counts[0], needs, Effective(), jitterStream(0), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	plain, spiked := prof("plain"), prof("spiked")
+	if plain.Lo != spiked.Lo || plain.Hi != spiked.Hi || !reflect.DeepEqual(plain.Quantiles, spiked.Quantiles) {
+		t.Errorf("range moved: [%v, %v] to [%v, %v]", plain.Lo, plain.Hi, spiked.Lo, spiked.Hi)
+	}
+	if spiked.Hi > 100 {
+		t.Errorf("hi' = %v", spiked.Hi)
+	}
+
+	// Fewer than 2k-1 rows have no range whose ends k rows share.
+	if _, err := r.Conn.ExecContext(context.Background(), "CREATE TABLE src.crm.small AS SELECT CAST(i AS DOUBLE) AS x FROM range(8) r(i)"); err != nil {
+		t.Fatal(err)
+	}
+	tb := Table{Catalog: "src", Schema: "crm", Name: "small"}
+	counts, err := r.Base(context.Background(), tb, []ColumnInfo{col})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Column(context.Background(), tb, col, counts[0], needs, Effective(), jitterStream(0), nil); !errors.Is(err, ErrTooFewRows) {
+		t.Errorf("8 rows with k 5: %v", err)
 	}
 }
 
@@ -250,11 +306,12 @@ func TestOtherAxes(t *testing.T) {
 		t.Errorf("day axis %v %v", day.Lo, day.Hi)
 	}
 	opened := mustProfile(t, r, "opened", needs, s)
-	if opened.Lo != 8*3600 || opened.Hi != 8*3600+7*1999 {
+	// The 5th value from each end.
+	if opened.Lo != 8*3600+7*4 || opened.Hi != 8*3600+7*1995 {
 		t.Errorf("time axis %v %v", opened.Lo, opened.Hi)
 	}
 	ts := mustProfile(t, r, "ts", needs, s)
-	if ts.Lo != 1577921400 {
+	if ts.Lo != 1577921400+4*86400 {
 		t.Errorf("timestamp axis lo %v", ts.Lo)
 	}
 	// The infinity row is not on the axis.
@@ -271,7 +328,8 @@ func TestOtherAxes(t *testing.T) {
 func TestLogStats(t *testing.T) {
 	r, buf := newRunner(t)
 	c := mustProfile(t, r, "maybe", Needs{Parts: PartLogStats}, Effective())
-	want := scalar[float64](t, r, "SELECT avg(ln(maybe)) FROM src.crm.t")
+	// Values past the 5th from each end (5 and 1995) count at it.
+	want := scalar[float64](t, r, "SELECT avg(ln(least(greatest(maybe, 5), 1995))) FROM src.crm.t WHERE maybe IS NOT NULL")
 	if math.Abs(c.LogMean-want) > 1e-9 || c.LogStdDev <= 0 {
 		t.Errorf("log stats %v %v, want mean %v", c.LogMean, c.LogStdDev, want)
 	}
@@ -396,6 +454,7 @@ func TestProfileErrors(t *testing.T) {
 	}
 	s := Effective()
 	s.MinGroupSize = 1001
+	s.Clip = &apitypes.ClipOutliers{Lower: 0, Upper: 1}
 	if _, err := profileOf(t, r, "revenue", Needs{Parts: PartQuantiles}, s); !errors.Is(err, ErrGrid) {
 		t.Errorf("grid of 2000 rows with k 1001: %v", err)
 	}

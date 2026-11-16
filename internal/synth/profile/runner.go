@@ -262,6 +262,13 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 	}
 	inRange := " FROM " + p.from + " WHERE " + e + " BETWEEN ? AND ?"
 	bounds := []any{lo, hi}
+	if s.Clip == nil {
+		// Without clip a row past the k-th value counts at that value, so
+		// no row is lost and no single row sets a bound.
+		e = "least(greatest(" + e + ", " + floatLit(lo) + "), " + floatLit(hi) + ")"
+		inRange = " FROM " + p.from + " WHERE isfinite(" + p.axis + ")"
+		bounds = nil
+	}
 
 	// Sums of DOUBLE values depend on the thread schedule in the last
 	// bits. Ordered aggregates add in value order, so the result is the
@@ -341,7 +348,8 @@ func (p *colRun) numbers(needs Needs, s Settings, jitter *rng.Stream, out *Colum
 }
 
 // sourceRange reads the range of the number parts: the clip quantiles,
-// or min and max.
+// or the k-th smallest and k-th largest value, so that each bound is
+// shared by at least k rows and one outlier does not set it.
 func (p *colRun) sourceRange(s Settings) (float64, float64, error) {
 	e := p.axis
 	var lo, hi float64
@@ -357,10 +365,20 @@ func (p *colRun) sourceRange(s Settings) (float64, float64, error) {
 		}
 		lo, hi = qs[0], qs[1]
 	} else {
-		q := "SELECT min(" + e + "), max(" + e + ") FROM " + p.from + " WHERE isfinite(" + e + ")"
-		if err := p.query(q, nil, func(rows *sql.Rows) error { return scanFloats(rows, &lo, &hi) }); err != nil {
+		// min(x, n) and max(x, n) return the n lowest and highest values,
+		// so the last entry is the k-th one from each end.
+		k := strconv.FormatInt(p.k, 10)
+		var n int64
+		var nlo, nhi sql.NullFloat64
+		q := "SELECT count(*), min(" + e + ", " + k + ")[-1], max(" + e + ", " + k + ")[-1] FROM " + p.from + " WHERE isfinite(" + e + ")"
+		if err := p.query(q, nil, func(rows *sql.Rows) error { return rows.Scan(&n, &nlo, &nhi) }); err != nil {
 			return 0, 0, err
 		}
+		// Below 2k-1 rows the k-th values cross.
+		if n < p.k || !nlo.Valid || !nhi.Valid || nlo.Float64 > nhi.Float64 {
+			return 0, 0, p.fail(ErrTooFewRows)
+		}
+		lo, hi = nlo.Float64, nhi.Float64
 	}
 	if !finite(lo, hi) {
 		return 0, 0, p.fail(ErrTooFewRows)
@@ -370,7 +388,8 @@ func (p *colRun) sourceRange(s Settings) (float64, float64, error) {
 
 // spikes applies 4.2 step 8 on [lo, hi].
 func (p *colRun) spikes(lo, hi float64, s Settings, out *Column) error {
-	if !s.SpikeWarning || hi <= lo {
+	// Without clip at least k rows sit at each bound, so there is no spike.
+	if !s.SpikeWarning || s.Clip == nil || hi <= lo {
 		return nil
 	}
 	e := p.axis

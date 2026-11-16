@@ -11,7 +11,8 @@ import (
 // testSeed. Later changes must not move the output of a spec that uses
 // no new feature, else built snapshots turn stale after an upgrade. A
 // DuckDB upgrade can move it: 2.0 rounds avg and stddev_samp differently.
-const goldenContentHash = "sha256:8c4f38d3468542e6715e056eec04f2b638c5e8c6961adb48ecd6b218e01b7f8a"
+// The default range at the k-th value from each end moved it on purpose.
+const goldenContentHash = "sha256:6e47d71e244824b52287af2129c1be8840151b1ffb232a6c3bde289f3c72ca12"
 
 func TestGoldenContentHash(t *testing.T) {
 	if runtime.GOARCH != "amd64" {

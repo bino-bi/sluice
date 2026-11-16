@@ -588,22 +588,34 @@ func TestDeterminism(t *testing.T) {
 
 // Test 9.
 func TestSpike(t *testing.T) {
-	rep, _ := shared(t)
+	// Without clip the bounds are the 5th value from each end: the two far
+	// revenues neither set the output range nor give a spike.
+	rep, l := shared(t)
+	if len(rep.Spikes) != 0 {
+		t.Errorf("spikes without clip = %+v", rep.Spikes)
+	}
+	if m := scalar[float64](t, query(t, l.Snapshot(rep.BuildID)), "SELECT max(revenue) FROM syn.crm.customers"); m > 6000 {
+		t.Errorf("synthetic max revenue %v follows the outliers", m)
+	}
+
+	// A clip that keeps the far values: they are a spike.
+	spec := baseSpec()
+	c := spec.Tables[0].Columns["revenue"]
+	c.Privacy = &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0, Upper: 1}}
+	spec.Tables[0].Columns["revenue"] = c
+	kept, _ := mustRun(t, opts{spec: spec})
 	var found bool
-	for _, s := range rep.Spikes {
+	for _, s := range kept.Spikes {
 		if s.Column == "revenue" && s.Side == "high" && s.Table == "crm.customers" {
 			found = true
 		}
-		if s.Column == "score" {
-			t.Errorf("unexpected spike %+v", s)
-		}
 	}
 	if !found {
-		t.Errorf("spikes = %+v, want revenue high", rep.Spikes)
+		t.Errorf("spikes = %+v, want revenue high", kept.Spikes)
 	}
 
-	spec := baseSpec()
-	c := spec.Tables[0].Columns["revenue"]
+	spec = baseSpec()
+	c = spec.Tables[0].Columns["revenue"]
 	c.Privacy = &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0.005, Upper: 0.995}}
 	spec.Tables[0].Columns["revenue"] = c
 	clipped, _ := mustRun(t, opts{spec: spec})

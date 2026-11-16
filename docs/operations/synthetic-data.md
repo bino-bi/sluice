@@ -156,7 +156,7 @@ Number types are the integer types, `DECIMAL`, `FLOAT` and `DOUBLE`. Text is `VA
 
 - `asOf` is an ISO date or timestamp. Without it, `asOf` is the upper bound of the column after `clipOutliers` and `extremeJitter`. Set it to the date of the source data, so the ages mean something.
 - An age with fewer than `minGroupSize` rows never appears. Its rows are left out of the shares.
-- `clipOutliers` cuts the dates before Sluice counts the ages. A spike at the lowest or highest date gives a warning.
+- `clipOutliers` cuts the dates before Sluice counts the ages. Then a spike at the lowest or highest date gives a warning.
 - A date after `asOf` counts as age 0. An age above 150 counts as 150.
 - `granularity` cuts the written date. The cut date keeps the drawn age.
 - With `noise` and `bounds` on the column, `asOf` defaults to `bounds.max`, and dates outside the bounds count as the nearest bound.
@@ -202,20 +202,30 @@ Set `privacy` on the data source, on a table, or on a column entry. The most spe
 
 | Setting | Default | What it does |
 |---|---|---|
-| `minGroupSize` | 5 | A value, length, bin or bound must come from at least this many source rows. Rarer values never appear. |
+| `minGroupSize` | 5 | A value, length, bin or bound must come from at least this many source rows. Rarer values never appear. See [Range](#range). |
 | `clipOutliers` | Off | Cuts the source below the `lower` and above the `upper` quantile before the profile. |
 | `extremeJitter` | `{min: 0.01, max: 0.02}` | Moves the lowest and highest value by a random share of the range. `off` turns it off. |
-| `spikeWarning` | `true` | Warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
+| `spikeWarning` | `true` | With `clipOutliers`, warns when fewer than `minGroupSize` rows lie in the lowest or highest 1% of a number or date range. |
 | `strictTags` | `[pii]` | A column with one of these tags needs a column entry or a rule. The default generator is not enough. |
 | `rejectExactMatches` | Off | Columns that together must not equal a source row. Sluice draws matching rows again. |
 | `noise` | Off | Adds random noise to the counts of the profile. Takes `epsilon` from 0.001 to 100. See [Noise](#noise). |
 | `bounds` | None | The public `min` and `max` of a number, `TIME` or date column. Needs `noise`. |
 
 - Columns with fewer than `minGroupSize` non-null rows fail the build, unless the generator needs no profile. Examples: `constant`, `sequence`, `range`, `weighted`, `regex`, `uuid`, `redact`, `null`.
-- A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Set `clipOutliers` to remove it.
+- A spike goes to the build log, the report and the metric `sluice_synthetic_spikes`. The build does not fail. Choose other `clipOutliers` quantiles to remove it.
 - `strictTags` is set only on the data source. Tags come from `DataClassification` objects on the source catalog.
 - `rejectExactMatches` is set only on a table. It takes 1 to 32 column names.
 - `noise` is set only on the data source. `bounds` is set only on a column entry.
+
+### Range
+
+The range of a number, `TIME` or date column is its lowest and highest value. The generators write no value outside it.
+
+- Without `clipOutliers`, the range goes from the `minGroupSize`-th lowest to the `minGroupSize`-th highest source value. A source value outside counts as the nearest end. So no single row sets an end, and one far value does not stretch the range.
+- Such a range needs `2 x minGroupSize - 1` non-null rows. With fewer rows a column entry fails the build, a default column is written as `NULL`, and a `by` group is dropped.
+- With `clipOutliers`, the range goes from the `lower` to the `upper` quantile. Source values outside are left out of the profile. Quantiles near 0 and 1 can put the value of a single row at an end. Then `spikeWarning` warns.
+- With `noise` and `bounds`, the range comes from the bounds. See [Min and max](#min-and-max).
+- `extremeJitter` then moves both ends.
 
 `rejectExactMatches` compares the listed columns of each synthetic row with every source row:
 
@@ -331,7 +341,7 @@ What happened: all 400 orders find their customer, so no row has the city `NULL`
 - A `by` column is text, `ENUM`, `BOOLEAN`, `DATE` or an integer type up to `BIGINT`.
 - Values compare as text. The `by` column needs a generator that keeps source labels: `categorical`, `uniformCategory`, `shuffleLabels`, `weighted`, `boolean` or `constant`. Other generators are refused, also when a default falls back to one. The report warns when most rows find no group.
 - `minGroupSize` counts rows, not people. Do not group by a column that holds one value per person, such as a customer id.
-- A group needs `minGroupSize` rows. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
+- A group needs `minGroupSize` rows, and `2 x minGroupSize - 1` for a number or date range. Sluice uses the 100 largest groups. Other rows use the profile of the whole column.
 - `NULL` is a group value of its own.
 - The spike check runs per group. The report counts groups with a spike, but names none.
 

@@ -22,7 +22,9 @@ import (
 func TestByColumns(t *testing.T) {
 	spec := relSpec(map[string]apitypes.SyntheticColumn{
 		"status": {Generator: apitypes.GenCategorical},
-		"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"Status"}}},
+		// A clip that keeps the far salary, so one group has a spike.
+		"salary": {Generator: apitypes.GenDistribution, Args: map[string]any{"by": []any{"Status"}},
+			Privacy: &apitypes.SyntheticPrivacy{ClipOutliers: &apitypes.ClipOutliers{Lower: 0, Upper: 1}}},
 		"dept":   {Generator: apitypes.GenCategorical, Args: map[string]any{"by": []any{"status"}}},
 	})
 	dir := t.TempDir()

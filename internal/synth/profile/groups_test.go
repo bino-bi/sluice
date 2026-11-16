@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/synth/rng"
+	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // groupFixture has two tables. src.crm.many has 121 groups of g with at
@@ -71,6 +72,8 @@ func TestGroupsCap(t *testing.T) {
 	tb := Table{Catalog: "src", Schema: "crm", Name: "many"}
 	col := ColumnInfo{Name: "x", Type: "DOUBLE"}
 	s := Effective()
+	// A range needs 2k-1 rows, the groups have 6.
+	s.MinGroupSize = 3
 	var jitterKeys []string
 	groups, stats, err := r.Groups(context.Background(), tb, col, []ColumnInfo{{Name: "g", Type: "VARCHAR"}},
 		Needs{Parts: PartRange}, s, func(k string) *rng.Stream {
@@ -80,7 +83,7 @@ func TestGroupsCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Kept != MaxGroups || stats.Dropped != 21 || len(groups) != MaxGroups {
+	if stats.Kept != MaxGroups || stats.Dropped != 22 || len(groups) != MaxGroups {
 		t.Fatalf("stats = %+v, %d groups", stats, len(groups))
 	}
 	// Largest first, then by key with NULL first.
@@ -111,16 +114,25 @@ func TestGroupsDropAndSpike(t *testing.T) {
 		t.Fatal(err)
 	}
 	// flat fails the grid, few is below k.
-	if stats != (GroupStats{Kept: 1, Dropped: 1, SpikeGroups: 1}) || len(groups) != 1 {
+	if stats != (GroupStats{Kept: 1, Dropped: 1}) || len(groups) != 1 {
 		t.Fatalf("stats = %+v", stats)
 	}
 	g := groups[0]
-	// The quote in the value is bound, not formatted into SQL.
-	if g.Key != key("it's", "true") || g.Profile.InRange != 30 || g.Profile.Lo != 0 || g.Profile.Hi != 1000 {
+	// The quote in the value is bound, not formatted into SQL. The bounds
+	// are the 5th value from each end, the row at 1000 does not set hi.
+	if g.Key != key("it's", "true") || g.Profile.InRange != 30 || g.Profile.Lo != 4 || g.Profile.Hi != 25 {
 		t.Errorf("group %q: in range %d, bounds %v %v", g.Key, g.Profile.InRange, g.Profile.Lo, g.Profile.Hi)
 	}
-	if len(g.Profile.Spikes) != 1 || g.Profile.Spikes[0].Side != SideHigh {
+	if len(g.Profile.Spikes) != 0 {
 		t.Errorf("spikes = %+v", g.Profile.Spikes)
+	}
+
+	// With a clip that keeps the far row, the group has a spike.
+	s.Clip = &apitypes.ClipOutliers{Lower: 0, Upper: 1}
+	_, stats, err = r.Groups(context.Background(), tb, col, by, Needs{Parts: PartQuantiles}, s,
+		func(string) *rng.Stream { return jitterStream(0) })
+	if err != nil || stats.SpikeGroups != 1 {
+		t.Errorf("clip: stats %+v, err %v", stats, err)
 	}
 
 	// A query error fails the call.
