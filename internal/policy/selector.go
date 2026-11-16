@@ -184,7 +184,7 @@ func compileResourceSelector(r apitypes.ResourceSelector, tagIndex map[string][]
 			}
 		}
 	}
-	// Catalog, schema and table names are matched without regard to case,
+	// Catalog, schema and table names are matched without regard to ASCII case,
 	// like DuckDB resolves them.
 	if out.catalogs, err = compileMatchers(lowerAll(r.Catalogs), "catalogs"); err != nil {
 		return nil, err
@@ -238,7 +238,7 @@ func hasUnescapedDot(p string) bool {
 func lowerAll(in []string) []string {
 	out := make([]string, len(in))
 	for i, s := range in {
-		out[i] = strings.ToLower(s)
+		out[i] = parser.FoldASCII(s)
 	}
 	return out
 }
@@ -548,13 +548,13 @@ func (r *compiledResource) matches(t parser.TableRef) bool {
 	if r == nil || r.empty {
 		return true
 	}
-	if len(r.catalogs) > 0 && !matchAny(r.catalogs, strings.ToLower(t.Catalog)) {
+	if len(r.catalogs) > 0 && !matchAny(r.catalogs, parser.FoldASCII(t.Catalog)) {
 		return false
 	}
-	if len(r.schemas) > 0 && !matchAny(r.schemas, strings.ToLower(t.Schema)) {
+	if len(r.schemas) > 0 && !matchAny(r.schemas, parser.FoldASCII(t.Schema)) {
 		return false
 	}
-	if len(r.tables) > 0 && !matchAny(r.tables, strings.ToLower(t.Table)) {
+	if len(r.tables) > 0 && !matchAny(r.tables, parser.FoldASCII(t.Table)) {
 		return false
 	}
 	// Tag references: at least one referenced classification rule must also

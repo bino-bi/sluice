@@ -112,7 +112,7 @@ func (s *state) guardSelect(sel *pg.SelectStmt, outerAliases aliasMap) error {
 	outputNames := map[string]bool{}
 	for _, t := range sel.TargetList {
 		if name := t.GetResTarget().GetName(); name != "" {
-			outputNames[foldName(name)] = true
+			outputNames[parser.FoldASCII(name)] = true
 		}
 	}
 
@@ -223,7 +223,7 @@ func loneColumnName(n *pg.Node) string {
 	if cr == nil || len(cr.Fields) != 1 {
 		return ""
 	}
-	return foldName(cr.Fields[0].GetString_().GetSval())
+	return parser.FoldASCII(cr.Fields[0].GetString_().GetSval())
 }
 
 // checkWholeRowRef refuses a reference whose last name is the alias or
@@ -237,7 +237,7 @@ func (s *state) checkWholeRowRef(cr *pg.ColumnRef, aliases aliasMap) error {
 	if n == 0 || n > 3 {
 		return nil
 	}
-	name := foldName(cr.Fields[n-1].GetString_().GetSval())
+	name := parser.FoldASCII(cr.Fields[n-1].GetString_().GetSval())
 	ref, ok := aliases[name]
 	if !ok || !s.tableHasPostMask(ref.Catalog+"."+ref.Schema+"."+ref.Table) {
 		return nil
@@ -258,7 +258,7 @@ func (s *state) checkFieldAccess(cr *pg.ColumnRef, aliases aliasMap) error {
 		qualifier := ""
 		scope := aliases
 		if i > 0 {
-			qualifier = foldName(cr.Fields[i-1].GetString_().GetSval())
+			qualifier = parser.FoldASCII(cr.Fields[i-1].GetString_().GetSval())
 			ref, ok := aliases[qualifier]
 			if !ok {
 				continue
@@ -303,7 +303,7 @@ func (s *state) outerStar(sel *pg.SelectStmt, outer aliasMap) string {
 			return "*"
 		}
 		for _, f := range cr.Fields[:len(cr.Fields)-1] {
-			name := foldName(f.GetString_().GetSval())
+			name := parser.FoldASCII(f.GetString_().GetSval())
 			if ref, ok := outer[name]; ok && !own[name] && s.tableHasPostMask(ref.Catalog+"."+ref.Schema+"."+ref.Table) {
 				return name + ".*"
 			}
@@ -392,7 +392,7 @@ func (s *state) checkPostMaskForms(raw *pg.ParseResult) error {
 			// DuckDB reads `alias.n` as the select alias n, also when a FROM
 			// item is called alias and has no column n. That reads a bound
 			// post-query masked item raw.
-			if len(v.Fields) > 1 && foldName(v.Fields[0].GetString_().GetSval()) == "alias" {
+			if len(v.Fields) > 1 && parser.FoldASCII(v.Fields[0].GetString_().GetSval()) == "alias" {
 				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(
 					"the alias. prefix is not supported with post-query masks")
 			}
@@ -440,7 +440,7 @@ func checkQualifiers(sel *pg.SelectStmt, outer map[string]bool) error {
 			if len(v.Fields) < 2 {
 				return false, nil
 			}
-			if q := foldName(v.Fields[0].GetString_().GetSval()); q == "" || !names[q] {
+			if q := parser.FoldASCII(v.Fields[0].GetString_().GetSval()); q == "" || !names[q] {
 				return false, pkgerr.New(pkgerr.CodeMaskContext).WithMessage(fmt.Sprintf(
 					"%q is not a table or alias of the FROM clause; with post-query masks qualify columns with a table alias, and write (col).field for a STRUCT field", q))
 			}
@@ -463,9 +463,9 @@ func duplicateFromName(items []*pg.Node, seen map[string]bool) string {
 		case *pg.Node_RangeVar:
 			name = aliasKey(v.RangeVar)
 		case *pg.Node_RangeSubselect:
-			name = foldName(v.RangeSubselect.GetAlias().GetAliasname())
+			name = parser.FoldASCII(v.RangeSubselect.GetAlias().GetAliasname())
 		case *pg.Node_RangeFunction:
-			name = foldName(v.RangeFunction.GetAlias().GetAliasname())
+			name = parser.FoldASCII(v.RangeFunction.GetAlias().GetAliasname())
 		case *pg.Node_JoinExpr:
 			if dup := duplicateFromName([]*pg.Node{v.JoinExpr.Larg, v.JoinExpr.Rarg}, seen); dup != "" {
 				return dup
@@ -523,7 +523,7 @@ func (s *state) schemaEntry(key string) (*schema.Entry, error) {
 	if s.schema == nil {
 		return nil, errors.New("schema cache not configured")
 	}
-	folded := strings.ToLower(key)
+	folded := parser.FoldASCII(key)
 	if s.schemaIndex == nil {
 		s.indexSchema()
 	}
@@ -546,9 +546,9 @@ func (s *state) schemaEntry(key string) (*schema.Entry, error) {
 func (s *state) indexSchema() {
 	s.schemaIndex = make(map[string]*schema.Entry)
 	for _, e := range s.schema.All() {
-		k := strings.ToLower(e.Key.Catalog + "." + e.Key.Schema + "." + e.Key.Table)
+		k := parser.FoldASCII(e.Key.Catalog + "." + e.Key.Schema + "." + e.Key.Table)
 		// Two tables that differ only in case: keep the lower-case one.
-		if prev, dup := s.schemaIndex[k]; dup && prev.Key.Table == strings.ToLower(prev.Key.Table) {
+		if prev, dup := s.schemaIndex[k]; dup && prev.Key.Table == parser.FoldASCII(prev.Key.Table) {
 			continue
 		}
 		s.schemaIndex[k] = e
@@ -566,7 +566,7 @@ func (s *state) indexSchema() {
 // an exact key lookup.
 func (s *state) lookupMaskForColumn(aliases aliasMap, qualifier, column string) (*policy.CompiledMask, string, bool, error) {
 	if qualifier != "" {
-		ref, ok := aliases[foldName(qualifier)]
+		ref, ok := aliases[parser.FoldASCII(qualifier)]
 		if !ok {
 			return nil, "", false, nil
 		}

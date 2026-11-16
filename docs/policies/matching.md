@@ -75,7 +75,7 @@ Types must agree: the number `3` does not equal the text `"3"`.
 
 | Field | Matches |
 |---|---|
-| `catalogs`, `schemas`, `tables` | One part each of `catalog.schema.table`. Case does not matter. |
+| `catalogs`, `schemas`, `tables` | One part each of `catalog.schema.table`. The case of `A` to `Z` does not matter. Other letters must match exactly, as in DuckDB: `Ü` is not `ü`. |
 | `columns` | Column names. Only [column masks](column-masks.md) use it. |
 | `tags` | Tables and columns with a [tag](classification.md). |
 | `actions` | The statement type. See [Access control](access-control.md). |

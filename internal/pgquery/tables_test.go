@@ -95,6 +95,28 @@ func TestExtractTablesQuotedCTENameIsNotATable(t *testing.T) {
 	}
 }
 
+// DuckDB folds ASCII letters only. A CTE whose name folds to the table name
+// under Unicode rules only does not shadow the table, so the table must
+// reach policy.
+func TestExtractTablesUnicodeCTENameDoesNotHideTable(t *testing.T) {
+	cases := []struct{ name, sql, want string }{
+		{"Kelvin sign", "WITH \"Kunden\" AS (SELECT 1 AS x) SELECT x FROM kunden", "kunden"},
+		{"dotted capital I", "WITH \"LİSTE\" AS (SELECT 1 AS x) SELECT x FROM liste", "liste"},
+		{"upper case umlaut", `WITH "Übersicht" AS (SELECT 1 AS x) SELECT x FROM "übersicht"`, "übersicht"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := newTestParser(t).Parse(context.Background(), tc.sql)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got := ast.Tables(); len(got) != 1 || got[0].Table != tc.want {
+				t.Fatalf("Tables() = %v, want only %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // CTE names must still shadow inside generically-walked contexts.
 func TestExtractTablesCTENotEmittedFromSubquery(t *testing.T) {
 	sql := "WITH x AS (SELECT id FROM pg.public.orders) SELECT (SELECT max(id) FROM x) AS m"

@@ -189,3 +189,23 @@ func TestCompile_RejectsDottedNamePatterns(t *testing.T) {
 		t.Errorf(`tables: ["sales\.2024"] must match exactly the table named sales.2024`)
 	}
 }
+
+// Names match like DuckDB compares them: ASCII letters without regard to
+// case, every other letter exactly.
+func TestCompile_NamesFoldASCIIOnly(t *testing.T) {
+	r, err := compileResourceSelector(apitypes.ResourceSelector{Tables: []string{"Kunden", "Übersicht"}}, nil)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for table, want := range map[string]bool{
+		"kunden":    true,
+		"KUNDEN":    true,
+		"Kunden":    false, // Kelvin sign
+		"Übersicht": true,
+		"übersicht": false,
+	} {
+		if got := r.matches(parser.TableRef{Table: table}); got != want {
+			t.Errorf("matches(%q) = %v, want %v", table, got, want)
+		}
+	}
+}

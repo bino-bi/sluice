@@ -8,6 +8,7 @@ import (
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
 	pkgerr "github.com/bino-bi/sluice/pkg/errors"
 	pkgmask "github.com/bino-bi/sluice/pkg/mask"
@@ -84,7 +85,7 @@ func (s *state) planPostMasks(raw *pg.ParseResult) error {
 				if ok {
 					name := rt.ResTarget.Name
 					if name != "" {
-						boundNames[foldName(name)] = true
+						boundNames[parser.FoldASCII(name)] = true
 					} else {
 						name = column
 					}
@@ -199,7 +200,7 @@ func (s *state) boundItemReadRaw(sel *pg.SelectStmt, positions map[int32]bool, n
 			// can, so only this one is skipped.
 			return v != sel.WithClause && !found, nil
 		case *pg.ColumnRef:
-			if len(v.Fields) == 1 && names[foldName(v.Fields[0].GetString_().GetSval())] {
+			if len(v.Fields) == 1 && names[parser.FoldASCII(v.Fields[0].GetString_().GetSval())] {
 				found = true
 			}
 			return false, nil
@@ -259,7 +260,7 @@ func callsFunction(n *pg.Node, name string) bool {
 		case *pg.SelectStmt:
 			return false, nil
 		case *pg.FuncCall:
-			if names := v.GetFuncname(); len(names) > 0 && foldName(names[len(names)-1].GetString_().GetSval()) == name {
+			if names := v.GetFuncname(); len(names) > 0 && parser.FoldASCII(names[len(names)-1].GetString_().GetSval()) == name {
 				found = true
 			}
 		}

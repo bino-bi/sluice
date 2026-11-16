@@ -26,6 +26,9 @@ func IsUnsafeBareAlias(name string) bool {
 }
 
 // FoldASCII lower-cases A-Z only, like DuckDB does for keywords and names.
+// Every comparison of table, CTE and alias names must use it: Go's Unicode
+// fold maps U+212A (Kelvin sign) to k, DuckDB keeps it, so the two would
+// read one name as two different tables.
 func FoldASCII(s string) string {
 	b := []byte(s)
 	for i, c := range b {

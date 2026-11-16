@@ -988,6 +988,33 @@ func TestExecute_UnallowedTableIsDenied(t *testing.T) {
 	_ = res.Rows.Close()
 }
 
+// DuckDB folds ASCII letters only, so a CTE named with a Kelvin sign
+// (U+212A) or a dotted capital I (U+0130) does not shadow the base table of
+// the same name under Unicode folding. Policy must see that table: it has
+// no allow, so the statement is denied before it runs.
+func TestExecute_UnicodeCTENameDoesNotHideTable(t *testing.T) {
+	svc, ex, _ := newHelloSluiceService(t)
+	for _, sql := range []string{
+		"WITH \"Kunden\" AS (SELECT 1 AS x) SELECT k.x FROM kunden k, shop.main.customers c",
+		"WITH \"LİSTE\" AS (SELECT 1 AS x) SELECT l.x FROM liste l, shop.main.customers c",
+	} {
+		res, err := svc.Execute(context.Background(), queryservice.QueryRequest{
+			SQL: sql, User: helloUser(), Origin: queryservice.OriginREST,
+		})
+		if err == nil {
+			_ = res.Rows.Close()
+			t.Errorf("%s: served, want ACL_DENIED", sql)
+			continue
+		}
+		if ae := pkgerr.FromError(err); ae.Code != pkgerr.CodeACLDenied {
+			t.Errorf("%s: code = %s, want ACL_DENIED", sql, ae.Code)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("executor ran %d times, want 0", ex.calls)
+	}
+}
+
 // A FROM alias that is a DuckDB join keyword is refused before execution:
 // otherwise DuckDB restructures the join and the row filter and mask are
 // skipped. (A pre-existing deparse divergence, closed at the parser.)

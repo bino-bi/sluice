@@ -38,7 +38,7 @@ func collectAccess(raw *pg.RawStmt, shape *parser.QueryShape) {
 	walkMessages(root, func(m protoreflect.Message) bool {
 		switch v := m.Interface().(type) {
 		case *pg.CommonTableExpr:
-			c.ctes[strings.ToLower(v.Ctename)] = struct{}{}
+			c.ctes[parser.FoldASCII(v.Ctename)] = struct{}{}
 		case *pg.SubLink:
 			if sel := v.Subselect.GetSelectStmt(); sel != nil && v.SubLinkType == pg.SubLinkType_EXISTS_SUBLINK {
 				c.exists[sel] = struct{}{}
@@ -217,7 +217,7 @@ func (c *accessCollector) isTable(rv *pg.RangeVar) bool {
 	if rv.Schemaname != "" || rv.Catalogname != "" {
 		return true
 	}
-	_, cte := c.ctes[strings.ToLower(rv.Relname)]
+	_, cte := c.ctes[parser.FoldASCII(rv.Relname)]
 	return !cte
 }
 
