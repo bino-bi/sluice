@@ -85,7 +85,7 @@ type Dispatcher struct {
 	// pending tracks records that have been enqueued but not yet handed
 	// to a sink. Flush waits on this to make "drained" a real property
 	// of the sinks, not just of the queue channel.
-	pending sync.WaitGroup
+	pending atomic.Int64
 	// space gets a token when the worker takes a record from the queue.
 	space chan struct{}
 	// waitSlot admits one Enqueue at a time to wait for a full queue.
@@ -410,7 +410,7 @@ func (d *Dispatcher) trySendLocked(r *Record) (bool, error) {
 		d.metrics.QueueDepth.WithLabelValues(d.primary.Name()).Set(float64(len(d.queue)))
 		return true, nil
 	default:
-		d.pending.Done()
+		d.pending.Add(-1)
 		return false, nil
 	}
 }
@@ -463,7 +463,7 @@ func (d *Dispatcher) run() {
 // dispatch writes r to the primary sink and hands copies to the
 // secondary queues.
 func (d *Dispatcher) dispatch(r *Record) {
-	defer d.pending.Done()
+	defer d.pending.Add(-1)
 	select {
 	case d.space <- struct{}{}:
 	default:
@@ -551,7 +551,7 @@ func (d *Dispatcher) offer(r *Record) {
 		case s.queue <- r:
 			d.metrics.QueueDepth.WithLabelValues(s.sink.Name()).Set(float64(len(s.queue)))
 		default:
-			d.pending.Done()
+			d.pending.Add(-1)
 			d.metrics.DroppedTotal.WithLabelValues(s.sink.Name(), "queue_full").Inc()
 		}
 	}
@@ -582,7 +582,7 @@ func (d *Dispatcher) runSecondary(s *secondary) {
 					slog.String("error", err.Error()),
 				)
 			}
-			d.pending.Done()
+			d.pending.Add(-1)
 		case <-tick:
 			d.flushSink(s.sink)
 		}
@@ -631,17 +631,18 @@ func (d *Dispatcher) Flush(ctx context.Context) error {
 // the worker consumes from the channel before writing to sinks, so an
 // empty queue does not imply an empty sink write queue.
 func (d *Dispatcher) drain(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		d.pending.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	// A counter and not a WaitGroup: the worker adds records from zero
+	// while Flush may wait, which a WaitGroup does not allow.
+	t := time.NewTicker(time.Millisecond)
+	defer t.Stop()
+	for d.pending.Load() > 0 {
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 
 func (d *Dispatcher) flushWithCtx(ctx context.Context) error {
