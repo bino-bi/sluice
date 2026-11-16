@@ -45,6 +45,8 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - **A failed open on audit file rotation no longer crashes Sluice.** The file sink kept no open file after a failed open, and the next record panicked. Now it opens the new file first and keeps the old state on failure, and the next record tries again.
 - **A torn last line in the audit file no longer stops the start.** A crash could leave a last line without a newline, and Sluice did not start until someone edited the file. At start, Sluice now moves that line to `<file>.torn-<time>`, logs an error and continues the chain. Each record is now one write call to the file, so a record is no longer split over two writes.
 - **The threat model no longer claims that audit records hold the rewritten SQL and parameter values.** They hold fingerprints of the sent and the rewritten SQL and `sql_sample`, and an allowed query writes two records, not one.
+- **The temp snapshot of a killed synthetic build is removed.** A build that was killed during the write left `snapshots/.<build-id>.duckdb.tmp` and its `.wal` file for good. The server now removes such files at start, and each publish removes the temp files of builds with an older id. Do not start the server while `sluice synth build` runs, or the server removes the file of that build.
+
 
 ### Security
 

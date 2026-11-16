@@ -201,14 +201,39 @@ func (l Layout) Publish(id string) error {
 	}
 	SyncDir(l.Root())
 	l.retain(id, prev)
+	// A build with an older id can no longer publish, so its temp file
+	// is from a killed build or from one that is bound to fail.
+	l.RemoveTemps(func(t string) bool { return t < id })
 	return nil
+}
+
+// RemoveTemps removes the temp snapshots and their WAL files whose build
+// id passes drop. A killed build leaves them behind. Errors are ignored.
+func (l Layout) RemoveTemps(drop func(id string) bool) {
+	entries, err := os.ReadDir(l.SnapshotsDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), ".")
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		id, ok := strings.CutSuffix(rest, ".duckdb.tmp")
+		if !ok {
+			id, ok = strings.CutSuffix(rest, ".duckdb.tmp.wal")
+		}
+		if ok && ValidBuildID(id) && drop(id) {
+			_ = os.Remove(filepath.Join(l.SnapshotsDir(), e.Name()))
+		}
+	}
 }
 
 // retain keeps the current and the previous build and removes finished
 // snapshots and reports whose id sorts before the previous id. current
 // only moves forward, so such an id is finished or failed. Temp files
-// are never touched. Errors are ignored: a file left behind is removed
-// by the next build.
+// are left to RemoveTemps. Errors are ignored: a file left behind is
+// removed by the next build.
 func (l Layout) retain(cur, prev string) {
 	if prev == "" {
 		return

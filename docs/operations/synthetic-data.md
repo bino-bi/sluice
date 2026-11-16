@@ -392,6 +392,8 @@ A build writes into `synthetic.dir`:
 
 Sluice changes `current` only after every check passed. A failed build writes its report and leaves `current` as it was. Sluice keeps the current and the previous snapshot and deletes older ones. Clients can read only the `snapshots` folder.
 
+A build writes the snapshot to `snapshots/.<build-id>.duckdb.tmp` first and renames it at the end. A build that was killed, for example by the out-of-memory killer, leaves this file behind. Sluice removes such files at server start and each time a later build publishes. So do not start the server while `sluice synth build` runs: the server removes the file of that build, and the build fails.
+
 The same spec, seed and source data give the same rows on the same CPU architecture. With `noise`, the DuckDB version must be the same too. The report holds a `content_hash` of the rows to compare builds.
 
 ## Status

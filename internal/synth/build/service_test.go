@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -352,4 +353,28 @@ func TestNewerBuildID(t *testing.T) {
 	if id, _ := newerBuildID(now, "20261102T101500Z-ffffff"); !strings.HasPrefix(id, "20261102T101501Z-") {
 		t.Errorf("id after a build in the same second: %q", id)
 	}
+}
+
+// The temp files of a killed build are removed when the service starts.
+func TestServiceRemovesKilledTemps(t *testing.T) {
+	dir := t.TempDir()
+	l := layout.Layout{Dir: dir, Name: "crmsynth"}
+	if err := l.Mkdirs(); err != nil {
+		t.Fatal(err)
+	}
+	tmp := l.TempSnapshot("20261102T101500Z-a1b2c3")
+	for _, p := range []string{tmp, tmp + ".wal"} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	NewService(ServiceOptions{
+		DataSources: []*apitypes.DataSource{{
+			Metadata: apitypes.ObjectMeta{Name: "crmsynth"},
+			Spec:     apitypes.DataSourceSpec{Type: apitypes.DSSynthetic, Synthetic: baseSpec()},
+		}},
+		Dir: dir,
+		Log: slog.New(slog.DiscardHandler),
+	})
+	assertNoTemp(t, l)
 }
