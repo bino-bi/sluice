@@ -76,8 +76,9 @@ Fields that end in `Ref` take a [secret reference](server-config.md). The files 
 - `postgres`, `mysql`: the URL needs a user and a database. The default ports are 5432 and 3306. `mysql` also accepts `mariadb://`.
 - `s3`, `http`: each path or URL becomes one view in the schema `main`. Sluice reads nothing else.
 - `s3`, `http`: the extension selects the format: `.parquet`, `.csv`, `.json`, `.ndjson`, `.jsonl` or `.xlsx`. `format` sets `parquet`, `csv`, `json` or `xlsx` for every path.
-- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. `endpoint` names an S3-compatible store.
-- `http`: no wildcards. Sluice sends the headers only to the hosts of `urls`.
+- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. A path without `s3://` is a path in `bucket`. A path in another bucket stops the start. `endpoint` names an S3-compatible store.
+- `http`: no wildcards. Sluice sends the headers only to the URLs in `urls`.
+- Two `s3` sources on one bucket need the same `credentialsRef`, `endpoint` and `region`. Two `http` sources with the same URL need the same `headersRef`. Otherwise the policies do not load. DuckDB keeps the credentials for the whole server and would use one set for both sources.
 
 ## Check the files
 

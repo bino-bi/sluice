@@ -4,8 +4,12 @@ package s3
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+
+	_ "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/pkg/apitypes"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -54,31 +58,39 @@ func TestNewDriverNormalisesAllowedPaths(t *testing.T) {
 	}
 }
 
-func TestPathAllowed(t *testing.T) {
+func TestNewDriverPutsBarePathsUnderTheBucket(t *testing.T) {
 	ds, err := newDriver(context.Background(), pkgds.Spec{
 		Name: "s3", Type: Type,
 		Raw: map[string]any{
 			"bucket":       "orders",
 			"region":       "eu-west-1",
-			"format":       "parquet",
-			"allowedPaths": []any{"s3://orders/raw/**", "s3://orders/ref/*.parquet"},
+			"allowedPaths": []any{"sales/*.parquet", "/ref/dim.csv"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("newDriver: %v", err)
 	}
 	d := ds.(*driver)
-	if !d.PathAllowed("s3://orders/raw/2026/04/a.parquet") {
-		t.Error("raw glob should allow nested paths")
+	want := []string{"s3://orders/sales/*.parquet", "s3://orders/ref/dim.csv"}
+	for i, w := range want {
+		if d.allowedPaths[i] != w || d.views[i].path != w {
+			t.Errorf("path %d = %q (view %q), want %q", i, d.allowedPaths[i], d.views[i].path, w)
+		}
 	}
-	if !d.PathAllowed("s3://orders/ref/dim.parquet") {
-		t.Error("ref *.parquet should match")
-	}
-	if d.PathAllowed("s3://orders/staging/x") {
-		t.Error("staging must be rejected")
-	}
-	if d.PathAllowed("") {
-		t.Error("empty path must be rejected")
+}
+
+func TestNewDriverRefusesPathsOutsideTheBucket(t *testing.T) {
+	for _, p := range []string{"s3://other/x.parquet", "s3://orders-b/x.parquet", "s3://orders", "https://orders/x.parquet", " "} {
+		_, err := newDriver(context.Background(), pkgds.Spec{
+			Name: "s3", Type: Type,
+			Raw: map[string]any{
+				"bucket": "orders", "region": "eu-west-1", "format": "parquet",
+				"allowedPaths": []any{p},
+			},
+		})
+		if err == nil {
+			t.Errorf("allowedPaths %q: accepted", p)
+		}
 	}
 }
 
@@ -227,5 +239,69 @@ func TestHttpsOrFalse(t *testing.T) {
 func TestFactoryRegisteredViaInit(t *testing.T) {
 	if _, ok := pkgds.Lookup(Type); !ok {
 		t.Fatal("s3 driver did not self-register via init()")
+	}
+}
+
+type mapResolver map[string]string
+
+func (m mapResolver) Resolve(_ context.Context, ref string) ([]byte, error) {
+	v, ok := m[ref]
+	if !ok {
+		return nil, errors.New("no secret " + ref)
+	}
+	return []byte(v), nil
+}
+
+// TestSecretsAreScopedToTheBucket attaches two s3 sources with other keys
+// to one DuckDB instance and asks DuckDB which secret each path uses.
+func TestSecretsAreScopedToTheBucket(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+		t.Skipf("httpfs not available offline: %v", err)
+	}
+
+	res := mapResolver{
+		"secret://env/A": `{"key_id":"ka","secret":"sa"}`,
+		"secret://env/B": `{"key_id":"kb","secret":"sb"}`,
+	}
+	for _, src := range []struct{ name, bucket, ref string }{
+		{"src_a", "sales", "secret://env/A"},
+		{"src_b", "sales-eu", "secret://env/B"},
+	} {
+		ds, err := newDriver(ctx, pkgds.Spec{Name: src.name, Type: Type, Raw: map[string]any{
+			"bucket": src.bucket, "region": "eu-west-1", "credentialsRef": src.ref,
+		}})
+		if err != nil {
+			t.Fatalf("newDriver: %v", err)
+		}
+		if err := ds.Attach(ctx, conn, pkgds.AttachOptions{CatalogName: src.name, SecretResolver: res}); err != nil {
+			t.Fatalf("Attach %s: %v", src.name, err)
+		}
+	}
+
+	for path, want := range map[string]string{
+		"s3://sales/x.parquet":     "sluice_s3_src_a",
+		"s3://sales-eu/x.parquet":  "sluice_s3_src_b",
+		"s3://sales-eu2/x.parquet": "",
+		"s3://other/x.parquet":     "",
+	} {
+		var got string
+		err := conn.QueryRowContext(ctx, "SELECT name FROM which_secret(?, 's3')", path).Scan(&got)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("which_secret(%s): %v", path, err)
+		}
+		if got != want {
+			t.Errorf("which_secret(%s) = %q, want %q", path, got, want)
+		}
 	}
 }

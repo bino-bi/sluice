@@ -91,17 +91,11 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	}
 
 	for i, p := range allowed {
-		norm, err := common.NormalizeS3URI(p)
+		norm, err := allowedPath(bucket, p)
 		if err != nil {
-			// Allow bare paths (operator shorthand) by adding the bucket.
-			if !strings.Contains(p, "://") {
-				continue
-			}
 			return nil, fmt.Errorf("s3: allowedPaths[%d] %q: %w", i, p, err)
 		}
-		if norm != "" {
-			allowed[i] = norm
-		}
+		allowed[i] = norm
 	}
 
 	views, needsExcel, err := resolveViews(allowed, apitypes.FileFormat(formatOverride))
@@ -122,6 +116,29 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		extLoaded:      make(map[*sql.Conn]bool),
 	}, nil
 }
+
+// allowedPath puts a bare pattern under the bucket and refuses a path in
+// another bucket: the secret scope and the external access carve-out
+// both cover only s3://<bucket>/.
+func allowedPath(bucket, p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", errors.New("empty path")
+	}
+	if !strings.Contains(p, "://") {
+		p = "s3://" + bucket + "/" + strings.TrimLeft(p, "/")
+	}
+	norm, err := common.NormalizeS3URI(p)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(norm, bucketPrefix(bucket)) {
+		return "", fmt.Errorf("path is not in bucket %q", bucket)
+	}
+	return norm, nil
+}
+
+func bucketPrefix(bucket string) string { return "s3://" + bucket + "/" }
 
 // resolveViews maps every allowed path to a named, format-resolved view.
 // An explicit override applies to all paths; otherwise each path infers
@@ -171,7 +188,7 @@ func (d *driver) Readonly() bool { return d.readonly }
 // ExternalPaths implements pkgds.ExternalPather: query-time reads stay
 // inside the bucket, so the bucket prefix is the carve-out.
 func (d *driver) ExternalPaths() []string {
-	return []string{"s3://" + d.bucket + "/"}
+	return []string{bucketPrefix(d.bucket)}
 }
 
 // Attach loads httpfs (and excel when needed), creates the S3 secret
@@ -249,8 +266,11 @@ func (d *driver) createSecret(ctx context.Context, conn *sql.Conn, opts pkgds.At
 		return nil
 	}
 
+	// DuckDB secrets hold for the whole instance. Without a scope the
+	// secret of one source would match the paths of every other s3 source.
 	args := []common.SecretArg{
 		{Key: "REGION", Value: d.region},
+		{Key: "SCOPE", Value: bucketPrefix(d.bucket)},
 	}
 	if d.endpoint != "" {
 		// DuckDB expects ENDPOINT as host:port; the scheme (documented
@@ -343,12 +363,4 @@ func (d *driver) Close() error {
 	d.extLoaded = nil
 	d.mu.Unlock()
 	return nil
-}
-
-// PathAllowed is an exported helper the rewriter / admin surfaces can
-// use to reject queries that reference S3 URIs outside the whitelist.
-// Keeping it on the driver rather than the registry lets each data
-// source own its own allowlist semantics.
-func (d *driver) PathAllowed(p string) bool {
-	return common.MatchAllowed(d.allowedPaths, p)
 }

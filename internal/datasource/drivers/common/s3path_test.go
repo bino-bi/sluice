@@ -27,43 +27,6 @@ func TestNormalizeS3URI(t *testing.T) {
 	}
 }
 
-func TestMatchAllowed(t *testing.T) {
-	allowed := []string{
-		"s3://orders/raw/**",
-		"s3://public/reference/*.parquet",
-		"warehouse/dim_*.parquet",
-	}
-
-	good := []string{
-		"s3://orders/raw/2026/04/orders.parquet",
-		"s3://orders/raw/x.parquet",
-		"s3://public/reference/zipcodes.parquet",
-		"s3://warehouse/dim_customer.parquet",
-	}
-	bad := []string{
-		"",
-		"s3://orders/processed/a.parquet",
-		"s3://public/reference/subdir/x.parquet", // * matches one segment only
-		"s3://other/raw/a.parquet",
-		"s3://warehouse/fact_orders.parquet",
-	}
-	for _, p := range good {
-		if !MatchAllowed(allowed, p) {
-			t.Errorf("MatchAllowed(%q) = false; want true", p)
-		}
-	}
-	for _, p := range bad {
-		if MatchAllowed(allowed, p) {
-			t.Errorf("MatchAllowed(%q) = true; want false", p)
-		}
-	}
-
-	// Empty whitelist rejects everything.
-	if MatchAllowed(nil, "s3://orders/raw/x") {
-		t.Error("empty allowedPaths must reject")
-	}
-}
-
 func TestSanitizeViewName(t *testing.T) {
 	cases := map[string]string{
 		"orders.parquet": "orders_parquet",

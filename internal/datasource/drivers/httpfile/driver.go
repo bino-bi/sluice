@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 
@@ -39,7 +38,6 @@ type driver struct {
 	name       string
 	urls       []string
 	views      []viewSpec
-	origins    []string // sorted distinct origins, for header-secret scoping
 	needsExcel bool
 
 	headersRef string
@@ -71,7 +69,7 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	headersRef, _ := spec.Raw["headersRef"].(string)
 	formatOverride, _ := spec.Raw["format"].(string)
 
-	views, origins, needsExcel, err := resolveViews(urls, apitypes.FileFormat(formatOverride))
+	views, needsExcel, err := resolveViews(urls, apitypes.FileFormat(formatOverride))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +78,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		name:       spec.Name,
 		urls:       urls,
 		views:      views,
-		origins:    origins,
 		needsExcel: needsExcel,
 		headersRef: headersRef,
 		extLoaded:  make(map[*sql.Conn]bool),
@@ -90,28 +87,27 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 // resolveViews validates every URL and maps it to a named,
 // format-resolved view. The URL list is the allowlist: globs are
 // rejected, and each URL must name a concrete file path.
-func resolveViews(urls []string, override apitypes.FileFormat) ([]viewSpec, []string, bool, error) {
+func resolveViews(urls []string, override apitypes.FileFormat) ([]viewSpec, bool, error) {
 	views := make([]viewSpec, 0, len(urls))
 	seen := map[string]string{} // view name → url
-	originSet := map[string]bool{}
 	needsExcel := false
 	for i, raw := range urls {
 		u, err := url.Parse(raw)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, nil, false, fmt.Errorf("http: urls[%d] %q: not an absolute http(s) URL", i, raw)
+			return nil, false, fmt.Errorf("http: urls[%d] %q: not an absolute http(s) URL", i, raw)
 		}
 		if strings.ContainsAny(u.Path, "*[") {
-			return nil, nil, false, fmt.Errorf("http: urls[%d] %q: glob patterns are not supported; list each file", i, raw)
+			return nil, false, fmt.Errorf("http: urls[%d] %q: glob patterns are not supported; list each file", i, raw)
 		}
 		if strings.Trim(u.Path, "/") == "" {
-			return nil, nil, false, fmt.Errorf("http: urls[%d] %q: URL has no file path", i, raw)
+			return nil, false, fmt.Errorf("http: urls[%d] %q: URL has no file path", i, raw)
 		}
 
 		format := override
 		if format == "" {
 			f, err := common.InferFormat(raw)
 			if err != nil {
-				return nil, nil, false, fmt.Errorf("http: urls[%d]: %w", i, err)
+				return nil, false, fmt.Errorf("http: urls[%d]: %w", i, err)
 			}
 			format = f
 		}
@@ -121,21 +117,15 @@ func resolveViews(urls []string, override apitypes.FileFormat) ([]viewSpec, []st
 
 		name := common.SanitizeViewName(strings.Trim(u.Path, "/"))
 		if err := common.ValidateIdentifier(name); err != nil {
-			return nil, nil, false, fmt.Errorf("http: view %q: %w", name, err)
+			return nil, false, fmt.Errorf("http: view %q: %w", name, err)
 		}
 		if prev, dup := seen[name]; dup {
-			return nil, nil, false, fmt.Errorf("http: urls[%d] %q: view name %q collides with %q", i, raw, name, prev)
+			return nil, false, fmt.Errorf("http: urls[%d] %q: view name %q collides with %q", i, raw, name, prev)
 		}
 		seen[name] = raw
 		views = append(views, viewSpec{url: raw, name: name, format: format})
-		originSet[u.Scheme+"://"+u.Host] = true
 	}
-	origins := make([]string, 0, len(originSet))
-	for o := range originSet {
-		origins = append(origins, o)
-	}
-	sort.Strings(origins)
-	return views, origins, needsExcel, nil
+	return views, needsExcel, nil
 }
 
 // Name implements pkgds.DataSource.
@@ -154,7 +144,7 @@ func (d *driver) ExternalPaths() []string {
 	return append([]string(nil), d.urls...)
 }
 
-// Attach loads httpfs (and excel when needed), installs the per-origin
+// Attach loads httpfs (and excel when needed), installs the per-URL
 // header secrets when configured, attaches an in-memory catalog, and
 // exposes one VIEW per URL.
 func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOptions) error {
@@ -209,8 +199,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 
 // createHeaderSecrets resolves headersRef (if set) into a JSON object of
 // header name → value and issues one CREATE OR REPLACE SECRET (TYPE
-// HTTP, EXTRA_HTTP_HEADERS …) per URL origin, scoped to that origin so
-// the headers are never sent elsewhere.
+// HTTP, EXTRA_HTTP_HEADERS …) per URL, scoped to that exact URL. DuckDB
+// matches a scope as a prefix, so an origin scope would also match
+// https://host.evil.net and the URLs of other http sources on the host.
 func (d *driver) createHeaderSecrets(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOptions) error {
 	if d.headersRef == "" {
 		return nil
@@ -230,20 +221,20 @@ func (d *driver) createHeaderSecrets(ctx context.Context, conn *sql.Conn, opts p
 		return nil
 	}
 
-	for i, origin := range d.origins {
+	for i, u := range d.urls {
 		secretName := fmt.Sprintf("%s%s_%d", secretNamePrefix, d.name, i)
 		if err := common.ValidateIdentifier(secretName); err != nil {
 			return fmt.Errorf("http: secret name: %w", err)
 		}
 		stmt, err := common.BuildCreateSecret(secretName, secretTypeHTTP, []common.SecretArg{
 			{Key: "EXTRA_HTTP_HEADERS", Value: common.MapLiteral(headers), Raw: true},
-			{Key: "SCOPE", Value: origin},
+			{Key: "SCOPE", Value: u},
 		})
 		if err != nil {
 			return fmt.Errorf("http: render CREATE SECRET: %w", err)
 		}
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("http: CREATE SECRET for %s: %w", origin, err)
+			return fmt.Errorf("http: CREATE SECRET for urls[%d]: %w", i, err)
 		}
 	}
 	return nil

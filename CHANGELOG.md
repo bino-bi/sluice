@@ -93,8 +93,11 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 
 - **A `partial` mask no longer shows a short value in full.** A value with `showFirst` + `showLast` characters or fewer came back unmasked: `showFirst: 4, showLast: 4` showed `abcdef` as it is. Such a value is now masked in full, one `maskChar` per character. **Behavior change:** short values that were shown are now masked.
 - **Breaking: `jitter` and `fake` masks need `seed`.** Without a seed the HMAC key was empty, so anyone with the Sluice source could compute the real value back, for example the input of a `uuid` fake. A `jitter` or `fake` mask without `seed` now fails `sluice policy validate` and the start. A `secret://` seed that cannot be resolved because no secret store is set now fails the query. Before, the text of the reference was the key. Add `seed`, for example `seed: "secret://env/SLUICE_MASK_SEED"`. A new seed changes every masked value.
+- **Each `s3` and `http` data source uses only its own credentials.** DuckDB keeps secrets for the whole server. The `s3` secret had no scope, so with two `s3` sources every path could use the keys or endpoint of the other source. The `http` header secret was scoped to the origin without a slash, so `https://api.example.com` also matched `https://api.example.com.evil.net/`, and two `http` sources on one host shared their headers. The `s3` secret is now scoped to `s3://<bucket>/`, and the `http` secret to each URL. **Breaking:** two `s3` sources on one bucket with another `credentialsRef`, `endpoint` or `region`, and two `http` sources with the same URL and another `headersRef`, now fail the policy load.
 
 ### Fixed
+
+- **Breaking: a bare path in `allowedPaths` of an `s3` source is a path in `bucket`.** `sales/*.parquet` was read as a local path, so the start failed, or Sluice read a local file of that name. It now reads `s3://<bucket>/sales/*.parquet`. A path in another bucket was accepted but could not be read. It now stops the start.
 
 - **`jitter` works on all number columns.** It accepted only `INTEGER`, `BIGINT`, `FLOAT` and `DOUBLE`, and failed on `DECIMAL`, `TINYINT`, `SMALLINT`, `HUGEINT` and the unsigned types, with HTTP 200 and a cut body. A `DECIMAL` keeps its scale. The result stays inside the range of the column type.
 
