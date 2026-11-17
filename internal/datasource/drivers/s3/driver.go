@@ -127,6 +127,12 @@ func allowedPath(bucket, p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A path-style endpoint may resolve ".." into another bucket.
+	for _, seg := range strings.Split(norm, "/") {
+		if seg == ".." || seg == "." {
+			return "", errors.New("path holds a . or .. segment")
+		}
+	}
 	if !strings.HasPrefix(norm, bucketPrefix(bucket)) {
 		return "", fmt.Errorf("path is not in bucket %q", bucket)
 	}

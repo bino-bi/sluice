@@ -80,7 +80,7 @@ func TestNewDriverPutsBarePathsUnderTheBucket(t *testing.T) {
 }
 
 func TestNewDriverRefusesPathsOutsideTheBucket(t *testing.T) {
-	for _, p := range []string{"s3://other/x.parquet", "s3://orders-b/x.parquet", "s3://orders", "https://orders/x.parquet", " "} {
+	for _, p := range []string{"s3://other/x.parquet", "s3://orders-b/x.parquet", "s3://orders", "https://orders/x.parquet", " ", "s3://orders/../other/x.parquet", "a/../../other/x.parquet", "s3://orders/./x.parquet"} {
 		_, err := newDriver(context.Background(), pkgds.Spec{
 			Name: "s3", Type: Type,
 			Raw: map[string]any{
