@@ -74,6 +74,7 @@ Fields that end in `Ref` take a [secret reference](server-config.md). The files 
     ```
 
 - `postgres`, `mysql`: the URL needs a user and a database. The default ports are 5432 and 3306. `mysql` also accepts `mariadb://`.
+- `postgres`, `mysql`: the connection needs TLS by default (`sslmode=require`, `ssl_mode=required`). Set `?sslmode=disable` or `?ssl_mode=disabled` in the URL for a server without TLS. The URL takes no other parameter and no password. The password comes from `credentialsRef`.
 - `s3`, `http`: each path or URL becomes one view in the schema `main`. Sluice reads nothing else.
 - `s3`, `http`: the extension selects the format: `.parquet`, `.csv`, `.json`, `.ndjson`, `.jsonl` or `.xlsx`. `format` sets `parquet`, `csv`, `json` or `xlsx` for every path.
 - `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. A path without `s3://` is a path in `bucket`. A path in another bucket stops the start. `endpoint` names an S3-compatible store.

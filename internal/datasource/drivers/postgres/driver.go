@@ -82,13 +82,26 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	user := ""
 	if u.User != nil {
 		user = u.User.Username()
+		if _, ok := u.User.Password(); ok {
+			return nil, errors.New("postgres: connection URL holds a password; set it with credentialsRef")
+		}
 	}
 	if user == "" {
 		return nil, errors.New("postgres: user is required in connection URL")
 	}
-	sslmode := u.Query().Get("sslmode")
+	// Only sslmode reaches the DuckDB secret. Any other parameter would be
+	// dropped without a word.
+	q := u.Query()
+	for k := range q {
+		if k != "sslmode" {
+			return nil, fmt.Errorf("postgres: connection URL parameter %q is not supported (only sslmode)", k)
+		}
+	}
+	// require: a server or network peer that refuses TLS must not get the
+	// password in plain text. Weaker modes only when the URL names them.
+	sslmode := q.Get("sslmode")
 	if sslmode == "" {
-		sslmode = "prefer"
+		sslmode = "require"
 	}
 
 	credRef, _ := spec.Raw["credentialsRef"].(string)

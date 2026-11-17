@@ -79,16 +79,29 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	user := ""
 	if u.User != nil {
 		user = u.User.Username()
+		if _, ok := u.User.Password(); ok {
+			return nil, errors.New("mysql: connection URL holds a password; set it with credentialsRef")
+		}
 	}
 	if user == "" {
 		return nil, errors.New("mysql: user is required in connection URL")
 	}
-	sslmode := u.Query().Get("ssl_mode")
+	// Only ssl_mode (or its alias sslmode) reaches the DuckDB secret. Any
+	// other parameter would be dropped without a word.
+	q := u.Query()
+	for k := range q {
+		if k != "ssl_mode" && k != "sslmode" {
+			return nil, fmt.Errorf("mysql: connection URL parameter %q is not supported (only ssl_mode)", k)
+		}
+	}
+	// required: a server or network peer that refuses TLS must not get the
+	// password in plain text. Weaker modes only when the URL names them.
+	sslmode := q.Get("ssl_mode")
 	if sslmode == "" {
-		sslmode = u.Query().Get("sslmode")
+		sslmode = q.Get("sslmode")
 	}
 	if sslmode == "" {
-		sslmode = "preferred"
+		sslmode = "required"
 	}
 
 	credRef, _ := spec.Raw["credentialsRef"].(string)
