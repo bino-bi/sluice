@@ -134,6 +134,7 @@ func LoadDirectory(_ context.Context, opts LoadOptions) (*Snapshot, error) {
 	}
 
 	verrs = append(verrs, checkSynthetic(snap.DataSources, seen)...)
+	verrs = append(verrs, checkSharedSecrets(snap.DataSources, seen)...)
 
 	if len(verrs) > 0 {
 		return nil, verrs
@@ -175,6 +176,65 @@ func checkSynthetic(sources []*apitypes.DataSource, files map[string]string) Val
 		}
 	}
 	return verrs
+}
+
+// checkSharedSecrets refuses two data sources whose DuckDB secrets would
+// apply to the same paths with other credentials. DuckDB secrets belong to
+// the whole instance and match by scope prefix, so one source could read
+// with the keys or headers of the other. The s3 secret scope is
+// s3://<bucket>/, the http secret scope is each URL. motherduck_token has
+// no scope at all.
+func checkSharedSecrets(sources []*apitypes.DataSource, files map[string]string) ValidationErrors {
+	var verrs ValidationErrors
+	fail := func(ds *apitypes.DataSource, msg string) {
+		verrs = append(verrs, &ValidationError{
+			File: files[string(apitypes.KindDataSource)+"/"+ds.Metadata.Name],
+			Kind: apitypes.KindDataSource, Name: ds.Metadata.Name, Msg: msg,
+		})
+	}
+	for i, b := range sources {
+		for _, a := range sources[:i] {
+			if a.Spec.Type != b.Spec.Type {
+				continue
+			}
+			sa, sb := a.Spec, b.Spec
+			switch sa.Type {
+			case apitypes.DSS3:
+				if sa.Bucket == sb.Bucket &&
+					(sa.CredentialsRef != sb.CredentialsRef || sa.Endpoint != sb.Endpoint || sa.Region != sb.Region) {
+					fail(b, fmt.Sprintf("spec.bucket: DataSource %q reads bucket %q with another credentialsRef, endpoint or region. "+
+						"DuckDB would use one secret for both. Use one DataSource for the bucket", a.Metadata.Name, sb.Bucket))
+				}
+			case apitypes.DSMotherDuck:
+				if sa.TokenRef != sb.TokenRef {
+					fail(b, fmt.Sprintf("spec.tokenRef: DataSource %q uses another token. "+
+						"motherduck_token is one setting for the whole DuckDB instance. Use one token for all motherduck sources", a.Metadata.Name))
+				}
+			case apitypes.DSHTTP:
+				if sa.HeadersRef == sb.HeadersRef {
+					continue
+				}
+				if u, ok := overlappingURL(sa.URLs, sb.URLs); ok {
+					fail(b, fmt.Sprintf("spec.urls: %q overlaps a URL of DataSource %q, which has another headersRef. "+
+						"DuckDB would send one set of headers for both", u, a.Metadata.Name))
+				}
+			}
+		}
+	}
+	return verrs
+}
+
+// overlappingURL returns a URL of b that is a prefix of a URL of a, or
+// the other way round. DuckDB matches a secret scope as a prefix.
+func overlappingURL(a, b []string) (string, bool) {
+	for _, ub := range b {
+		for _, ua := range a {
+			if strings.HasPrefix(ua, ub) || strings.HasPrefix(ub, ua) {
+				return ub, true
+			}
+		}
+	}
+	return "", false
 }
 
 // collectFiles walks every source directory and returns sorted absolute file

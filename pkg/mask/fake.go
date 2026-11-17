@@ -42,11 +42,16 @@ func (fakeProvider) MaskSQL(_ MaskContext) (string, []Param, error) {
 // MaskArrow is not supported; the post-query path is NewRowMask.
 func (fakeProvider) MaskArrow(_ MaskArrowContext) error { return ErrSQLOnly }
 
-// ValidateArgs checks the fake type against the supported set.
+// ValidateArgs checks the fake type against the supported set and
+// requires a seed. Without a seed the HMAC key is empty and a uuid fake is
+// as easy to reverse as an unsalted hash.
 func (fakeProvider) ValidateArgs(a Args) error {
 	switch a.FakeType {
 	case fakeName, fakeFirstName, fakeLastName, fakeEmail, fakePhone,
 		fakeCompany, fakeCity, fakeCountry, fakeUUID:
+		if a.Seed == "" {
+			return fmt.Errorf("%w: seed required", ErrInvalidArgs)
+		}
 		return nil
 	case "":
 		return fmt.Errorf("%w: fakeType required", ErrInvalidArgs)
@@ -57,13 +62,9 @@ func (fakeProvider) ValidateArgs(a Args) error {
 
 // NewRowMask resolves the seed and returns a masker.
 func (fakeProvider) NewRowMask(ctx RowMaskContext) (RowMask, error) {
-	seed := []byte(ctx.Args.Seed)
-	if ctx.Args.Seed != "" && ctx.Salts != nil && looksLikeSecretRef(ctx.Args.Seed) {
-		b, err := ctx.Salts.Get(ctx.Ctx, ctx.Args.Seed)
-		if err != nil {
-			return nil, fmt.Errorf("resolve fake seed: %w", err)
-		}
-		seed = b
+	seed, err := resolveSeed(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve fake seed: %w", err)
 	}
 	return &fakeRowMask{seed: seed, kind: ctx.Args.FakeType}, nil
 }

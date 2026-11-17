@@ -200,3 +200,72 @@ spec:
 		})
 	}
 }
+
+func TestLoadDirectory_SharedSecretScopes(t *testing.T) {
+	s3 := func(name, bucket, ref string) string {
+		return `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ` + name + `
+spec:
+  type: s3
+  bucket: ` + bucket + `
+  region: eu-west-1
+  credentialsRef: ` + ref + `
+  allowedPaths: ["x.parquet"]
+`
+	}
+	web := func(name, url, ref string) string {
+		return `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ` + name + `
+spec:
+  type: http
+  urls: ["` + url + `"]
+  headersRef: ` + ref + `
+`
+	}
+	md := func(name, ref string) string {
+		return `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ` + name + `
+spec:
+  type: motherduck
+  database: ` + name + `
+  tokenRef: ` + ref + `
+`
+	}
+	cases := []struct {
+		name, docs, want string
+	}{
+		{"motherduck same token", md("a", "secret://env/T") + "---\n" + md("b", "secret://env/T"), ""},
+		{"motherduck other token", md("a", "secret://env/T") + "---\n" + md("b", "secret://env/U"), `DataSource "a" uses another token`},
+		{"s3 other buckets", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales-eu", "secret://env/B"), ""},
+		{"s3 same bucket, same keys", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales", "secret://env/A"), ""},
+		{"s3 same bucket, other keys", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales", "secret://env/B"), `reads bucket "sales" with another credentialsRef`},
+		{"http other files", web("a", "https://h/a.csv", "secret://env/A") + "---\n" + web("b", "https://h/b.csv", "secret://env/B"), ""},
+		{"http same file, other headers", web("a", "https://h/a.csv", "secret://env/A") + "---\n" + web("b", "https://h/a.csv", "secret://env/B"), `overlaps a URL of DataSource "a"`},
+		{"http prefix, other headers", web("a", "https://h/a.csv", "secret://env/A") + "---\n" + web("b", "https://h/a.csv.gz", "secret://env/B"), `overlaps a URL of DataSource "a"`},
+		{"http same file, same headers", web("a", "https://h/a.csv", "secret://env/A") + "---\n" + web("b", "https://h/a.csv", "secret://env/A"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "ds.yaml"), []byte(tc.docs), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadDirectory(context.Background(), LoadOptions{Sources: []SourceDir{{Path: dir}}})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("LoadDirectory: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}

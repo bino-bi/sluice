@@ -1,6 +1,6 @@
 {
   "outcome": "allow",
-  "sql": "SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, CASE WHEN sluice_src.email IS NULL THEN NULL ELSE concat(substr(sluice_src.email::varchar, 1, $1), repeat($2, GREATEST((length(sluice_src.email::varchar) - $1) - $3, 0)), substr(sluice_src.email::varchar, GREATEST((length(sluice_src.email::varchar) - $3) + 1, $1 + 1))) END AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees",
+  "sql": "SELECT id, email FROM (SELECT sluice_src.id, sluice_src.name, CASE WHEN sluice_src.email IS NULL THEN NULL WHEN length(sluice_src.email::varchar) \u003c= ($1 + $3) THEN repeat($2, length(sluice_src.email::varchar)) ELSE concat(substr(sluice_src.email::varchar, 1, $1), repeat($2, (length(sluice_src.email::varchar) - $1) - $3), substr(sluice_src.email::varchar, (length(sluice_src.email::varchar) - $3) + 1)) END AS email, sluice_src.ssn, sluice_src.salary, sluice_src.notes FROM pg.hr.employees sluice_src) employees",
   "changed": true,
   "params": [
     2,
@@ -11,7 +11,7 @@
     "ColumnMaskPolicy/mask-email",
     "SqlAccessPolicy/allow-hr"
   ],
-  "fingerprint": "038996fab99d198f",
+  "fingerprint": "c9d0c047e54645ce",
   "masks": [
     "pg.hr.employees.email=partial"
   ]

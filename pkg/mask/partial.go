@@ -8,8 +8,8 @@ import (
 )
 
 // partialProvider reveals the first/last N characters of a value and
-// masks the middle. Pure SQL: the expression handles NULL and short
-// values without leaking length beyond what the visible fragments imply.
+// masks the middle. Pure SQL. A value not longer than showFirst+showLast
+// is masked in full: the windows would otherwise show all of it.
 type partialProvider struct{}
 
 func newPartialProvider() Provider { return &partialProvider{} }
@@ -25,10 +25,12 @@ func (partialProvider) MaskSQL(ctx MaskContext) (string, []Param, error) {
 	if mc == "" {
 		mc = "*"
 	}
-	return "CASE WHEN __col__ IS NULL THEN NULL ELSE concat(" +
+	return "CASE WHEN __col__ IS NULL THEN NULL " +
+			"WHEN length(__col__::VARCHAR) <= $1 + $3 THEN repeat($2, length(__col__::VARCHAR)) " +
+			"ELSE concat(" +
 			"substr(__col__::VARCHAR, 1, $1), " +
-			"repeat($2, greatest(length(__col__::VARCHAR) - $1 - $3, 0)), " +
-			"substr(__col__::VARCHAR, greatest(length(__col__::VARCHAR) - $3 + 1, $1 + 1))) END",
+			"repeat($2, length(__col__::VARCHAR) - $1 - $3), " +
+			"substr(__col__::VARCHAR, length(__col__::VARCHAR) - $3 + 1)) END",
 		[]Param{
 			{Name: "show_first", Value: ctx.Args.ShowFirst},
 			{Name: "mask_char", Value: mc},

@@ -74,10 +74,12 @@ Fields that end in `Ref` take a [secret reference](server-config.md). The files 
     ```
 
 - `postgres`, `mysql`: the URL needs a user and a database. The default ports are 5432 and 3306. `mysql` also accepts `mariadb://`.
+- `postgres`, `mysql`: the connection needs TLS by default (`sslmode=require`, `ssl_mode=required`). Set `?sslmode=disable` or `?ssl_mode=disabled` in the URL for a server without TLS. The URL takes no other parameter and no password. The password comes from `credentialsRef`.
 - `s3`, `http`: each path or URL becomes one view in the schema `main`. Sluice reads nothing else.
 - `s3`, `http`: the extension selects the format: `.parquet`, `.csv`, `.json`, `.ndjson`, `.jsonl` or `.xlsx`. `format` sets `parquet`, `csv`, `json` or `xlsx` for every path.
-- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. `endpoint` names an S3-compatible store.
-- `http`: no wildcards. Sluice sends the headers only to the hosts of `urls`.
+- `s3`: a path in `allowedPaths` can hold `*` or `**`, except for `xlsx`. `**` covers every directory below. A path without `s3://` is a path in `bucket`. A path in another bucket, or with a `.` or `..` segment, stops the start. `endpoint` names an S3-compatible store.
+- `http`: no wildcards. Sluice sends the headers only to the URLs in `urls`.
+- Two `s3` sources on one bucket need the same `credentialsRef`, `endpoint` and `region`. Two `http` sources need the same `headersRef` when a URL of one starts with a URL of the other. Otherwise the policies do not load. DuckDB keeps the credentials for the whole server and would use one set for both sources.
 
 ## Check the files
 
@@ -105,10 +107,14 @@ A running server tests every source at start and then every 30 seconds. `GET /v1
 
 - Sluice attaches databases and files read-only. It reads `s3` and `http` data through views. No setting changes this.
 - Sluice attaches sources only at start. Restart it after you add or change a `DataSource`.
+- Sluice reads the credentials of a source only at start. Restart it after you rotate a password, key, header or token.
+- All `motherduck` sources need the same `tokenRef`. DuckDB has one MotherDuck token for the whole server.
 - A source that fails a check of its type stops the start. Examples: a missing `sqlite` or `duckdb_file` file, `s3` without `region`, `motherduck` without `tokenRef`. `datasource check` and `config validate` miss these errors.
 - `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not count it. A source that Sluice cannot attach still stops the start: a database that is down, or a broken `duckdb_file` file.
 - The health test checks that a `sqlite` file exists. It does not read the file. A file that is no database stays healthy, and queries on it fail with `ERR_INTERNAL`.
-- A source that goes away is seen by the next health test. Until then, queries on it can fail with `ERR_INTERNAL`.
+- The health test of `postgres` and `mysql` sends `SELECT 1` to the server. A server that goes away is seen by the next health test. Until then, queries on it can fail with `ERR_INTERNAL`.
+- The health test of `s3`, `http` and `motherduck` checks only that the catalog is attached. It sends nothing to the bucket, the URLs or MotherDuck. Such a source stays healthy when the service is down, and queries on it fail.
+- Sluice reads the column list of a source once, at the first query that needs it, and again after a [reload](hot-reload.md). `schema_pulled_at` of `GET /admin/datasources` shows the time of the last read.
 
 ## See also
 

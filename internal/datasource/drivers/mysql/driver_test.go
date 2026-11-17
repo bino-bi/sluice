@@ -24,6 +24,8 @@ func TestNewDriverRejectsBadURL(t *testing.T) {
 		"missing db":    {"connection": "mysql://u@h:3306/"},
 		"bad port":      {"connection": "mysql://u@h:99999/db"},
 		"invalid parse": {"connection": "::not-a-url::"},
+		"password":      {"connection": "mysql://u:pw@h/db"},
+		"other param":   {"connection": "mysql://u@h/db?sslrootcert=/ca.pem"},
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -76,8 +78,8 @@ func TestNewDriverDefaultsPortAndSSL(t *testing.T) {
 	if d.port != 3306 {
 		t.Errorf("port default = %d; want 3306", d.port)
 	}
-	if d.sslmode != "preferred" {
-		t.Errorf("sslmode default = %q; want preferred", d.sslmode)
+	if d.sslmode != "required" {
+		t.Errorf("sslmode default = %q; want required", d.sslmode)
 	}
 }
 
@@ -111,5 +113,11 @@ func TestResolvePassword(t *testing.T) {
 	}
 	if pw != "p@ss" {
 		t.Errorf("pw = %q; want p@ss", pw)
+	}
+}
+
+func TestHealthQueryReachesTheServer(t *testing.T) {
+	if got, want := healthQuery("crm"), "SELECT 1 FROM mysql_query('crm', 'SELECT 1')"; got != want {
+		t.Errorf("healthQuery = %q, want %q", got, want)
 	}
 }

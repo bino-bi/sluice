@@ -97,7 +97,7 @@ A deny, reject or error path emits one `query` record. The allow path emits two:
 ### 4.4 Executor (`internal/executor`)
 
 - **Tampering:** hardening disables external file access (`external_access=false`), blocks community extensions, disables autoinstall / autoload, disables persistent secrets (applied at database-open time via the connector DSN, since httpfs initializes the secret manager during attach), and locks configuration after init. `AttachHook` runs first (extensions need external access to install), then hardening, then `lock_configuration=true`. When `s3`/`http` sources are configured, their allow-listed locations are carved out via DuckDB `allowed_directories`/`allowed_paths` before the floor — query-time reads succeed only for the configured bucket prefixes and exact URLs; every other URL and the local filesystem stay blocked. A user query cannot read a file in a carve-out directly, neither with `read_csv('s3://allowed-bucket/…')` nor with the path or URL as a quoted table name (table names with path characters are refused). Such a read would return the file without the row filters and column masks defined on the view over it, so the carve-out is not a policy boundary. Both forms are rejected by the function gate (see 4.3).
-- **Information disclosure:** DuckDB does not have a secret-leak surface once `allow_persistent_secrets=false` and external access are off. Driver-created secrets via `CREATE SECRET` are connection-scoped; the http driver scopes its header secrets to each URL origin so credentials never travel to other hosts.
+- **Information disclosure:** DuckDB does not have a secret-leak surface once `allow_persistent_secrets=false` and external access are off. Driver-created secrets via `CREATE SECRET` belong to the whole DuckDB instance for the life of the process. Each one has a scope: the s3 secret `s3://<bucket>/`, the http header secrets each exact URL, so credentials do not travel to other buckets or hosts. The policy load refuses two sources whose scopes overlap with other credentials or headers.
 - **Denial of service:** per-request `context.WithTimeout` + pool sizing (`MaxOpen=4`, `MaxIdle=2`). A hostile query hitting the timeout surfaces as `CodeTimeout` and is audited.
 - **Elevation of privilege:** the empty ATTACH URL + named-secret pattern used by the postgres/mysql drivers keeps credentials out of DuckDB's query log and crash dumps.
 
@@ -144,8 +144,8 @@ Same threat profile as REST plus: MCP errors are returned as `CallToolResult{IsE
 
 - Each driver validates identifiers against `[A-Za-z_][A-Za-z0-9_$]*` before interpolating catalog names into `CREATE SECRET` / `ATTACH` statements.
 - `CREATE OR REPLACE SECRET` uses a named secret + empty ATTACH URL so passwords never appear in DuckDB's query log.
-- `s3parquet`'s `PathAllowed` glob enforces the `allowedPaths` whitelist — `read_parquet('<path>')` views are only created for paths that match.
-- `motherduck.SET motherduck_token` is connection-local; the token is released when the `*sql.Conn` returns to the pool.
+- The `s3` driver creates one view per `allowedPaths` entry and nothing else. A bare entry is put under `s3://<bucket>/`, and an entry in another bucket is refused at load. Query-time reads are limited to `s3://<bucket>/` by the external access carve-out (4.4) and the function gate (4.3).
+- Attach runs once per DuckDB instance, on the first connection, before the configuration lock. Extensions, secrets, `motherduck_token` and the attached catalogs stay on the instance for the life of the process. Credentials are read once at start, so a rotated secret needs a restart. `motherduck_token` has no scope, so the policy load refuses two `motherduck` sources with another `tokenRef`.
 
 ## 5. Attack surface inventory
 

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -17,18 +16,15 @@ import (
 // Type matches apitypes.DSMotherDuck.
 const Type = "motherduck"
 
-// driver attaches to a MotherDuck hosted database. The token is
-// resolved on every Attach so rotated tokens propagate on the next
-// fresh DuckDB connection.
+// driver attaches to a MotherDuck hosted database. Attach runs once per
+// DuckDB instance, so the token is resolved once and a rotated token
+// needs a restart.
 type driver struct {
 	name     string
 	readonly bool
 
 	database string
 	tokenRef string
-
-	mu        sync.Mutex
-	extLoaded map[*sql.Conn]bool
 }
 
 // Register installs the factory.
@@ -52,11 +48,10 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 	}
 
 	return &driver{
-		name:      spec.Name,
-		readonly:  true,
-		database:  database,
-		tokenRef:  tokenRef,
-		extLoaded: make(map[*sql.Conn]bool),
+		name:     spec.Name,
+		readonly: true,
+		database: database,
+		tokenRef: tokenRef,
 	}, nil
 }
 
@@ -69,9 +64,10 @@ func (d *driver) Type() string { return Type }
 // Readonly implements pkgds.DataSource.
 func (d *driver) Readonly() bool { return d.readonly }
 
-// Attach installs motherduck, sets the token on this connection, and
-// runs ATTACH. Because the SET statement is connection-scoped the
-// token is released when the pool recycles the connection.
+// Attach installs motherduck, sets the token, and runs ATTACH. The token
+// and the attached catalog stay on the DuckDB instance for the life of
+// the process. motherduck_token is one setting for the instance, so the
+// policy load refuses two motherduck sources with other tokens.
 func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOptions) error {
 	catalog := opts.CatalogName
 	if catalog == "" {
@@ -81,15 +77,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 		return fmt.Errorf("motherduck: catalog alias: %w", err)
 	}
 
-	d.mu.Lock()
-	if !d.extLoaded[conn] {
-		if err := common.EnsureExtension(ctx, conn, "motherduck"); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("motherduck: %w", err)
-		}
-		d.extLoaded[conn] = true
+	if err := common.EnsureExtension(ctx, conn, "motherduck"); err != nil {
+		return fmt.Errorf("motherduck: %w", err)
 	}
-	d.mu.Unlock()
 
 	if opts.SecretResolver == nil {
 		return errors.New("motherduck: SecretResolver is required for token resolution")
@@ -103,8 +93,7 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 		return errors.New("motherduck: resolved token is empty")
 	}
 
-	// SET motherduck_token — connection-local. Not a prepared
-	// parameter because DuckDB does not bind SET targets.
+	// Not a prepared parameter because DuckDB does not bind SET targets.
 	setStmt := fmt.Sprintf(`SET motherduck_token = '%s'`, common.EscapeSQLString(token))
 	if _, err := conn.ExecContext(ctx, setStmt); err != nil {
 		return fmt.Errorf("motherduck: SET token: %w", err)
@@ -178,7 +167,9 @@ ORDER BY table_schema, table_name, ordinal_position
 	return sch, nil
 }
 
-// HealthCheck runs a trivial query against the attached catalog.
+// HealthCheck checks that the catalog is attached. It reads DuckDB's own
+// catalog list and sends nothing to MotherDuck, so a service outage shows
+// up only as a query error.
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
 	q := opts.Query
 	if q == "" {
@@ -193,10 +184,6 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 	return nil
 }
 
-// Close drops tracked per-connection state.
-func (d *driver) Close() error {
-	d.mu.Lock()
-	d.extLoaded = nil
-	d.mu.Unlock()
-	return nil
-}
+// Close has nothing to release: extensions, secrets and the catalog
+// belong to the DuckDB instance.
+func (d *driver) Close() error { return nil }

@@ -156,7 +156,7 @@ These kinds have the fields below: `SqlAccessPolicy`, `RowFilterPolicy`, `Column
 | `mask.args.length` | int |  | `truncate`: characters kept. |
 | `mask.args.suffix` | string |  | `truncate`: text added at the end. |
 | `mask.args.range` | float |  | `jitter`: largest change. Above 0, below 1. |
-| `mask.args.seed` | string |  | `jitter`, `fake`: seed. Plain text or a secret reference. |
+| `mask.args.seed` | string |  | `jitter`, `fake`: required. The key of the keyed hash. Plain text or a secret reference. |
 | `mask.args.keyRef` | string |  | `fpe`: secret reference to the key. |
 | `mask.args.tweak` | string |  | `fpe`: tweak in hex. |
 | `mask.args.alphabet` | string |  | `fpe`: `numeric` (default), `lower` or `alphanumeric`. |

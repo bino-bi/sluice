@@ -210,9 +210,7 @@ func TestCacheAllIsSorted(t *testing.T) {
 	loader.set("alpha", sampleSchema("alpha"))
 	c := schema.New(schema.Options{Loader: loader})
 
-	if err := c.Refresh(context.Background(), []string{"zeta", "alpha"}); err != nil {
-		t.Fatal(err)
-	}
+	c.Load(context.Background(), []string{"zeta", "alpha"})
 	got := c.All()
 	if len(got) == 0 {
 		t.Fatal("All() is empty")
@@ -224,60 +222,29 @@ func TestCacheAllIsSorted(t *testing.T) {
 	}
 }
 
-func TestCacheRefreshServesStaleOnFailure(t *testing.T) {
-	loader := newFakeLoader()
-	loader.set("pg", sampleSchema("pg"))
-
-	// Frozen clock so TTL is controllable.
-	now := time.Now()
-	clock := func() time.Time { return now }
-
-	c := schema.New(schema.Options{
-		Loader: loader,
-		TTL:    time.Minute,
-		Clock:  clock,
-	})
-
-	ctx := context.Background()
-	if _, err := c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate failure on next refresh and advance clock past TTL.
-	loader.primeErr("pg", errors.New("network down"))
-	now = now.Add(2 * time.Minute)
-	if err := c.Refresh(ctx, []string{"pg"}); err == nil {
-		t.Fatal("Refresh returned nil on failure")
-	}
-
-	// Entry should still be served and marked Stale.
-	e, err := c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "orders"})
-	if err != nil {
-		t.Fatalf("Get after stale refresh: %v", err)
-	}
-	if !e.Stale {
-		t.Error("Entry.Stale = false; want true after failed refresh")
-	}
-}
-
-func TestCacheRefreshEmptyCatalogsUsesKnownSet(t *testing.T) {
+func TestCacheServesStaleOnFailedReload(t *testing.T) {
 	loader := newFakeLoader()
 	loader.set("pg", sampleSchema("pg"))
 	c := schema.New(schema.Options{Loader: loader})
-
-	// Prime the known-catalog set with a Get.
 	ctx := context.Background()
-	if _, err := c.Get(ctx, schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}); err != nil {
+	orders := schema.Key{Catalog: "pg", Schema: "public", Table: "orders"}
+	customers := schema.Key{Catalog: "pg", Schema: "public", Table: "customers"}
+	if _, err := c.Get(ctx, orders); err != nil {
 		t.Fatal(err)
 	}
-	before := loader.callCount("pg")
-	if err := c.Refresh(ctx, nil); err != nil {
-		t.Fatal(err)
+
+	// The miss on the invalidated key reloads the catalog, and the reload fails.
+	c.Invalidate(orders)
+	loader.primeErr("pg", errors.New("network down"))
+	if _, err := c.Get(ctx, orders); err == nil {
+		t.Fatal("Get after failed reload: want error")
 	}
-	// Refresh won't re-load because entries are still fresh. That's
-	// correct — TTL wasn't exceeded. Call count stays the same.
-	if loader.callCount("pg") != before {
-		t.Errorf("Refresh reloaded a fresh catalog (calls %d → %d)", before, loader.callCount("pg"))
+	e, err := c.Get(ctx, customers)
+	if err != nil {
+		t.Fatalf("Get customers: %v", err)
+	}
+	if !e.Stale {
+		t.Error("Entry.Stale = false; want true after failed reload")
 	}
 }
 

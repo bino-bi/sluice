@@ -24,6 +24,8 @@ func TestNewDriverRejectsBadURL(t *testing.T) {
 		"missing db":    {"connection": "postgres://u@h:5432/"},
 		"bad port":      {"connection": "postgres://u@h:99999/db"},
 		"invalid parse": {"connection": "::not-a-url::"},
+		"password":      {"connection": "postgres://u:pw@h/db"},
+		"other param":   {"connection": "postgres://u@h/db?sslrootcert=/ca.pem"},
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -76,8 +78,8 @@ func TestNewDriverDefaultsPortAndSSLMode(t *testing.T) {
 	if d.port != 5432 {
 		t.Errorf("port default = %d; want 5432", d.port)
 	}
-	if d.sslmode != "prefer" {
-		t.Errorf("sslmode default = %q; want prefer", d.sslmode)
+	if d.sslmode != "require" {
+		t.Errorf("sslmode default = %q; want require", d.sslmode)
 	}
 }
 
@@ -120,5 +122,11 @@ func TestResolvePasswordTrimsNewlines(t *testing.T) {
 	}
 	if pw != "hunter2" {
 		t.Errorf("pw = %q; want hunter2", pw)
+	}
+}
+
+func TestHealthQueryReachesTheServer(t *testing.T) {
+	if got, want := healthQuery("crm"), "SELECT 1 FROM postgres_query('crm', 'SELECT 1')"; got != want {
+		t.Errorf("healthQuery = %q, want %q", got, want)
 	}
 }

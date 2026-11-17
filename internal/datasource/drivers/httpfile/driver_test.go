@@ -4,8 +4,12 @@ package httpfile
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+
+	_ "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	"github.com/bino-bi/sluice/pkg/apitypes"
@@ -66,10 +70,6 @@ func TestResolveViewsInfersPerURL(t *testing.T) {
 	}
 	if !d.needsExcel {
 		t.Error("needsExcel = false; want true with an xlsx URL")
-	}
-	wantOrigins := []string{"https://host", "https://other:8443"}
-	if len(d.origins) != 2 || d.origins[0] != wantOrigins[0] || d.origins[1] != wantOrigins[1] {
-		t.Errorf("origins = %v; want %v", d.origins, wantOrigins)
 	}
 }
 
@@ -148,5 +148,51 @@ func TestHeaderSecretRendering(t *testing.T) {
 func TestFactoryRegisteredViaInit(t *testing.T) {
 	if _, ok := pkgds.Lookup(Type); !ok {
 		t.Fatal("http driver did not self-register via init()")
+	}
+}
+
+type staticResolver string
+
+func (r staticResolver) Resolve(context.Context, string) ([]byte, error) { return []byte(r), nil }
+
+// TestHeaderSecretsAreScopedToTheURLs asks DuckDB which secret a URL uses.
+// A host that only starts with the configured host, and another file on
+// the same host, must get no headers.
+func TestHeaderSecretsAreScopedToTheURLs(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+		t.Skipf("httpfs not available offline: %v", err)
+	}
+	d := mk(t, map[string]any{
+		"urls":       []any{"https://api.example.com/a.csv", "https://api.example.com/b.json"},
+		"headersRef": "secret://env/H",
+	})
+	if err := d.createHeaderSecrets(ctx, conn, pkgds.AttachOptions{SecretResolver: staticResolver(`{"Authorization":"Bearer x"}`)}); err != nil {
+		t.Fatalf("createHeaderSecrets: %v", err)
+	}
+	for url, want := range map[string]string{
+		"https://api.example.com/a.csv":          "sluice_http_web_0",
+		"https://api.example.com/b.json":         "sluice_http_web_1",
+		"https://api.example.com/other.csv":      "",
+		"https://api.example.com.evil.net/a.csv": "",
+	} {
+		var got string
+		err := conn.QueryRowContext(ctx, "SELECT name FROM which_secret(?, 'http')", url).Scan(&got)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("which_secret(%s): %v", url, err)
+		}
+		if got != want {
+			t.Errorf("which_secret(%s) = %q, want %q", url, got, want)
+		}
 	}
 }
