@@ -28,7 +28,7 @@ The answer holds the rows as text and as `structuredContent`.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `execute_sql` | `sql` (required), `row_limit` | `query_id`, `columns`, `rows`, `row_count`, `truncated` |
+| `execute_sql` | `sql` (required), `row_limit`, `timeout_ms` | `query_id`, `columns`, `rows`, `row_count`, `truncated` |
 | `sample_table` | `table` (required), `columns`, `rows`, `rate`, `method`, `stratify_by`, `seed`, `where` | The same as `execute_sql` |
 | `list_catalogs` | none | `catalogs` with `name`, `type`, `healthy` |
 | `list_tables` | `catalog` (required), `schema`, `limit`, `cursor` | `tables`, `next_cursor` |
@@ -39,7 +39,7 @@ The answer holds the rows as text and as `structuredContent`.
 | `check_approval` | `approval_id` (required) | `approval_id`, `state`, `expires_at` |
 | `await_approval` | `approval_id` (required), `timeout_seconds` | The same, after a wait of at most 55 seconds |
 
-- `row_limit` works like `max_rows` in the [REST API](rest-api.md).
+- `row_limit` and `timeout_ms` work like `max_rows` and `timeout_ms` in the [REST API](rest-api.md). A parameter such as `$1` is not supported there either.
 - `sample_table` takes the fields of `POST /v1/sample`. The [sample request fields](rest-api.md#sample-request-fields) list the rules.
 - `table` is a name of the form `catalog.schema.table`. Sluice does not add a missing catalog or schema. A policy that names them does not match a shorter name.
 - `limit` is 500 by default and at most 1000. Pass `next_cursor` as `cursor` to get the next page. A `cursor` that is not valid gives `ERR_SYNTAX`.
@@ -59,7 +59,7 @@ The answer holds the rows as text and as `structuredContent`.
 --8<-- "examples/mcp-tools/server.yaml:mcp"
 ```
 
-`mcp.listen` is required for this transport. Set `mcp.tls` to serve HTTPS, see [Deployment](../operations/deployment.md). `limits.globalRps` and `limits.perIpRps` count REST queries and MCP requests together, before login. A request over the limit gets 429 `ERR_RATE_LIMITED`. The limits count HTTP requests: one request can carry several tool calls.
+`mcp.listen` is required for this transport. A request body over 1 MiB is refused. Set `mcp.tls` to serve HTTPS, see [Deployment](../operations/deployment.md). `limits.globalRps` and `limits.perIpRps` count REST queries and MCP requests together, before login. A request over the limit gets 429 `ERR_RATE_LIMITED`. The limits count HTTP requests: one request can carry several tool calls.
 
 `sluice mcp --transport streamable_http` listens on `mcp.listen` too. `sluice mcp` does not start when an `ApprovalPolicy` is loaded, see [Approvals](../policies/approvals.md). Stdio without a credential does not start. With `--allow-anonymous` or `mcp.allowAnonymous`, a client without a credential runs as an anonymous subject. Default deny still applies.
 

@@ -69,7 +69,11 @@ The last two always work and reload at once.
 - Secrets of policy objects. Sluice reads each reference again.
 - Table columns. Reload after a column changes at a data source.
 
-These need a restart: the server config and every `DataSource` change.
+These need a restart: the server config and every `DataSource` change. A reload with a changed `DataSource` applies the rest. `POST /admin/reload` then lists `restart needed: data sources changed` in `warnings`, and the log shows it.
+
+A reload is all or nothing. A part can fail, such as a policy that does not compile or an `hmacSecretRef` that cannot be resolved. Then Sluice keeps the whole old state: policies, subject bindings, rate limits and budgets. `config_version` stays, and `sluice_config_reloads_total{result="failed"}` counts the failure.
+
+`sluice mcp` reloads on `SIGHUP` and, with `policies.reload`, on a file change, as `sluice serve` does. After a reload it checks the stdio credential again. When the credential no longer resolves to the same identity (subject, issuer, groups, claims), it stops with exit status 1. A removed key and an expired JWT count too. `sluice serve` does the same for the stdio credential of `mcp.tokenRef` or `mcp.apiKeyRef`. In `sluice mcp` a reload that adds an `ApprovalPolicy` fails.
 
 ## An invalid file
 
@@ -119,8 +123,8 @@ After a file change, the log shows the cause. So does `sluice policy validate`:
 
 - Sluice watches the policy directory for `.yaml` and `.yml` files, and `policies.opa.moduleDir` for `.rego` files. Hidden files do not count.
 - It misses directories created after the start.
-- A duplicate JWT issuer, or an `hmacSecretRef` that cannot be resolved or has fewer than 32 bytes, does not stop the reload. Sluice warns and keeps the old JWT bindings. An API key whose `hashRef` cannot be resolved stops working until the next reload.
-- An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`.
+- A duplicate JWT issuer, or an `hmacSecretRef` that cannot be resolved or has fewer than 32 bytes, fails the reload with `ERR_CONFIG_INVALID`. An API key whose `hashRef` cannot be resolved does not fail it: that key stops working until the next reload.
+- An `ApprovalPolicy` needs `approval.publicBaseUrl` from the start. Without it, matching queries fail with `ERR_INTERNAL`, and the reload lists a warning.
 
 ## See also
 

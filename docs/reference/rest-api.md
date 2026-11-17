@@ -170,7 +170,7 @@ The routes exist when the server config sets `approval.publicBaseUrl`. Send the 
 - A statement with a parameter such as `$1` gives 400 `ERR_UNSUPPORTED_SYNTAX`. [Request lifecycle](../architecture/request-lifecycle.md) lists the statement rules.
 - An unknown `format` or `Accept` value gives 400 `ERR_SYNTAX`. A request for Arrow output gives 400 `ERR_UNSUPPORTED_SYNTAX`.
 - A body over `rest.maxBodyBytes` gives 413 `ERR_PAYLOAD_TOO_LARGE`. A request longer than `rest.requestTimeout` gives 504 `ERR_TIMEOUT`.
-- `limits.globalRps` and `limits.perIpRps` limit `/v1/query` and `/v1/sample` before authentication: 429 `ERR_RATE_LIMITED`.
+- `limits.globalRps` and `limits.perIpRps` limit `/v1/query`, `/v1/sample` and `GET /v1/approvals/{id}` before authentication: 429 `ERR_RATE_LIMITED`.
 
 ## See also
 

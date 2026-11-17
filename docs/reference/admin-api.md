@@ -28,10 +28,10 @@ Every route needs the header `Authorization: Bearer <token>` with the value of `
 
 | Method | Path | What it does | Response |
 |---|---|---|---|
-| `GET` | `/admin/policies` | Lists the loaded policies. | `version`, `digest`, `warnings`, and `policies` by policy kind with `name`, `priority`, `enforcement` |
+| `GET` | `/admin/policies` | Lists the policy files of the loaded config. | `version`, `digest`, `warnings`, and `policies` by policy kind with `name`, `priority`, `enforcement` |
 | `GET` | `/admin/datasources` | Shows the state of each data source. | `datasources` with `name`, `type`, `healthy`, `last_check`, `schema_pulled_at`. `last_error`, `latency_ms` and `status` only when set |
 | `GET` | `/admin/subjects/explain` | Shows which policies apply to a subject. | See [Explain](#explain) |
-| `POST` | `/admin/reload` | Loads the policy directory again. | `ok`, `digest` |
+| `POST` | `/admin/reload` | Loads the policy directory again. | `ok`, `digest`, and `warnings` when a part needs a restart |
 | `GET` | `/admin/audit/tail` | Returns the newest audit records. | One JSON record per line |
 | `POST` | `/admin/synthetic/{name}/build` | Starts a build of a synthetic data source. | 202 with `name`, `build_id`, `state`, `already_running`. See [Synthetic builds](#synthetic-builds) |
 | `POST` | `/admin/synthetic/{name}/cancel` | Asks the running build of a synthetic data source to stop. | 202 with `name`, `build_id`, `state`. See [Synthetic builds](#synthetic-builds) |
@@ -42,6 +42,8 @@ Every route needs the header `Authorization: Bearer <token>` with the value of `
 | `GET` | `/metrics` | Serves the [metrics](metrics.md). | Prometheus text |
 
 Every response has an `X-Admin-Request-Id` header.
+
+`version`, `digest`, `config_version` and the policy list come from the loaded config, for every `policies.engine`. With `opa` the list shows the YAML policies of the directory. The OPA engine does not use them.
 
 ## Explain
 
