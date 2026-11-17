@@ -124,3 +124,9 @@ func TestResolvePasswordTrimsNewlines(t *testing.T) {
 		t.Errorf("pw = %q; want hunter2", pw)
 	}
 }
+
+func TestHealthQueryReachesTheServer(t *testing.T) {
+	if got, want := healthQuery("crm"), "SELECT 1 FROM postgres_query('crm', 'SELECT 1')"; got != want {
+		t.Errorf("healthQuery = %q, want %q", got, want)
+	}
+}

@@ -70,6 +70,8 @@ Entries for each release are grouped into **Added**, **Changed**, **Deprecated**
 - **An approval wait that ends with an error leaves an audit record.** When the wait for an approval ended early, for example because the client went away, the query wrote no record of its own. For an approval that already existed, the request left no record at all. Now it writes the decision record with `ERR_APPROVAL_PENDING`, like the other pending exits.
 - **Breaking: a bare path in `allowedPaths` of an `s3` source is a path in `bucket`.** `sales/*.parquet` was read as a local path, so the start failed, or Sluice read a local file of that name. It now reads `s3://<bucket>/sales/*.parquet`. A path in another bucket was accepted but could not be read. It now stops the start.
 - **`jitter` works on all number columns.** It accepted only `INTEGER`, `BIGINT`, `FLOAT` and `DOUBLE`, and failed on `DECIMAL`, `TINYINT`, `SMALLINT`, `HUGEINT` and the unsigned types, with HTTP 200 and a cut body. A `DECIMAL` keeps its scale. The result stays inside the range of the column type.
+- **The health test of `postgres` and `mysql` sources reaches the server.** It read only the list of attached catalogs inside DuckDB, so a server that was down stayed healthy in `GET /v1/ready` and the admin API. It now sends `SELECT 1` through `postgres_query` and `mysql_query`. The test of `s3`, `http` and `motherduck` still checks only the attach. **Behavior change:** a `postgres` or `mysql` server that is down now makes its source unhealthy.
+- **`schema_pulled_at` in `GET /admin/datasources` is set.** Nothing recorded the time of a column list read, so the field was always empty. The unused schema cache `TTL` and `Refresh` are removed from the Go code.
 
 ### Security
 

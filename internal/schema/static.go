@@ -10,7 +10,7 @@ import (
 
 // NewStatic returns a Cache backed by a fixed set of entries. It never
 // introspects a data source: Get misses return ErrUnknownTable, the
-// invalidation methods are no-ops, and Refresh always succeeds. Intended
+// invalidation methods are no-ops, and Load does nothing. Intended
 // for fixtures and tests (policy test suites, golden rewrite fixtures);
 // production uses New.
 func NewStatic(entries []*Entry) Cache {
@@ -44,8 +44,7 @@ func (s *staticCache) All() []*Entry {
 	return out
 }
 
-func (s *staticCache) Invalidate(Key)                          {}
-func (s *staticCache) InvalidateCatalog(string)                {}
-func (s *staticCache) InvalidateAll()                          {}
-func (s *staticCache) Refresh(context.Context, []string) error { return nil }
-func (s *staticCache) Load(context.Context, []string)          {}
+func (s *staticCache) Invalidate(Key)                 {}
+func (s *staticCache) InvalidateCatalog(string)       {}
+func (s *staticCache) InvalidateAll()                 {}
+func (s *staticCache) Load(context.Context, []string) {}

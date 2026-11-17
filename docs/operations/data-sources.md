@@ -112,7 +112,9 @@ A running server tests every source at start and then every 30 seconds. `GET /v1
 - A source that fails a check of its type stops the start. Examples: a missing `sqlite` or `duckdb_file` file, `s3` without `region`, `motherduck` without `tokenRef`. `datasource check` and `config validate` miss these errors.
 - `datasources.failFast: false` skips such a source, and `GET /v1/ready` does not count it. A source that Sluice cannot attach still stops the start: a database that is down, or a broken `duckdb_file` file.
 - The health test checks that a `sqlite` file exists. It does not read the file. A file that is no database stays healthy, and queries on it fail with `ERR_INTERNAL`.
-- A source that goes away is seen by the next health test. Until then, queries on it can fail with `ERR_INTERNAL`.
+- The health test of `postgres` and `mysql` sends `SELECT 1` to the server. A server that goes away is seen by the next health test. Until then, queries on it can fail with `ERR_INTERNAL`.
+- The health test of `s3`, `http` and `motherduck` checks only that the catalog is attached. It sends nothing to the bucket, the URLs or MotherDuck. Such a source stays healthy when the service is down, and queries on it fail.
+- Sluice reads the column list of a source once, at the first query that needs it, and again after a [reload](hot-reload.md). `schema_pulled_at` of `GET /admin/datasources` shows the time of the last read.
 
 ## See also
 

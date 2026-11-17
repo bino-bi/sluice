@@ -36,9 +36,6 @@ func TestStaticCache(t *testing.T) {
 	c.Invalidate(key)
 	c.InvalidateCatalog("pg")
 	c.InvalidateAll()
-	if err := c.Refresh(context.Background(), []string{"pg"}); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
 	if got := len(c.All()); got != 1 {
 		t.Fatalf("invalidation must be a no-op on the static cache, got %d entries", got)
 	}

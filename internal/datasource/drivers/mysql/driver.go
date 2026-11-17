@@ -241,12 +241,12 @@ ORDER BY table_schema, table_name, ordinal_position
 	return sch, nil
 }
 
-// HealthCheck runs a cheap query through the attached catalog.
+// HealthCheck sends SELECT 1 to the server through mysql_query. A read of
+// DuckDB's own catalog list would stay healthy while the server is down.
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
 	q := opts.Query
 	if q == "" {
-		q = fmt.Sprintf(`SELECT 1 FROM information_schema.schemata WHERE catalog_name = '%s' LIMIT 1`,
-			common.EscapeSQLString(d.name))
+		q = healthQuery(d.name)
 	}
 	row := conn.QueryRowContext(ctx, q)
 	var one int
@@ -259,3 +259,7 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 // Close has nothing to release: extensions, secrets and the catalog
 // belong to the DuckDB instance.
 func (d *driver) Close() error { return nil }
+
+func healthQuery(catalog string) string {
+	return fmt.Sprintf(`SELECT 1 FROM mysql_query('%s', 'SELECT 1')`, common.EscapeSQLString(catalog))
+}

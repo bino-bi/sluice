@@ -30,7 +30,7 @@ func (k Key) String() string { return k.Catalog + "." + k.Schema + "." + k.Table
 
 // Entry is a snapshot of one table. Columns are sorted by ordinal
 // position; Comment is the table-level comment when the driver reports
-// one. Stale flips to true after a refresh failure.
+// one. Stale flips to true after a failed reload.
 type Entry struct {
 	Key     Key
 	Columns []pkgds.Column
@@ -71,11 +71,6 @@ type Cache interface {
 	// InvalidateAll drops every entry. Called on a policy reload.
 	InvalidateAll()
 
-	// Refresh loads every known catalog. On first call it also primes the
-	// list of known catalogs. Errors are aggregated; callers log them but
-	// always see the most recent good data.
-	Refresh(ctx context.Context, catalogs []string) error
-
 	// Load reads each catalog in catalogs that was not read since the
 	// cache was last emptied. Get loads a catalog only on a miss, so a
 	// caller that lists tables calls Load first. A failed load is logged
@@ -88,11 +83,6 @@ type Cache interface {
 type Options struct {
 	// Loader is required. Cache panics on New when nil.
 	Loader Loader
-
-	// TTL is the age at which Refresh loads a catalog again. Get does not
-	// check it, and nothing calls Refresh today, so an entry stays until
-	// it is invalidated. Zero means DefaultTTL.
-	TTL time.Duration
 
 	// Capacity is the maximum number of entries retained in the LRU.
 	// Zero means DefaultCapacity.
@@ -107,9 +97,6 @@ type Options struct {
 
 // Defaults — tuned for the MVP workload.
 const (
-	// DefaultTTL is 10 minutes. Only Refresh reads the TTL.
-	DefaultTTL = 10 * time.Minute
-
 	// DefaultCapacity matches the performance budget in
 	// concept §4.12: 10 000 tables per instance.
 	DefaultCapacity = 10_000
@@ -125,8 +112,7 @@ type lruCache struct {
 	entries *lru.Cache[Key, *Entry]
 
 	// catalogSet is the set of catalogs loaded since the cache was last
-	// emptied. Used by Load, and by Refresh when callers don't pass an
-	// explicit list. Protected by mu.
+	// emptied. Used by Load. Protected by mu.
 	mu           sync.Mutex
 	catalogSet   map[string]struct{}
 	catalogLocks map[string]*sync.Mutex // per-catalog load dedup
@@ -142,9 +128,6 @@ type lruCache struct {
 func New(opts Options) Cache {
 	if opts.Loader == nil {
 		panic("schema.New: Loader is required")
-	}
-	if opts.TTL <= 0 {
-		opts.TTL = DefaultTTL
 	}
 	if opts.Capacity <= 0 {
 		opts.Capacity = DefaultCapacity
@@ -290,41 +273,6 @@ func (c *lruCache) needsLoad(catalog string) bool {
 	return !ok || c.opts.Clock().Sub(at) >= LoadRetry
 }
 
-// Refresh loads every catalog in catalogs (or every known catalog when
-// catalogs is nil). Individual catalog failures are logged and counted;
-// the first error is returned so callers can surface an aggregated
-// failure without losing subsequent good loads.
-func (c *lruCache) Refresh(ctx context.Context, catalogs []string) error {
-	if catalogs == nil {
-		c.mu.Lock()
-		catalogs = make([]string, 0, len(c.catalogSet))
-		for cat := range c.catalogSet {
-			catalogs = append(catalogs, cat)
-		}
-		c.mu.Unlock()
-	}
-
-	var firstErr error
-	for _, cat := range catalogs {
-		if err := ctx.Err(); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			break
-		}
-		if err := c.loadCatalogIfStale(ctx, cat); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			c.opts.Logger.WarnContext(ctx, "schema: refresh failed",
-				slog.String("catalog", cat),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-	return firstErr
-}
-
 // loadCatalogForKey loads key.Catalog on a Get miss. seen is the catalog's
 // load count at the miss. Under the per-catalog lock it re-checks whether
 // a concurrent miss loaded the catalog while we waited, and only then
@@ -352,19 +300,6 @@ func (c *lruCache) loadCount(catalog string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.loads[catalog]
-}
-
-// loadCatalogIfStale skips the Load when every entry for catalog is
-// fresher than TTL. Used by Refresh to avoid unnecessary introspection.
-func (c *lruCache) loadCatalogIfStale(ctx context.Context, catalog string) error {
-	lock := c.lockForCatalog(catalog)
-	lock.Lock()
-	defer lock.Unlock()
-
-	if c.catalogHasEntries(catalog) && !c.catalogIsStale(catalog) {
-		return nil
-	}
-	return c.reloadCatalogLocked(ctx, catalog)
 }
 
 // reloadCatalogLocked fetches the whole catalog schema and repopulates the
@@ -451,33 +386,8 @@ func (c *lruCache) catalogHasEntries(catalog string) bool {
 	return false
 }
 
-// catalogIsStale reports whether every entry for catalog has Fetched
-// older than TTL. Mixed ages resolve to "not stale" — a single fresh
-// entry is enough to skip the refresh.
-func (c *lruCache) catalogIsStale(catalog string) bool {
-	now := c.opts.Clock()
-	anyFresh := false
-	found := false
-	for _, k := range c.entries.Keys() {
-		if k.Catalog != catalog {
-			continue
-		}
-		found = true
-		if e, ok := c.entries.Peek(k); ok {
-			if now.Sub(e.Fetched) < c.opts.TTL {
-				anyFresh = true
-				break
-			}
-		}
-	}
-	if !found {
-		return true
-	}
-	return !anyFresh
-}
-
-// markCatalogStale flags every entry for catalog. Used when a refresh
-// attempt failed — callers still see data but know it is stale.
+// markCatalogStale flags every entry for catalog. Used when a reload
+// failed. Callers still see data but know it is stale.
 func (c *lruCache) markCatalogStale(catalog string) {
 	for _, k := range c.entries.Keys() {
 		if k.Catalog != catalog {

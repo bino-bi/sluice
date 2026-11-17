@@ -30,12 +30,11 @@ func (f *fakeSchemaCache) Get(_ context.Context, key schema.Key) (*schema.Entry,
 	}
 	return nil, fmt.Errorf("%w: %s", schema.ErrUnknownTable, key)
 }
-func (f *fakeSchemaCache) All() []*schema.Entry                    { return f.entries }
-func (f *fakeSchemaCache) Invalidate(schema.Key)                   {}
-func (f *fakeSchemaCache) InvalidateCatalog(string)                {}
-func (f *fakeSchemaCache) InvalidateAll()                          {}
-func (f *fakeSchemaCache) Refresh(context.Context, []string) error { return nil }
-func (f *fakeSchemaCache) Load(context.Context, []string)          {}
+func (f *fakeSchemaCache) All() []*schema.Entry           { return f.entries }
+func (f *fakeSchemaCache) Invalidate(schema.Key)          {}
+func (f *fakeSchemaCache) InvalidateCatalog(string)       {}
+func (f *fakeSchemaCache) InvalidateAll()                 {}
+func (f *fakeSchemaCache) Load(context.Context, []string) {}
 
 // denyingPolicy denies the tables named in deny, allows everything else.
 type denyingPolicy struct {

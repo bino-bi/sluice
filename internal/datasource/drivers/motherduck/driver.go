@@ -167,7 +167,9 @@ ORDER BY table_schema, table_name, ordinal_position
 	return sch, nil
 }
 
-// HealthCheck runs a trivial query against the attached catalog.
+// HealthCheck checks that the catalog is attached. It reads DuckDB's own
+// catalog list and sends nothing to MotherDuck, so a service outage shows
+// up only as a query error.
 func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.HealthOptions) error {
 	q := opts.Query
 	if q == "" {

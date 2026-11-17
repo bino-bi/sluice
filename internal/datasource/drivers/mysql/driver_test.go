@@ -115,3 +115,9 @@ func TestResolvePassword(t *testing.T) {
 		t.Errorf("pw = %q; want p@ss", pw)
 	}
 }
+
+func TestHealthQueryReachesTheServer(t *testing.T) {
+	if got, want := healthQuery("crm"), "SELECT 1 FROM mysql_query('crm', 'SELECT 1')"; got != want {
+		t.Errorf("healthQuery = %q, want %q", got, want)
+	}
+}

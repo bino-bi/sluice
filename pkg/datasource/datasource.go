@@ -19,7 +19,8 @@ import (
 //  2. internal/executor calls Attach once per DuckDB instance, on the
 //     first connection, before it locks the configuration.
 //  3. internal/datasource runs HealthCheck on a ticker.
-//  4. internal/schema calls Schema lazily, with a TTL cache.
+//  4. internal/schema calls Schema on a cache miss and keeps the result
+//     until a policy reload.
 //  5. On shutdown, Close releases driver-level resources.
 type DataSource interface {
 	// Name returns the catalog name used in queries (matches metadata.name
@@ -41,7 +42,7 @@ type DataSource interface {
 	Attach(ctx context.Context, conn *sql.Conn, opts AttachOptions) error
 
 	// Schema returns the visible schemas, tables, and columns. Drivers may
-	// cache internally; callers also cache with a TTL.
+	// cache internally; callers also cache until a policy reload.
 	Schema(ctx context.Context, conn *sql.Conn) (Schema, error)
 
 	// HealthCheck runs a cheap liveness probe. On failure, the returned

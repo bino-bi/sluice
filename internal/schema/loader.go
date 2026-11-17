@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
 )
@@ -18,6 +19,12 @@ type DataSourceResolver interface {
 	// non-nil error when the catalog is unknown or the driver is
 	// unhealthy.
 	Lookup(catalog string) (pkgds.DataSource, error)
+}
+
+// schemaPullMarker is implemented by the data-source registry. The loader
+// reports each successful load so the admin API shows schema_pulled_at.
+type schemaPullMarker interface {
+	MarkSchemaPulled(catalog string, at time.Time)
 }
 
 // ConnProvider hands out a pooled DuckDB *sql.Conn for a given catalog.
@@ -63,6 +70,9 @@ func (l *dataSourceLoader) Load(ctx context.Context, catalog string) (pkgds.Sche
 	}
 	if sch.Catalog == "" {
 		sch.Catalog = catalog
+	}
+	if m, ok := l.sources.(schemaPullMarker); ok {
+		m.MarkSchemaPulled(catalog, time.Now())
 	}
 	return sch, nil
 }
