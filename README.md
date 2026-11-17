@@ -164,7 +164,7 @@ Full documentation: **<https://bino-bi.github.io/sluice/>**
 ## Project layout
 
 - `cmd/` — CLI and composition root (AGPL-3.0-or-later).
-- `pkg/` — public API packages: error catalog, policy types, mask providers, driver interface (Apache-2.0).
+- `pkg/`: public types (error catalog, policy types, mask providers, driver interface) and the built-in driver registry (Apache-2.0). It is not a plugin point: a new driver needs a change in this repository.
 - `internal/` — the gateway itself (AGPL-3.0-or-later).
 - `docs/` — documentation site source (CC-BY-4.0).
 - `examples/` — runnable end-to-end examples.
@@ -178,7 +178,7 @@ Sluice is **alpha**. The current release is `v0.1.0-rc.3`, a release candidate. 
 
 | Scope | License | File |
 | --- | --- | --- |
-| `pkg/`, `sdk/` | Apache-2.0 | [LICENSE-APACHE](LICENSE-APACHE) |
+| `pkg/` | Apache-2.0 | [LICENSE-APACHE](LICENSE-APACHE) |
 | Everything else (code) | AGPL-3.0-or-later | [LICENSE](LICENSE) |
 | `docs/` | CC-BY-4.0 | [LICENSE-CC-BY](LICENSE-CC-BY) |
 

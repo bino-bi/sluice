@@ -7,7 +7,7 @@ Please do not open a pull request in advance. Open an issue or a discussion firs
 If we agree on a pull request:
 
 - Run `make all` (fmt, vet, lint, test, build) before you open it.
-- Your work is licensed under the project's existing terms: Apache-2.0 for `pkg/` and `sdk/`, AGPL-3.0-or-later elsewhere. New source files need the matching SPDX header.
+- Your work is licensed under the project's existing terms: Apache-2.0 for `pkg/`, AGPL-3.0-or-later elsewhere. New source files need the matching SPDX header.
 
 ## Security
 

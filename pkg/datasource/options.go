@@ -16,12 +16,6 @@ type AttachOptions struct {
 	// SecretResolver resolves secret:// URIs referenced by the spec. Must
 	// be non-nil when the spec contains any reference.
 	SecretResolver SecretResolver
-
-	// SchemaFilter restricts the visible namespaces. Empty = all.
-	SchemaFilter []string
-
-	// TableFilter restricts the visible tables. Empty = all.
-	TableFilter []string
 }
 
 // HealthOptions configures a single HealthCheck call.
