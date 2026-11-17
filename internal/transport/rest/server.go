@@ -75,8 +75,8 @@ type Deps struct {
 	// the authenticated status poll. Nil disables those routes.
 	Approvals ApprovalGateway
 
-	// GlobalLimiter and PerIPLimiter bound /v1/query traffic ahead of
-	// identity resolution. Nil disables the respective bucket.
+	// GlobalLimiter and PerIPLimiter bound every route that runs identity,
+	// ahead of identity resolution. Nil disables the respective bucket.
 	GlobalLimiter httpmw.Limiter
 	PerIPLimiter  httpmw.Limiter
 
