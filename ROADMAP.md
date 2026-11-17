@@ -43,7 +43,7 @@ The v1.0 bar is **production-ready for regulated multi-tenant deployments**. Sum
 - Identity: OIDC + mTLS GA. Refresh-token rotation.
 - Policies: CEL GA, `QueryRewritePolicy` GA, per-binding `spec.claims` with wildcards.
 - Audit: append-only filesystem support (Linux `chattr +a`), WORM volumes validated, real-time S3 Object Lock path.
-- Drivers: write-path (`WritableDataSource`) for a subset. `ReloadableDataSource` for live spec rotation.
+- Drivers: a write path for a subset. Live spec rotation.
 - Transports: gRPC + Connect. Admin `/admin/audit/query`.
 - Deployment: Kubernetes operator, Helm chart, horizontal scaling with shared schema cache.
 - Docs: compliance mappings (GDPR Art. 30, BSI C5, SOC 2) with external audit.
