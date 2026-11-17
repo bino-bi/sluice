@@ -126,6 +126,40 @@ func TestApproval_WaitErrorIsAudited(t *testing.T) {
 	}
 }
 
+// ctxAudit refuses a record when the context is done, as a full queue
+// does.
+type ctxAudit struct{ fakeAudit }
+
+func (a *ctxAudit) Enqueue(ctx context.Context, r *audit.Record) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return a.fakeAudit.Enqueue(ctx, r)
+}
+
+// The record of a query that ends because its context ended, for example
+// at shutdown, must not depend on that context.
+func TestExecute_CanceledQueryIsAudited(t *testing.T) {
+	a := &ctxAudit{}
+	svc := queryservice.New(queryservice.Options{
+		Parser:   &fakeParser{},
+		Policy:   &fakePolicy{decision: &policy.Decision{Outcome: policy.OutcomeAllow}},
+		Rewriter: &fakeRewriter{},
+		Executor: &fakeExecutor{err: context.Canceled},
+		Audit:    a,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.Execute(ctx, queryservice.QueryRequest{SQL: "SELECT id FROM pg.public.orders", Origin: queryservice.OriginREST})
+	if err == nil {
+		t.Fatal("canceled query succeeded")
+	}
+	recs := a.all()
+	if len(recs) != 1 || recs[0].Decision != audit.DecisionError || recs[0].QueryID != pkgerr.FromError(err).QueryID {
+		t.Fatalf("records = %+v, want the error record of the query", recs)
+	}
+}
+
 // A query that fails in the rewrite does not use up its approval grant,
 // so the client can fix the cause and run it again without a new approval.
 func TestApproval_RewriteErrorKeepsGrant(t *testing.T) {

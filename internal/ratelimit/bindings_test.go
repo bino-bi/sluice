@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package main
+package ratelimit_test
 
 import (
 	"testing"
 
 	"github.com/bino-bi/sluice/internal/budget"
-	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/ratelimit"
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
@@ -29,18 +28,18 @@ func TestSubjectSpecsAreKeyedByIssuer(t *testing.T) {
 		}
 		return sb
 	}
-	snap := &config.Snapshot{SubjectBindings: []*apitypes.SubjectBinding{
+	bindings := []*apitypes.SubjectBinding{
 		binding("bot", "", true),
 		binding("svc", "https://idp", true),
 		binding("any", "", false),
-	}}
+	}
 	want := []ratelimit.SubjectKey{
 		{Subject: "bot-id", Issuer: "bot"},
 		{Subject: "svc-id", Issuer: "https://idp"},
 		{Subject: "any-id"},
 	}
-	rate, _ := buildRateSpecs(snap)
-	bud, _ := buildBudgetSpecs(snap)
+	rate, _ := ratelimit.SpecsFromBindings(bindings)
+	bud, _ := budget.SpecsFromBindings(bindings)
 	if len(rate) != len(want) || len(bud) != len(want) {
 		t.Fatalf("rate specs %v, budget specs %v, want the keys %v", rate, bud, want)
 	}

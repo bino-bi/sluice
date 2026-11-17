@@ -44,35 +44,6 @@ func buildBudgetManager(scfg *config.ServerConfig, snap *config.Snapshot, log *s
 		log.Error("budget: store unavailable; budgeting disabled", slog.String("error", err.Error()))
 		return nil, nil
 	}
-	mgr.SetSpecs(buildBudgetSpecs(snap))
+	mgr.SetSpecs(budget.SpecsFromBindings(snap.SubjectBindings))
 	return mgr, nil
-}
-
-// buildBudgetSpecs derives per-subject and per-issuer budget specs from
-// SubjectBinding.spec.budget, mirroring buildRateSpecs.
-func buildBudgetSpecs(snap *config.Snapshot) (bySubject map[budget.SubjectKey]budget.Spec, byIssuer map[string]budget.Spec) {
-	bySubject = map[budget.SubjectKey]budget.Spec{}
-	byIssuer = map[string]budget.Spec{}
-	if snap == nil {
-		return bySubject, byIssuer
-	}
-	for _, sb := range snap.SubjectBindings {
-		if sb == nil || sb.Spec.Budget == nil {
-			continue
-		}
-		spec := budget.Spec{
-			CPUSecondsPerDay: sb.Spec.Budget.CPUSecondsPerDay,
-			RowsPerDay:       sb.Spec.Budget.RowsPerDay,
-		}
-		if spec.CPUSecondsPerDay == 0 && spec.RowsPerDay == 0 {
-			continue
-		}
-		if sb.Spec.Claims.SubjectID != "" {
-			bySubject[budget.SubjectKey{Subject: sb.Spec.Claims.SubjectID, Issuer: bindingIssuer(sb)}] = spec
-		}
-		if sb.Spec.Issuer != "" {
-			byIssuer[sb.Spec.Issuer] = spec
-		}
-	}
-	return bySubject, byIssuer
 }

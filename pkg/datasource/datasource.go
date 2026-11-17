@@ -70,19 +70,3 @@ type ExternalPather interface {
 type StateReporter interface {
 	State() string
 }
-
-// Reloadable is an optional interface for drivers that can reapply
-// configuration (e.g. rotated credentials) without tearing down connections.
-// Runtime support lands in v1; declaring the interface here lets drivers
-// implement it ahead of time.
-type Reloadable interface {
-	Reload(ctx context.Context, newSpec Spec) error
-}
-
-// WritableDataSource is the v2 write-path extension. Declared here so the
-// type system can enforce the MVP read-only contract without a breaking
-// change when v2 lands.
-type WritableDataSource interface {
-	DataSource
-	AttachWritable(ctx context.Context, conn *sql.Conn, opts AttachOptions) error
-}

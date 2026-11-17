@@ -20,7 +20,6 @@ import (
 	"github.com/bino-bi/sluice/internal/secrets"
 	"github.com/bino-bi/sluice/internal/transport/mcp"
 	"github.com/bino-bi/sluice/internal/transport/tlsutil"
-	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
 // newMCPCmd returns the `sluice mcp` subcommand: a Model Context Protocol
@@ -86,7 +85,7 @@ Exit codes:
 			ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			deps, err := buildRuntime(ctx, serverCfgPath, policyDir)
+			deps, err := buildRuntimeFor(ctx, runMCP, serverCfgPath, policyDir)
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}
@@ -95,12 +94,6 @@ Exit codes:
 				defer cancel()
 				deps.Close(shutdownCtx)
 			}()
-
-			// An approver decides over the REST API, which this command
-			// does not start. A held query could never be released.
-			if len(deps.registry.Current().ByKind[apitypes.KindApprovalPolicy]) > 0 {
-				return &exitError{Code: 1, Err: errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")}
-			}
 
 			runCtx, cancel := context.WithCancelCause(ctx)
 			defer cancel(nil)
@@ -133,7 +126,6 @@ Exit codes:
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}
-			deps.refuseApprovals = true
 			startReloads(runCtx, deps)
 			err = srv.Run(runCtx)
 			if cause := context.Cause(runCtx); errors.Is(cause, errPinnedIdentity) {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
@@ -46,13 +47,14 @@ import (
 	"github.com/bino-bi/sluice/pkg/apitypes"
 )
 
-// runtimeDeps is the fully-wired dependency graph the `serve` subcommand
-// starts and shuts down. Each field is owned by the bootstrap and freed by
-// the returned Close function (reverse order of construction).
+// runtimeDeps is the fully-wired dependency graph the `serve` and `mcp`
+// subcommands start and shut down. Each field is owned by the bootstrap
+// and freed by Close (reverse order of construction).
 type runtimeDeps struct {
 	log          *slog.Logger
 	server       *config.ServerConfig
 	snapshot     *config.Snapshot
+	policyDir    string
 	registry     *config.Registry
 	resolver     *secrets.Resolver
 	parser       parser.Parser
@@ -86,7 +88,7 @@ type runtimeDeps struct {
 	// Nil without one.
 	mcpPinned *pinnedCred
 
-	// refuseApprovals fails a reload that loads an ApprovalPolicy. Set by
+	// refuseApprovals fails a reload that loads an ApprovalPolicy. Set for
 	// `sluice mcp`, which serves no approval link.
 	refuseApprovals bool
 
@@ -97,35 +99,77 @@ type runtimeDeps struct {
 	perIPLimiter  *ratelimit.KeyedLimiter
 }
 
-// buildRuntime wires every layer in the correct order. The returned deps
-// are ready to be started; invoking Close cleans up in reverse. Errors are
-// wrapped with a context-specific prefix so the caller can exit with the
-// right code.
+// runMode selects the parts buildRuntimeFor builds.
+type runMode int
+
+const (
+	// runServe builds every part `sluice serve` starts.
+	runServe runMode = iota
+	// runMCP builds the parts `sluice mcp` runs: no REST or admin server,
+	// no approval broker and no synthetic build service. The command
+	// builds its MCP server itself.
+	runMCP
+)
+
+// failedBuildCloseTimeout bounds the cleanup after a failed start.
+const failedBuildCloseTimeout = 10 * time.Second
+
+// buildRuntime builds the runtime of `sluice serve`.
 func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtimeDeps, error) {
+	return buildRuntimeFor(ctx, runServe, serverCfgPath, policyDir)
+}
+
+// buildRuntimeFor wires the layers for mode in stages: core pipeline,
+// identity, query service, synthetic builds and transports. Each stage
+// has a close method, and Close runs them in reverse. When a stage fails,
+// Close frees what was built so far (tracer flush, audit sinks and their
+// lock, executor, health loop). Errors carry a context-specific prefix so
+// the caller can exit with the right code.
+func buildRuntimeFor(ctx context.Context, mode runMode, serverCfgPath, policyDir string) (*runtimeDeps, error) {
 	if !parserbackend.Implemented {
 		return nil, fmt.Errorf("parser backend %q is a non-functional stub in this build (compiled with -tags=pure_parser); rebuild without the tag", parserbackend.Name())
 	}
-	deps := &runtimeDeps{}
+	deps := &runtimeDeps{refuseApprovals: mode == runMCP}
+	stages := []func() error{
+		func() error { return deps.buildCore(ctx, serverCfgPath, policyDir) },
+		func() error { return deps.buildIdentityStage(ctx) },
+		func() error { return deps.buildService(ctx, mode) },
+		func() error { return deps.buildSynth(mode) },
+		func() error { return deps.buildTransports(ctx, mode) },
+	}
+	for _, stage := range stages {
+		if err := stage(); err != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), failedBuildCloseTimeout)
+			defer cancel()
+			deps.Close(closeCtx)
+			return nil, err
+		}
+	}
+	return deps, nil
+}
 
-	// 1. Server config. Validate refuses settings this build cannot
-	// enforce — an operator must never believe a control is active when
-	// it is not.
+// buildCore builds the server config, telemetry, secrets, snapshot,
+// parser, data sources, executors, schema cache, policy engine, rewriter
+// and audit. closeCore frees them.
+func (d *runtimeDeps) buildCore(ctx context.Context, serverCfgPath, policyDir string) error {
+	// Validate refuses settings this build cannot enforce: an operator
+	// must never believe a control is active when it is not.
 	scfg, err := config.LoadServer(serverCfgPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("load server config: %w", err)
+		return fmt.Errorf("load server config: %w", err)
 	}
 	// A typo such as rest.tsl would otherwise keep the default silently.
 	if serverCfgPath != "" {
 		if err := config.CheckServerKeys(serverCfgPath); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if err := scfg.Validate(); err != nil {
-		return nil, fmt.Errorf("server config: %w", err)
+		return fmt.Errorf("server config: %w", err)
 	}
-	deps.server = scfg
+	d.server = scfg
 
-	// 2. Telemetry (slog + optional prom gauge + optional otel tracing).
+	// Telemetry (slog + optional prom gauge + optional otel tracing).
 	telCfg := telemetry.DefaultConfig(telemetry.ServiceInfo{
 		Name:    "sluice",
 		Version: version.Current().Version,
@@ -144,213 +188,252 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	}
 	shutdown, err := telemetry.Init(ctx, telCfg)
 	if err != nil {
-		return nil, fmt.Errorf("telemetry init: %w", err)
+		return fmt.Errorf("telemetry init: %w", err)
 	}
-	deps.telShutdown = shutdown
-	deps.log = slog.Default()
+	d.telShutdown = shutdown
+	d.log = slog.Default()
 
-	// 3. Secrets resolver (env + file providers).
-	deps.resolver = secrets.NewResolver(secrets.ResolverOptions{Logger: deps.log})
+	// Secrets resolver (env + file providers).
+	d.resolver = secrets.NewResolver(secrets.ResolverOptions{Logger: d.log})
 
-	// 4. Snapshot (policies + data sources + subject bindings).
-	dir := policyDir
-	if dir == "" {
-		dir = scfg.Policies.Directory
+	// Snapshot (policies + data sources + subject bindings).
+	d.policyDir = policyDir
+	if d.policyDir == "" {
+		d.policyDir = scfg.Policies.Directory
 	}
 	snap, err := config.LoadDirectory(ctx, config.LoadOptions{
-		Sources: []config.SourceDir{{Path: dir}},
+		Sources: []config.SourceDir{{Path: d.policyDir}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load policy directory %q: %w", dir, err)
+		return fmt.Errorf("load policy directory %q: %w", d.policyDir, err)
 	}
-	deps.snapshot = snap
+	d.snapshot = snap
 
-	// 5. Registry — atomic snapshot holder for downstream subscribers.
-	deps.registry = config.NewRegistry()
-	deps.registry.Publish(snap)
+	// Registry: atomic snapshot holder for downstream subscribers.
+	d.registry = config.NewRegistry()
+	d.registry.Publish(snap)
 
-	// 6. Parser.
-	deps.parser = parserbackend.New(parser.Options{
+	d.parser = parserbackend.New(parser.Options{
 		MaxSQLBytes: scfg.Limits.MaxSQLBytes,
-		Logger:      deps.log,
+		Logger:      d.log,
 	})
 	version.SetPgQueryVersion(parserbackend.Version())
 
-	// 7. Data-source registry (AttachHook only usable after executor init).
-	deps.sourceReg, err = datasource.New(ctx, datasource.Options{
+	// Data-source registry (AttachHook only usable after executor init).
+	d.sourceReg, err = datasource.New(ctx, datasource.Options{
 		Snapshot:     &datasource.Snapshot{DataSources: snap.DataSources},
-		Secrets:      secrets.NewDataSourceResolver(deps.resolver),
-		Logger:       deps.log,
+		Secrets:      secrets.NewDataSourceResolver(d.resolver),
+		Logger:       d.log,
 		FailFast:     scfg.DataSources.FailFast,
 		SyntheticDir: scfg.Synthetic.Dir,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("datasource registry: %w", err)
+		return fmt.Errorf("datasource registry: %w", err)
 	}
 
-	// 8. Executor (DuckDB); installs AttachHook, which ATTACHes every
-	//    catalog once for the whole instance before the hardening lock.
-	deps.exec, err = executor.New(ctx, executor.Config{
+	// Executor (DuckDB); installs AttachHook, which ATTACHes every
+	// catalog once for the whole instance before the hardening lock.
+	d.exec, err = executor.New(ctx, executor.Config{
 		Path: "",
 		Harden: executor.HardenConfig{
 			MemoryLimit:          scfg.DuckDB.MemoryLimit,
 			Threads:              scfg.DuckDB.Threads,
 			TempDirectory:        scfg.DuckDB.TempDir,
-			AllowedExternalPaths: deps.sourceReg.ExternalPaths(),
+			AllowedExternalPaths: d.sourceReg.ExternalPaths(),
 		},
-		AttachHook:              deps.sourceReg.AttachHook(),
+		AttachHook:              d.sourceReg.AttachHook(),
 		MaxOpen:                 scfg.DuckDB.MaxOpen,
 		MaxIdle:                 scfg.DuckDB.MaxIdle,
 		ConnMaxIdle:             scfg.DuckDB.ConnMaxIdle,
 		DefaultStatementTimeout: scfg.Limits.QueryTimeout,
-		Logger:                  deps.log,
+		Logger:                  d.log,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("executor: %w", err)
+		return fmt.Errorf("executor: %w", err)
 	}
 
-	// 8a. Parse-only DuckDB for the rewriter's parse check. Query
+	// Parse-only DuckDB for the rewriter's parse check. Query
 	// connections stay checked out while results stream, so a check on
 	// that pool would wait behind long reads. Nothing is attached here.
-	deps.parseExec, err = executor.NewParseCheck(ctx, scfg.Limits.MaxSQLBytes, deps.log)
+	d.parseExec, err = executor.NewParseCheck(ctx, scfg.Limits.MaxSQLBytes, d.log)
 	if err != nil {
-		return nil, fmt.Errorf("parse check executor: %w", err)
+		return fmt.Errorf("parse check executor: %w", err)
 	}
 
-	// 8b. Health sweep pool — same *sql.DB the schema cache borrows from.
+	// Health sweep pool: same *sql.DB the schema cache borrows from.
 	// Kicks one immediate sweep so /v1/ready reflects real state shortly
 	// after boot instead of after the first full HealthInterval.
-	deps.sourceReg.SetPool(ctx, datasource.NewSQLPool(deps.exec.DB()))
+	d.sourceReg.SetPool(ctx, datasource.NewSQLPool(d.exec.DB()))
 
-	// 9. Schema cache — wired to the pool via a narrow ConnProvider.
+	// Schema cache, wired to the pool via a narrow ConnProvider.
 	schema.RegisterMetrics()
-	deps.schemaCache = schema.New(schema.Options{
-		Loader: schema.NewLoader(deps.sourceReg, deps.exec.DB()),
-		Logger: deps.log,
+	d.schemaCache = schema.New(schema.Options{
+		Loader: schema.NewLoader(d.sourceReg, d.exec.DB()),
+		Logger: d.log,
 	})
 
-	// 10. Policy engine(s) + snapshot apply. The YAML engine always exists
+	// Policy engine(s) + snapshot apply. The YAML engine always exists
 	// (admin snapshot introspection + composite member); the engine passed
 	// to the queryservice may be a composite.
 	policy.RegisterMetrics()
-	deps.policyEng, deps.policyEngine, err = buildPolicyEngine(scfg, deps.resolver, deps.log)
+	d.policyEng, d.policyEngine, err = buildPolicyEngine(scfg, d.resolver, d.log)
 	if err != nil {
-		return nil, fmt.Errorf("policy engine: %w", err)
+		return fmt.Errorf("policy engine: %w", err)
 	}
-	if err := deps.policyEngine.ApplySnapshot(ctx, snap); err != nil {
-		return nil, fmt.Errorf("policy snapshot: %w", err)
+	if err := d.policyEngine.ApplySnapshot(ctx, snap); err != nil {
+		return fmt.Errorf("policy snapshot: %w", err)
 	}
 
-	// 11. Rewriter.
-	defaultDB, err := deps.exec.CurrentDatabase(ctx)
+	defaultDB, err := d.exec.CurrentDatabase(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("executor: %w", err)
+		return fmt.Errorf("executor: %w", err)
 	}
-	deps.rewrite = rewriter.New(rewriter.Options{
-		Parser:          deps.parser,
-		Schema:          deps.schemaCache,
-		Logger:          deps.log,
-		Salts:           secrets.NewSaltStore(deps.resolver),
-		ParseCheck:      deps.parseExec,
+	d.rewrite = rewriter.New(rewriter.Options{
+		Parser:          d.parser,
+		Schema:          d.schemaCache,
+		Logger:          d.log,
+		Salts:           secrets.NewSaltStore(d.resolver),
+		ParseCheck:      d.parseExec,
 		DefaultDatabase: defaultDB,
 	})
 
-	// 12. Audit dispatcher — file sink (chain primary) plus optional
+	// Audit dispatcher: file sink (chain primary) plus optional
 	// best-effort syslog / s3 secondaries.
-	deps.auditSinks, deps.auditFile, err = buildAuditSinks(ctx, scfg, deps.resolver, deps.log)
+	d.auditSinks, d.auditFile, err = buildAuditSinks(ctx, scfg, d.resolver, d.log)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	genesis, err := resolveGenesisSeed(ctx, deps.resolver, scfg.Audit.File)
+	genesis, err := resolveGenesisSeed(ctx, d.resolver, scfg.Audit.File)
 	if err != nil {
-		return nil, fmt.Errorf("audit genesis: %w", err)
+		return fmt.Errorf("audit genesis: %w", err)
 	}
 	var chainKey []byte
 	if ref := scfg.Audit.ChainKeyRef; ref != "" {
-		key, err := deps.resolver.ResolveString(ctx, ref)
+		key, err := d.resolver.ResolveString(ctx, ref)
 		if err != nil {
-			return nil, fmt.Errorf("audit.chainKeyRef: %w", err)
+			return fmt.Errorf("audit.chainKeyRef: %w", err)
 		}
 		// An empty secret would silently mean a chain without a key.
 		if key == "" {
-			return nil, fmt.Errorf("audit.chainKeyRef: the secret %s is empty", ref)
+			return fmt.Errorf("audit.chainKeyRef: the secret %s is empty", ref)
 		}
 		chainKey = []byte(key)
 	}
 	host, _ := os.Hostname()
-	deps.auditDisp, err = audit.NewDispatcher(audit.DispatcherOptions{
-		Sinks:       deps.auditSinks,
+	d.auditDisp, err = audit.NewDispatcher(audit.DispatcherOptions{
+		Sinks:       d.auditSinks,
 		GenesisSeed: genesis,
 		ChainKey:    chainKey,
 		Origin:      host,
-		Logger:      deps.log,
+		Logger:      d.log,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("audit dispatcher: %w", err)
+		return fmt.Errorf("audit dispatcher: %w", err)
 	}
+	return nil
+}
 
-	// 13. Identity — JWT via SubjectBindings + optional API-key pepper.
-	ids, err := buildIdentity(ctx, scfg, deps.resolver, snap, deps.log)
+// closeCore frees what buildCore built. Missing parts are skipped.
+func (d *runtimeDeps) closeCore(ctx context.Context) {
+	if d.auditDisp != nil {
+		_ = d.auditDisp.Close(ctx)
+	}
+	for _, s := range d.auditSinks {
+		_ = s.Close(ctx)
+	}
+	if d.sourceReg != nil {
+		_ = d.sourceReg.Close()
+	}
+	if d.exec != nil {
+		_ = d.exec.Close()
+	}
+	if d.parseExec != nil {
+		_ = d.parseExec.Close()
+	}
+	if d.telShutdown != nil {
+		_ = d.telShutdown(ctx)
+	}
+}
+
+// buildIdentityStage builds the identifiers (JWT via SubjectBindings plus
+// the optional API-key pepper) and the per-subject rate limiter. Nothing
+// in it needs a close.
+func (d *runtimeDeps) buildIdentityStage(ctx context.Context) error {
+	ids, err := buildIdentity(ctx, d.server, d.resolver, d.snapshot, d.log)
 	if err != nil {
-		return nil, fmt.Errorf("identity: %w", err)
+		return fmt.Errorf("identity: %w", err)
 	}
-	deps.identifier = ids.identifier
-	deps.apikey = ids.apikey
-	deps.jwtID = ids.jwt
-	deps.jwtBindings = ids.bindings
+	d.identifier = ids.identifier
+	d.apikey = ids.apikey
+	d.jwtID = ids.jwt
+	d.jwtBindings = ids.bindings
 
-	// 14. Per-subject rate limiter (from SubjectBinding.spec.rateLimit,
+	// Per-subject rate limiter (from SubjectBinding.spec.rateLimit,
 	// falling back to limits.defaultSubjectRps for bindings without one).
-	deps.rateLimiter = ratelimit.New(nil)
-	deps.rateLimiter.SetDefault(ratelimit.Spec{
-		RPS:   scfg.Limits.DefaultSubjectRPS,
-		Burst: scfg.Limits.DefaultSubjectBurst,
+	d.rateLimiter = ratelimit.New(nil)
+	d.rateLimiter.SetDefault(ratelimit.Spec{
+		RPS:   d.server.Limits.DefaultSubjectRPS,
+		Burst: d.server.Limits.DefaultSubjectBurst,
 	})
-	{
-		bySub, byIss := buildRateSpecs(snap)
-		deps.rateLimiter.SetSpecs(bySub, byIss)
-	}
+	d.rateLimiter.SetSpecs(ratelimit.SpecsFromBindings(d.snapshot.SubjectBindings))
+	return nil
+}
 
-	// 14b. Rewrite cache (opt-in). Built before the queryservice so the
-	// reload subscriber can Purge it on every snapshot publish.
+// buildService builds the rewrite cache, the approval broker (serve
+// only), the budget manager and the query service. closeService frees
+// them.
+func (d *runtimeDeps) buildService(ctx context.Context, mode runMode) error {
+	scfg, snap := d.server, d.snapshot
+
+	// Rewrite cache (opt-in). Built before the queryservice so the reload
+	// can Purge it on every snapshot publish.
 	if scfg.Cache.Rewrite.Enabled {
-		deps.rewriteCache = policycache.New(scfg.Cache.Rewrite.Size, scfg.Cache.Rewrite.TTL)
+		d.rewriteCache = policycache.New(scfg.Cache.Rewrite.Size, scfg.Cache.Rewrite.TTL)
 	}
 
-	// 14c. Approval broker (built before the queryservice so it can share
-	// the instance). Active when at least one ApprovalPolicy is loaded or a
-	// public base URL is configured; policies without a base URL fail
-	// startup fail-closed. The sync wait is clamped to fit the REST request
-	// timeout so a hybrid wait returns ERR_APPROVAL_PENDING rather than
-	// being killed by the timeout middleware.
-	approvalSyncClamp(scfg, deps.log)
-	deps.approvals, err = buildApprovalBroker(ctx, scfg, snap, deps.resolver, deps.auditDisp, deps.log)
-	if err != nil {
-		return nil, fmt.Errorf("approval broker: %w", err)
+	var err error
+	if mode == runMCP {
+		// An approver decides over the REST API, which `sluice mcp` does
+		// not start. A held query could never be released.
+		if len(snap.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+			return errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")
+		}
+	} else {
+		// Approval broker (built before the queryservice so it can share
+		// the instance). Active when at least one ApprovalPolicy is loaded
+		// or a public base URL is configured; policies without a base URL
+		// fail startup fail-closed. The sync wait is clamped to fit the
+		// REST request timeout so a hybrid wait returns
+		// ERR_APPROVAL_PENDING rather than being killed by the timeout
+		// middleware.
+		approvalSyncClamp(scfg, d.log)
+		d.approvals, err = buildApprovalBroker(ctx, scfg, snap, d.resolver, d.auditDisp, d.log)
+		if err != nil {
+			return fmt.Errorf("approval broker: %w", err)
+		}
 	}
 
-	// 14d. Per-subject budget manager (opt-in, SQLite-backed).
-	deps.budget, err = buildBudgetManager(scfg, snap, deps.log)
+	// Per-subject budget manager (opt-in, SQLite-backed).
+	d.budget, err = buildBudgetManager(scfg, snap, d.log)
 	if err != nil {
-		return nil, fmt.Errorf("budget manager: %w", err)
+		return fmt.Errorf("budget manager: %w", err)
 	}
 
 	qopts := queryservice.Options{
-		Parser:          deps.parser,
-		Policy:          deps.policyEngine,
-		Rewriter:        deps.rewrite,
-		Executor:        deps.exec,
-		Audit:           deps.auditDisp,
-		Schema:          deps.schemaCache,
-		Logger:          deps.log,
-		RateLimiter:     deps.rateLimiter,
+		Parser:          d.parser,
+		Policy:          d.policyEngine,
+		Rewriter:        d.rewrite,
+		Executor:        d.exec,
+		Audit:           d.auditDisp,
+		Schema:          d.schemaCache,
+		Logger:          d.log,
+		RateLimiter:     d.rateLimiter,
 		AuditBestEffort: !scfg.Audit.FailClosed,
-		Keys:            secrets.NewKeyStore(deps.resolver),
-		Salts:           secrets.NewSaltStore(deps.resolver),
-		Catalogs:        deps.sourceReg.Catalogs,
+		Keys:            secrets.NewKeyStore(d.resolver),
+		Salts:           secrets.NewSaltStore(d.resolver),
+		Catalogs:        d.sourceReg.Catalogs,
 		SourceDown: func(catalog string) bool {
-			for _, st := range deps.sourceReg.Statuses() {
+			for _, st := range d.sourceReg.Statuses() {
 				if strings.EqualFold(st.Name, catalog) {
 					return !st.Healthy
 				}
@@ -372,19 +455,159 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 			SampleMinGroupRows:     scfg.Sample.MinGroupRows,
 		},
 	}
-	if deps.rewriteCache != nil {
-		qopts.Cache = deps.rewriteCache
+	if d.rewriteCache != nil {
+		qopts.Cache = d.rewriteCache
 	}
-	if deps.approvals != nil {
-		qopts.Approvals = deps.approvals
+	if d.approvals != nil {
+		qopts.Approvals = d.approvals
 		qopts.ApprovalSyncWait = scfg.Approval.SyncWait
 	}
-	if deps.budget != nil {
-		qopts.Budget = deps.budget
+	if d.budget != nil {
+		qopts.Budget = d.budget
 	}
-	deps.service = queryservice.New(qopts)
+	d.service = queryservice.New(qopts)
+	return nil
+}
 
-	// 15. Transports.
+// closeService frees what buildService built. Missing parts are skipped.
+func (d *runtimeDeps) closeService(ctx context.Context) {
+	if d.budget != nil {
+		// Final flush so the last window of usage is persisted.
+		_ = d.budget.Close(ctx)
+	}
+	if d.approvals != nil {
+		// Before the dispatcher: the broker's auditor writes through it.
+		_ = d.approvals.Close(ctx)
+	}
+}
+
+// buildSynth builds the synthetic build service of serve. Only with a
+// synthetic data source, so its metrics exist only then. closeSynth
+// stops it.
+func (d *runtimeDeps) buildSynth(mode runMode) error {
+	if mode != runServe || !hasSynthetic(d.snapshot.DataSources) {
+		return nil
+	}
+	scfg := d.server
+	build.RegisterMetrics()
+	d.synth = build.NewService(build.ServiceOptions{
+		DataSources: d.snapshot.DataSources,
+		Tagger: func() (build.Tagger, error) {
+			return policy.NewColumnTagger(d.registry.Current())
+		},
+		Secrets:      secrets.NewDataSourceResolver(d.resolver),
+		Dir:          scfg.Synthetic.Dir,
+		MaxRatio:     scfg.Synthetic.MaxRatio,
+		BuildTimeout: scfg.Synthetic.BuildTimeout,
+		Harden: executor.HardenConfig{
+			MemoryLimit:   scfg.DuckDB.MemoryLimit,
+			Threads:       scfg.DuckDB.Threads,
+			TempDirectory: scfg.DuckDB.TempDir,
+		},
+		Audit:      d.auditDisp,
+		FailClosed: scfg.Audit.FailClosed,
+		Registry:   d.sourceReg,
+		Exec:       d.exec,
+		Schema:     d.schemaCache,
+		Log:        d.log,
+	})
+	return nil
+}
+
+// closeSynth stops the synthetic builds. It runs before closeService and
+// closeCore: the end record of a canceled build goes through the
+// dispatcher, and a build may be swapping in the registry and executor.
+func (d *runtimeDeps) closeSynth(ctx context.Context) {
+	if d.synth == nil {
+		return
+	}
+	if err := d.synth.Close(ctx); err != nil {
+		d.log.Warn("synthetic: builds did not stop in time", "error", err)
+	}
+}
+
+// buildTransports builds the limiters ahead of the login, the config
+// watcher and, for serve, the REST server, the MCP server of mcp.enabled
+// and the admin server. closeTransports frees them.
+func (d *runtimeDeps) buildTransports(ctx context.Context, mode runMode) error {
+	scfg := d.server
+
+	// Transport-level buckets sit ahead of identity on /v1/query and on
+	// MCP over HTTP; zero RPS disables them (limits.* is restart-only,
+	// like the other limits).
+	if scfg.Limits.GlobalRPS > 0 {
+		d.globalLimiter = ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: scfg.Limits.GlobalRPS, Burst: scfg.Limits.GlobalBurst}, 1, nil)
+	}
+	if scfg.Limits.PerIPRPS > 0 {
+		d.perIPLimiter = ratelimit.NewKeyed(
+			ratelimit.Spec{RPS: scfg.Limits.PerIPRPS, Burst: scfg.Limits.PerIPBurst},
+			scfg.Limits.PerIPMaxBuckets, nil)
+	}
+
+	if mode == runServe {
+		if err := d.buildServeListeners(ctx); err != nil {
+			return err
+		}
+	}
+
+	// Config watcher: fsnotify + SIGHUP + admin /reload all funnel
+	// through here, republishing the snapshot to subscribers on change.
+	// Always constructed: policies.reload gates only the fsnotify loop
+	// (startReloads); the synchronous Reload path backing SIGHUP and
+	// POST /admin/reload works without it.
+	var err error
+	d.watcher, err = config.NewWatcher(config.WatchOptions{
+		Dir:       d.policyDir,
+		ModuleDir: scfg.Policies.OPA.ModuleDir,
+		Registry:  d.registry,
+		Logger:    d.log,
+		// All or nothing: policies of every engine, identity, limits and
+		// budgets are prepared before anything is published.
+		Validate: d.prepareReload,
+	})
+	if err != nil {
+		return fmt.Errorf("config watcher: %w", err)
+	}
+
+	if mode != runServe || !scfg.Admin.Enabled {
+		return nil
+	}
+	token, err := resolveAdminToken(ctx, d.resolver, scfg.Admin.Token)
+	if err != nil {
+		return err
+	}
+	if err := checkAdminAnonymous(scfg.Admin, token); err != nil {
+		return err
+	}
+	adminCfg := admin.Config{
+		Enabled: true,
+		Listen:  scfg.Admin.Listen,
+		Token:   token,
+	}
+	if t := scfg.Admin.TLS; t != nil {
+		adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
+	}
+	d.admin = admin.New(adminCfg, admin.Deps{
+		Service:   d.service,
+		Approvals: adminPendingLister(d.approvals),
+		Snapshots: d.registry,
+		Sources:   d.sourceReg,
+		Catalogs:  registryCatalogLister{r: d.sourceReg},
+		Logger:    d.log,
+		Reloader:  reloaderFromWatcher(d.watcher),
+		Audit:     auditTailer(d.auditFile),
+		Synth:     adminSynthService(d.synth),
+
+		AuthFailed: d.authFailed("admin"),
+	})
+	return nil
+}
+
+// buildServeListeners builds the REST server of serve and its MCP server
+// when mcp.enabled.
+func (d *runtimeDeps) buildServeListeners(ctx context.Context) error {
+	scfg := d.server
 	restCfg := rest.Config{
 		Listen:         scfg.REST.Listen,
 		MaxBodyBytes:   scfg.REST.MaxBodyBytes,
@@ -396,121 +619,47 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		restCfg.TLS = &rest.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
 	}
 	restDeps := rest.Deps{
-		Service:    deps.service,
-		Identifier: deps.identifier,
-		Registry:   deps.sourceReg,
-		Approvals:  approvalGateway(deps.approvals),
-		Logger:     deps.log,
-		AuthFailed: deps.authFailed("rest"),
+		Service:    d.service,
+		Identifier: d.identifier,
+		Registry:   d.sourceReg,
+		Approvals:  approvalGateway(d.approvals),
+		Logger:     d.log,
+		AuthFailed: d.authFailed("rest"),
 	}
-	// Transport-level buckets sit ahead of identity on /v1/query and on
-	// MCP over HTTP; zero RPS disables them (limits.* is restart-only,
-	// like the other limits).
-	if scfg.Limits.GlobalRPS > 0 {
-		deps.globalLimiter = ratelimit.NewKeyed(
-			ratelimit.Spec{RPS: scfg.Limits.GlobalRPS, Burst: scfg.Limits.GlobalBurst}, 1, nil)
-		restDeps.GlobalLimiter = deps.globalLimiter
+	// A nil pointer in the interface field would not read as "no limit".
+	if d.globalLimiter != nil {
+		restDeps.GlobalLimiter = d.globalLimiter
 	}
-	if scfg.Limits.PerIPRPS > 0 {
-		deps.perIPLimiter = ratelimit.NewKeyed(
-			ratelimit.Spec{RPS: scfg.Limits.PerIPRPS, Burst: scfg.Limits.PerIPBurst},
-			scfg.Limits.PerIPMaxBuckets, nil)
-		restDeps.PerIPLimiter = deps.perIPLimiter
+	if d.perIPLimiter != nil {
+		restDeps.PerIPLimiter = d.perIPLimiter
 	}
-	deps.rest = rest.New(restCfg, restDeps)
+	d.rest = rest.New(restCfg, restDeps)
 
-	if scfg.MCP.Enabled {
-		deps.mcpPinned, err = resolveMCPPinnedUser(ctx, scfg, deps.resolver, deps.identifier, deps.log)
-		if err != nil {
-			return nil, fmt.Errorf("mcp: %w", err)
-		}
-		var pinned *identity.UserCtx
-		if deps.mcpPinned != nil {
-			pinned = deps.mcpPinned.user
-		}
-		deps.mcp, err = newMCPServer(deps, mcp.TransportMode(scfg.MCP.Transport), scfg.MCP.AllowAnonymous, pinned)
-		if err != nil {
-			return nil, fmt.Errorf("mcp: %w", err)
-		}
+	if !scfg.MCP.Enabled {
+		return nil
 	}
-
-	// 16. Config watcher — fsnotify + SIGHUP + admin /reload all funnel
-	//     through here, republishing the snapshot to subscribers on change.
-	//     Always constructed: policies.reload gates only the fsnotify loop
-	//     (Start, in serve.go); the synchronous Reload path backing SIGHUP
-	//     and POST /admin/reload works without it.
-	deps.watcher, err = config.NewWatcher(config.WatchOptions{
-		Dir:       dir,
-		ModuleDir: scfg.Policies.OPA.ModuleDir,
-		Registry:  deps.registry,
-		Logger:    deps.log,
-		// All or nothing: policies of every engine, identity, limits and
-		// budgets are prepared before anything is published.
-		Validate: deps.prepareReload,
-	})
+	var err error
+	d.mcpPinned, err = resolveMCPPinnedUser(ctx, scfg, d.resolver, d.identifier, d.log)
 	if err != nil {
-		return nil, fmt.Errorf("config watcher: %w", err)
+		return fmt.Errorf("mcp: %w", err)
 	}
-
-	// 17. Synthetic builds. Only with a synthetic data source, so its
-	//     metrics exist only then.
-	if hasSynthetic(snap.DataSources) {
-		build.RegisterMetrics()
-		deps.synth = build.NewService(build.ServiceOptions{
-			DataSources: snap.DataSources,
-			Tagger: func() (build.Tagger, error) {
-				return policy.NewColumnTagger(deps.registry.Current())
-			},
-			Secrets:      secrets.NewDataSourceResolver(deps.resolver),
-			Dir:          scfg.Synthetic.Dir,
-			MaxRatio:     scfg.Synthetic.MaxRatio,
-			BuildTimeout: scfg.Synthetic.BuildTimeout,
-			Harden: executor.HardenConfig{
-				MemoryLimit:   scfg.DuckDB.MemoryLimit,
-				Threads:       scfg.DuckDB.Threads,
-				TempDirectory: scfg.DuckDB.TempDir,
-			},
-			Audit:      deps.auditDisp,
-			FailClosed: scfg.Audit.FailClosed,
-			Registry:   deps.sourceReg,
-			Exec:       deps.exec,
-			Schema:     deps.schemaCache,
-			Log:        deps.log,
-		})
+	var pinned *identity.UserCtx
+	if d.mcpPinned != nil {
+		pinned = d.mcpPinned.user
 	}
-
-	if scfg.Admin.Enabled {
-		token, err := resolveAdminToken(ctx, deps.resolver, scfg.Admin.Token)
-		if err != nil {
-			return nil, err
-		}
-		if err := checkAdminAnonymous(scfg.Admin, token); err != nil {
-			return nil, err
-		}
-		adminCfg := admin.Config{
-			Enabled: true,
-			Listen:  scfg.Admin.Listen,
-			Token:   token,
-		}
-		if t := scfg.Admin.TLS; t != nil {
-			adminCfg.TLS = &admin.TLSConfig{CertFile: t.CertFile, KeyFile: t.KeyFile, ClientCA: t.ClientCA}
-		}
-		deps.admin = admin.New(adminCfg, admin.Deps{
-			Service:   deps.service,
-			Approvals: adminPendingLister(deps.approvals),
-			Snapshots: deps.registry,
-			Sources:   deps.sourceReg,
-			Catalogs:  registryCatalogLister{r: deps.sourceReg},
-			Logger:    deps.log,
-			Reloader:  reloaderFromWatcher(deps.watcher),
-			Audit:     auditTailer(deps.auditFile),
-			Synth:     adminSynthService(deps.synth),
-
-			AuthFailed: deps.authFailed("admin"),
-		})
+	d.mcp, err = newMCPServer(d, mcp.TransportMode(scfg.MCP.Transport), scfg.MCP.AllowAnonymous, pinned)
+	if err != nil {
+		return fmt.Errorf("mcp: %w", err)
 	}
+	return nil
+}
 
-	return deps, nil
+// closeTransports stops the config watcher, so no reload runs during the
+// rest of Close. The servers stop with the context of their run.
+func (d *runtimeDeps) closeTransports() {
+	if d.watcher != nil {
+		_ = d.watcher.Close()
+	}
 }
 
 // authFailed returns the hook a transport calls for a request that fails
@@ -544,14 +693,14 @@ func (d *runtimeDeps) prepareReload(ctx context.Context, snap *config.Snapshot) 
 		steps = append(steps, apply)
 	}
 	if d.apikey != nil {
-		bindings, err := buildAPIKeyBindings(ctx, d.resolver, snap, d.log)
+		bindings, err := identity.APIKeyBindings(ctx, d.resolver, snap.SubjectBindings, d.log)
 		if err != nil {
 			return config.Prepared{}, fmt.Errorf("api-key bindings: %w", err)
 		}
 		steps = append(steps, func() { d.apikey.SetBindings(bindings) })
 	}
 	if d.jwtID != nil && d.jwtBindings != nil {
-		hmac, err := buildHMACSecrets(ctx, d.resolver, snap)
+		hmac, err := identity.HMACSecrets(ctx, d.resolver, snap.SubjectBindings)
 		if err != nil {
 			return config.Prepared{}, fmt.Errorf("jwt bindings: %w", err)
 		}
@@ -564,11 +713,11 @@ func (d *runtimeDeps) prepareReload(ctx context.Context, snap *config.Snapshot) 
 		steps = append(steps, applyBindings, func() { d.jwtID.SetHMACSecrets(hmac) })
 	}
 	if d.rateLimiter != nil {
-		bySub, byIss := buildRateSpecs(snap)
+		bySub, byIss := ratelimit.SpecsFromBindings(snap.SubjectBindings)
 		steps = append(steps, func() { d.rateLimiter.SetSpecs(bySub, byIss) })
 	}
 	if d.budget != nil {
-		bySub, byIss := buildBudgetSpecs(snap)
+		bySub, byIss := budget.SpecsFromBindings(snap.SubjectBindings)
 		steps = append(steps, func() { d.budget.SetSpecs(bySub, byIss) })
 	}
 	if d.rewriteCache != nil {
@@ -669,49 +818,17 @@ type reloaderFunc func(ctx context.Context) ([]string, error)
 // Reload implements admin.Reloader.
 func (f reloaderFunc) Reload(ctx context.Context) ([]string, error) { return f(ctx) }
 
-// Close releases every resource in reverse construction order. Safe to
-// call on a partial graph — missing components are skipped.
+// Close releases every resource in reverse construction order: the
+// stage closers run from the last stage to the first. Safe to call on a
+// partial graph: missing components are skipped.
 func (d *runtimeDeps) Close(ctx context.Context) {
 	if d == nil {
 		return
 	}
-	if d.watcher != nil {
-		_ = d.watcher.Close()
-	}
-	if d.synth != nil {
-		// Before the dispatcher: the end record of a canceled build goes
-		// through it. Before the registry and the executor: a build may
-		// be swapping.
-		if err := d.synth.Close(ctx); err != nil {
-			d.log.Warn("synthetic: builds did not stop in time", "error", err)
-		}
-	}
-	if d.budget != nil {
-		// Final flush so the last window of usage is persisted.
-		_ = d.budget.Close(ctx)
-	}
-	if d.approvals != nil {
-		// Before the dispatcher: the broker's auditor writes through it.
-		_ = d.approvals.Close(ctx)
-	}
-	if d.auditDisp != nil {
-		_ = d.auditDisp.Close(ctx)
-	}
-	for _, s := range d.auditSinks {
-		_ = s.Close(ctx)
-	}
-	if d.sourceReg != nil {
-		_ = d.sourceReg.Close()
-	}
-	if d.exec != nil {
-		_ = d.exec.Close()
-	}
-	if d.parseExec != nil {
-		_ = d.parseExec.Close()
-	}
-	if d.telShutdown != nil {
-		_ = d.telShutdown(ctx)
-	}
+	d.closeTransports()
+	d.closeSynth(ctx)
+	d.closeService(ctx)
+	d.closeCore(ctx)
 }
 
 // registryCatalogLister bridges datasource.Registry to
@@ -820,7 +937,7 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 	if err != nil {
 		return identityStack{}, fmt.Errorf("binding registry: %w", err)
 	}
-	hmacSecrets, err := buildHMACSecrets(ctx, r, snap)
+	hmacSecrets, err := identity.HMACSecrets(ctx, r, snap.SubjectBindings)
 	if err != nil {
 		return identityStack{}, err
 	}
@@ -845,7 +962,7 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 			return identityStack{}, fmt.Errorf("identity.apiKeyPepper: the secret is empty")
 		}
 		pepper := []byte(pepperText)
-		bindings, err := buildAPIKeyBindings(ctx, r, snap, log)
+		bindings, err := identity.APIKeyBindings(ctx, r, snap.SubjectBindings, log)
 		if err != nil {
 			return identityStack{}, fmt.Errorf("api-key bindings: %w", err)
 		}
@@ -863,174 +980,6 @@ func buildIdentity(ctx context.Context, scfg *config.ServerConfig, r *secrets.Re
 	}
 	stack.identifier = identity.NewComposite(children...)
 	return stack, nil
-}
-
-// buildRateSpecs extracts per-subject and per-issuer rate-limit specs from
-// every SubjectBinding.spec.rateLimit. API-key bindings key by their
-// claims.subjectId; JWT bindings key by issuer so the limit applies per
-// authenticated subject under that issuer.
-func buildRateSpecs(snap *config.Snapshot) (bySubject map[ratelimit.SubjectKey]ratelimit.Spec, byIssuer map[string]ratelimit.Spec) {
-	bySubject = map[ratelimit.SubjectKey]ratelimit.Spec{}
-	byIssuer = map[string]ratelimit.Spec{}
-	if snap == nil {
-		return bySubject, byIssuer
-	}
-	for _, sb := range snap.SubjectBindings {
-		if sb == nil || sb.Spec.RateLimit == nil || sb.Spec.RateLimit.RPS <= 0 {
-			continue
-		}
-		spec := ratelimit.Spec{RPS: sb.Spec.RateLimit.RPS, Burst: sb.Spec.RateLimit.Burst}
-		if spec.Burst <= 0 {
-			spec.Burst = 1
-		}
-		if sb.Spec.Claims.SubjectID != "" {
-			bySubject[ratelimit.SubjectKey{Subject: sb.Spec.Claims.SubjectID, Issuer: bindingIssuer(sb)}] = spec
-		}
-		if sb.Spec.Issuer != "" {
-			byIssuer[sb.Spec.Issuer] = spec
-		}
-	}
-	return bySubject, byIssuer
-}
-
-// minHMACSecretBytes is the SHA-256 output size, the shortest key HS256
-// should get.
-const minHMACSecretBytes = 32
-
-// bindingIssuer is the issuer of the subjects a binding makes, for the
-// rate limit and budget keys: spec.issuer, or the binding name for API
-// keys without one (as buildAPIKeyBindings sets it). "" means any issuer.
-func bindingIssuer(sb *apitypes.SubjectBinding) string {
-	if sb.Spec.Issuer != "" {
-		return sb.Spec.Issuer
-	}
-	if len(sb.Spec.APIKeys) > 0 {
-		return sb.Metadata.Name
-	}
-	return ""
-}
-
-// buildHMACSecrets resolves each SubjectBinding's hmacSecretRef into the
-// issuer→secret map the JWT identifier uses to verify HS256/HS384 tokens.
-// Without this a binding that advertises an HS* issuer could never
-// authenticate, since RS/ES keys come from JWKS and HMAC has no network
-// path. A trailing newline (common in file-mounted secrets) is trimmed.
-// A secret shorter than minHMACSecretBytes is an error: an empty key lets
-// anyone sign a valid token.
-func buildHMACSecrets(ctx context.Context, r *secrets.Resolver, snap *config.Snapshot) (map[string][]byte, error) {
-	if snap == nil {
-		return nil, nil
-	}
-	out := map[string][]byte{}
-	for _, sb := range snap.SubjectBindings {
-		if sb == nil || sb.Spec.HMACSecretRef == "" {
-			continue
-		}
-		// The JWT identifier looks the secret up by issuer only.
-		issuer := sb.Spec.Issuer
-		if issuer == "" {
-			return nil, fmt.Errorf("binding %q: hmacSecretRef needs an issuer", sb.Metadata.Name)
-		}
-		sec, err := r.Resolve(ctx, sb.Spec.HMACSecretRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve hmacSecretRef for issuer %q: %w", issuer, err)
-		}
-		key := []byte(strings.TrimRight(string(sec), "\r\n"))
-		if len(key) < minHMACSecretBytes {
-			return nil, fmt.Errorf("hmacSecretRef for issuer %q: the secret has %d bytes, at least %d are required",
-				issuer, len(key), minHMACSecretBytes)
-		}
-		out[issuer] = key
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
-}
-
-// buildAPIKeyBindings walks every SubjectBinding in snap, resolves each
-// apiKeys[].hashRef through the secrets resolver, and produces the flat
-// identity.APIKeyBinding slice the APIKeyIdentifier indexes on. Per-key
-// resolution failures log a warning and skip the key rather than
-// aborting the whole reload — one rotated-out key should never blank the
-// table.
-func buildAPIKeyBindings(ctx context.Context, r *secrets.Resolver, snap *config.Snapshot, log *slog.Logger) ([]identity.APIKeyBinding, error) {
-	if snap == nil {
-		return nil, nil
-	}
-	var out []identity.APIKeyBinding
-	for _, sb := range snap.SubjectBindings {
-		if sb == nil || len(sb.Spec.APIKeys) == 0 {
-			continue
-		}
-		issuer := sb.Spec.Issuer
-		if issuer == "" {
-			issuer = sb.Metadata.Name
-		}
-		claims := apiKeyLiteralClaims(sb.Spec.Claims)
-		for _, k := range sb.Spec.APIKeys {
-			if k.ID == "" || k.HashRef == "" {
-				log.Warn("api-key binding: skipping entry with empty id or hashRef",
-					slog.String("binding", sb.Metadata.Name))
-				continue
-			}
-			hexHash, err := r.ResolveString(ctx, k.HashRef)
-			if err != nil {
-				log.Warn("api-key binding: hashRef resolve failed",
-					slog.String("binding", sb.Metadata.Name),
-					slog.String("id", k.ID),
-					slog.String("error", err.Error()))
-				continue
-			}
-			hash, err := identity.DecodeHash(hexHash)
-			if err != nil {
-				log.Warn("api-key binding: hashRef decode failed",
-					slog.String("binding", sb.Metadata.Name),
-					slog.String("id", k.ID),
-					slog.String("error", err.Error()))
-				continue
-			}
-			groups := k.Groups
-			if len(groups) == 0 && sb.Spec.Claims.Groups != "" {
-				groups = []string{sb.Spec.Claims.Groups}
-			}
-			out = append(out, identity.APIKeyBinding{
-				ID:      k.ID,
-				Hash:    hash,
-				Subject: sb.Spec.Claims.SubjectID,
-				Issuer:  issuer,
-				Email:   sb.Spec.Claims.Email,
-				Groups:  append([]string(nil), groups...),
-				Claims:  claims,
-			})
-		}
-	}
-	return out, nil
-}
-
-// apiKeyLiteralClaims turns the ClaimPaths block into a UserCtx.Claims
-// map of literal values for the API-key flow. JWT callers treat these
-// fields as paths; in API-key mode they are the values to stamp onto the
-// authenticated session so row-filter templates like `{{ subject.tenantId }}`
-// resolve without a JWT round-trip.
-func apiKeyLiteralClaims(c apitypes.ClaimPaths) map[string]any {
-	out := make(map[string]any)
-	if c.TenantID != "" {
-		out["tenantId"] = c.TenantID
-	}
-	if c.AllowedRegions != "" {
-		out["allowedRegions"] = c.AllowedRegions
-	}
-	for k, v := range c.Extra {
-		if k == "" || v == "" {
-			continue
-		}
-		out[k] = v
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // derefBindings converts []*apitypes.SubjectBinding into the

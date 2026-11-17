@@ -24,11 +24,20 @@ import (
 // audit.file.path is required: a shared temp directory is no place for the
 // audit log. The concrete *FileSink is returned alongside the chain so the
 // admin audit tailer can read it back.
-func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *secrets.Resolver, log *slog.Logger) ([]audit.Sink, *audit.FileSink, error) {
+func buildAuditSinks(ctx context.Context, scfg *config.ServerConfig, resolver *secrets.Resolver, log *slog.Logger) (_ []audit.Sink, _ *audit.FileSink, err error) {
 	var (
 		sinks    []audit.Sink
 		fileSink *audit.FileSink
 	)
+	// The caller gets no sinks on error, so close the ones built here:
+	// the file sink holds the lock of the audit directory.
+	defer func() {
+		if err != nil {
+			for _, s := range sinks {
+				_ = s.Close(context.WithoutCancel(ctx))
+			}
+		}
+	}()
 
 	if scfg.Audit.File == nil || scfg.Audit.File.Path == "" {
 		return nil, nil, errors.New("audit.file.path is required: set it to a directory that only the sluice user can write")
