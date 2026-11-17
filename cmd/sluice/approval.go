@@ -78,6 +78,9 @@ func buildApprovalBroker(
 		MaxPendingPerSubject: scfg.Approval.MaxPendingPerSubject,
 	})
 	if err != nil {
+		if store != nil {
+			_ = store.Close(ctx)
+		}
 		return nil, err
 	}
 	return broker, nil
