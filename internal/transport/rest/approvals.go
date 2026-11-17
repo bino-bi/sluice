@@ -100,7 +100,7 @@ func (s *Server) handleApprovalStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	user, _ := identity.FromContext(r.Context())
 	v, ok := s.deps.Approvals.Get(id)
-	if !ok || approval.SubjectKeyOf(v) != subjectKeyOf(user) {
+	if !ok || approval.SubjectKeyOf(v) != approval.UserSubjectKey(user) {
 		writeApprovalJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
@@ -109,13 +109,6 @@ func (s *Server) handleApprovalStatus(w http.ResponseWriter, r *http.Request) {
 		"state":       string(v.State),
 		"expires_at":  v.ExpiresAt,
 	})
-}
-
-func subjectKeyOf(u *identity.UserCtx) string {
-	if u == nil {
-		return "\x00anonymous"
-	}
-	return u.Issuer + "\x00" + u.Subject
 }
 
 // approvalToken pulls the capability token from the query string or the

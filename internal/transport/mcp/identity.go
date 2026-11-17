@@ -24,11 +24,14 @@ import (
 // each call.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.deps.Identifier == nil {
-			next.ServeHTTP(w, r)
-			return
+		// New refuses a nil Identifier for HTTP; without one, fail closed.
+		var (
+			u   *identity.UserCtx
+			err = identity.ErrInvalidCredential
+		)
+		if s.deps.Identifier != nil {
+			u, err = s.deps.Identifier.Identify(r.Context(), r)
 		}
-		u, err := s.deps.Identifier.Identify(r.Context(), r)
 		if err != nil {
 			if s.cfg.AllowAnonymous && errors.Is(err, identity.ErrNoCredential) {
 				next.ServeHTTP(w, r)

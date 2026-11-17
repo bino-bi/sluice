@@ -218,7 +218,7 @@ func TestNew_BadTLS(t *testing.T) {
 		Transport:  TransportStreamableHTTP,
 		HTTPListen: "127.0.0.1:0",
 		TLS:        &tlsutil.Config{CertFile: "/nonexistent/cert.pem", KeyFile: "/nonexistent/key.pem"},
-	}, Deps{Service: testService()})
+	}, Deps{Service: testService(), Identifier: keySubjectIdentifier{}})
 	if err == nil || !strings.Contains(err.Error(), "tls") {
 		t.Fatalf("New = %v, want a tls error", err)
 	}

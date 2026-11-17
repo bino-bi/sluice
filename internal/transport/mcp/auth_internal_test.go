@@ -93,9 +93,10 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name:       "no identifier configured passes through",
+			name:       "no identifier configured is 401",
 			id:         nil,
-			wantStatus: http.StatusOK,
+			allowAnon:  true,
+			wantStatus: http.StatusUnauthorized,
 		},
 	}
 
