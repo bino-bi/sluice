@@ -103,7 +103,7 @@ func (m *jitterRowMask) Mask(value any) (any, error) {
 	case uint64:
 		return jitterInt(v, k, 0, math.MaxUint64), nil
 	case float32:
-		return float32(float64(v) * k), nil
+		return float32(max(-math.MaxFloat32, min(float64(v)*k, math.MaxFloat32))), nil
 	case float64:
 		return v * k, nil
 	case *big.Int:
@@ -146,8 +146,25 @@ func jitterBig(v *big.Int, k float64) *big.Int {
 	}
 	f.Add(f, half)
 	out, _ := f.Int(nil)
+	// Clamp to HUGEINT, or to UHUGEINT for an input above the HUGEINT range.
+	hi := maxInt128
+	if v.Cmp(maxInt128) > 0 {
+		hi = maxUint128
+	}
+	switch {
+	case out.Cmp(hi) > 0:
+		return new(big.Int).Set(hi)
+	case out.Cmp(minInt128) < 0:
+		return new(big.Int).Set(minInt128)
+	}
 	return out
 }
+
+var (
+	maxInt128  = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 127), big.NewInt(1))
+	minInt128  = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 127))
+	maxUint128 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 128), big.NewInt(1))
+)
 
 // jitterDecimal handles duckdb.Decimal (Width, Scale uint8, Value
 // *big.Int) by its shape. Importing duckdb-go here would make pkg/mask

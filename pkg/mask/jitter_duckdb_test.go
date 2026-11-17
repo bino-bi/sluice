@@ -5,6 +5,7 @@ package mask_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"testing"
@@ -123,4 +124,29 @@ func toFloat(t *testing.T, v any) float64 {
 	}
 	t.Fatalf("unexpected type %T", v)
 	return 0
+}
+
+func TestJitter_ClampsHugeAndFloat32(t *testing.T) {
+	p, _ := mask.Default().Lookup("jitter")
+	rm, _ := p.(mask.RowMasker).NewRowMask(mask.RowMaskContext{
+		Ctx: context.Background(), Args: mask.Args{Range: 0.9, Seed: "s"},
+	})
+	maxHuge := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 127), big.NewInt(1))
+	for i := int64(0); i < 20; i++ {
+		v := new(big.Int).Sub(maxHuge, big.NewInt(i))
+		out, err := rm.Mask(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.(*big.Int).Cmp(maxHuge) > 0 {
+			t.Errorf("%v: %v exceeds HUGEINT", v, out)
+		}
+		f, err := rm.Mask(float32(math.MaxFloat32) - float32(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.IsInf(float64(f.(float32)), 0) {
+			t.Errorf("float32 near max became %v", f)
+		}
+	}
 }
