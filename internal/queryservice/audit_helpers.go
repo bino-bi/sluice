@@ -210,10 +210,12 @@ func tableKey(t parser.TableRef) string {
 // emit finalises durationMs on rec and pushes it onto the audit
 // dispatcher. Enqueue errors are logged but not returned — used on paths
 // that serve no data (deny / reject / error), where masking the real error
-// with an audit error would be counterproductive.
+// with an audit error would be counterproductive. These paths often end
+// because ctx did (client gone, shutdown drain), so a full queue must not
+// drop the record for that reason.
 func (s *Service) emit(ctx context.Context, rec *audit.Record, start time.Time) {
 	rec.DurationMs = s.opts.Clock().Sub(start).Milliseconds()
-	if err := s.opts.Audit.Enqueue(ctx, rec); err != nil {
+	if err := s.opts.Audit.Enqueue(context.WithoutCancel(ctx), rec); err != nil {
 		s.opts.Logger.Error("audit enqueue failed",
 			"query_id", rec.QueryID,
 			"decision", rec.Decision,
