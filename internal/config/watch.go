@@ -15,6 +15,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/bino-bi/sluice/internal/telemetry"
 )
 
 // WatchOptions configures a Watcher.
@@ -42,14 +45,25 @@ type WatchOptions struct {
 	// Strict is forwarded to LoadDirectory.
 	Strict bool
 
-	// Validate, when set, vets a freshly loaded Snapshot before it is
-	// published. A validation error aborts the reload and the previous
-	// snapshot stays live everywhere. Wired to policy compilation by the
-	// composition root (config cannot import policy).
-	Validate func(ctx context.Context, snap *Snapshot) error
+	// Validate, when set, prepares a freshly loaded Snapshot before it is
+	// published: everything that can fail is done here. An error aborts
+	// the reload and the previous snapshot stays live everywhere. Wired by
+	// the composition root (config cannot import policy or identity).
+	Validate func(ctx context.Context, snap *Snapshot) (Prepared, error)
 
 	// Logger receives slog output. Nil uses slog.Default.
 	Logger *slog.Logger
+}
+
+// Prepared is what WatchOptions.Validate returns for a snapshot it
+// accepts.
+type Prepared struct {
+	// Apply makes the prepared state active. It runs inside the publish,
+	// after the snapshot got its Version, and must not fail.
+	Apply func()
+	// Warnings name what the reload did not apply, such as a change that
+	// needs a restart. Reload returns them; the reload still succeeds.
+	Warnings []string
 }
 
 // Watcher reloads the policy manifest directory whenever files change and
@@ -131,8 +145,8 @@ func (w *Watcher) Start(ctx context.Context) {
 
 // Reload forces a non-debounced reload, blocking until the new snapshot
 // is published or the loader returns an error. Invoked by SIGHUP and the
-// admin /admin/reload handler.
-func (w *Watcher) Reload(ctx context.Context) error {
+// admin /admin/reload handler. The warnings come from Validate.
+func (w *Watcher) Reload(ctx context.Context) ([]string, error) {
 	return w.reloadOnce(ctx)
 }
 
@@ -192,7 +206,7 @@ func (w *Watcher) run(ctx context.Context) {
 		case <-debounce.C:
 			if pending {
 				pending = false
-				if err := w.reloadOnce(ctx); err != nil {
+				if _, err := w.reloadOnce(ctx); err != nil {
 					w.log.WarnContext(ctx, "config watch: reload failed",
 						slog.String("error", err.Error()))
 				}
@@ -201,7 +215,7 @@ func (w *Watcher) run(ctx context.Context) {
 	}
 }
 
-func (w *Watcher) reloadOnce(ctx context.Context) error {
+func (w *Watcher) reloadOnce(ctx context.Context) ([]string, error) {
 	// Serialise Load+Publish so concurrent reload triggers apply in a
 	// well-defined order (last to run reads the freshest directory state).
 	w.reloadMu.Lock()
@@ -211,16 +225,21 @@ func (w *Watcher) reloadOnce(ctx context.Context) error {
 		Sources: []SourceDir{{Path: w.opts.Dir}},
 	})
 	if err != nil {
-		return err
+		reloadsMetric().WithLabelValues("failed").Inc()
+		return nil, err
 	}
+	var prep Prepared
 	if w.opts.Validate != nil {
 		// Returned unwrapped so callers can errors.Is against the
 		// validator's sentinels (e.g. policy.ErrSnapshotInvalid).
-		if err := w.opts.Validate(ctx, snap); err != nil {
-			return err
+		prep, err = w.opts.Validate(ctx, snap)
+		if err != nil {
+			reloadsMetric().WithLabelValues("failed").Inc()
+			return nil, err
 		}
 	}
-	w.opts.Registry.Publish(snap)
+	w.opts.Registry.PublishWith(snap, prep.Apply)
+	reloadsMetric().WithLabelValues("applied").Inc()
 	w.mu.Lock()
 	w.lastApplied = time.Now()
 	w.mu.Unlock()
@@ -228,7 +247,25 @@ func (w *Watcher) reloadOnce(ctx context.Context) error {
 		slog.Int("objects", len(snap.Policies)),
 		slog.String("digest", snap.Digest),
 	)
-	return nil
+	for _, msg := range prep.Warnings {
+		w.log.WarnContext(ctx, "config watch: "+msg)
+	}
+	return prep.Warnings, nil
+}
+
+var (
+	reloadsOnce    sync.Once
+	reloadsCounter *prometheus.CounterVec
+)
+
+func reloadsMetric() *prometheus.CounterVec {
+	reloadsOnce.Do(func() {
+		reloadsCounter = telemetry.DefineCounter(
+			"sluice_config_reloads_total",
+			"Config reloads by result: applied, or failed with the previous config still active.",
+			[]string{"result"})
+	})
+	return reloadsCounter
 }
 
 // isRelevant filters out events that shouldn't trigger a reload — e.g.,

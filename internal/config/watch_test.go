@@ -148,7 +148,7 @@ func TestWatcher_ManualReload(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = w.Close() })
 
-	if err := w.Reload(context.Background()); err != nil {
+	if _, err := w.Reload(context.Background()); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	if published.Load() != 1 {
@@ -175,8 +175,9 @@ func TestWatcher_ValidateRejectsPublish(t *testing.T) {
 	w, err := config.NewWatcher(config.WatchOptions{
 		Dir:      dir,
 		Registry: reg,
-		Validate: func(context.Context, *config.Snapshot) error {
-			return fmt.Errorf("policy: %w", sentinel)
+		Validate: func(context.Context, *config.Snapshot) (config.Prepared, error) {
+			return config.Prepared{Apply: func() { t.Error("apply of a refused snapshot ran") }},
+				fmt.Errorf("policy: %w", sentinel)
 		},
 	})
 	if err != nil {
@@ -184,7 +185,7 @@ func TestWatcher_ValidateRejectsPublish(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = w.Close() })
 
-	rerr := w.Reload(context.Background())
+	_, rerr := w.Reload(context.Background())
 	if !errors.Is(rerr, sentinel) {
 		t.Fatalf("reload err = %v; want wrapped sentinel", rerr)
 	}
@@ -195,6 +196,7 @@ func TestWatcher_ValidateRejectsPublish(t *testing.T) {
 
 func TestWatcher_ValidateAcceptsPublish(t *testing.T) {
 	t.Parallel()
+	var applied atomic.Int64
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "allow.yaml"), []byte(minimalAllowYAML), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -211,18 +213,34 @@ func TestWatcher_ValidateAcceptsPublish(t *testing.T) {
 	w, err := config.NewWatcher(config.WatchOptions{
 		Dir:      dir,
 		Registry: reg,
-		Validate: func(context.Context, *config.Snapshot) error { return nil },
+		Validate: func(_ context.Context, snap *config.Snapshot) (config.Prepared, error) {
+			return config.Prepared{
+				// Apply sees the version of the snapshot, and runs before
+				// Current returns it.
+				Apply: func() {
+					applied.Add(1)
+					if snap.Version != 1 || reg.Current() == snap {
+						t.Errorf("apply: version %d, current moved %v", snap.Version, reg.Current() == snap)
+					}
+				},
+				Warnings: []string{"restart needed"},
+			}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("new watcher: %v", err)
 	}
 	t.Cleanup(func() { _ = w.Close() })
 
-	if err := w.Reload(context.Background()); err != nil {
+	warnings, err := w.Reload(context.Background())
+	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if published.Load() != 1 {
-		t.Fatalf("expected 1 publish, got %d", published.Load())
+	if published.Load() != 1 || applied.Load() != 1 {
+		t.Fatalf("publishes %d, applies %d, want 1 each", published.Load(), applied.Load())
+	}
+	if len(warnings) != 1 || warnings[0] != "restart needed" {
+		t.Fatalf("warnings = %v, want [restart needed]", warnings)
 	}
 }
 

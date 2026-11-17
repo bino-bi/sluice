@@ -53,7 +53,7 @@ func TestResolveMCPPinnedUser(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolveMCPPinnedUser: %v", err)
 		}
-		if u == nil || u.Subject != "agent" {
+		if u == nil || u.user.Subject != "agent" {
 			t.Fatalf("pinned user = %+v, want subject agent", u)
 		}
 	})

@@ -40,12 +40,22 @@ func NewBindingRegistry(initial []apitypes.SubjectBinding) (*BindingRegistry, er
 // Apply atomically replaces the binding set. Called when the config
 // registry publishes a new Snapshot.
 func (r *BindingRegistry) Apply(next []apitypes.SubjectBinding) error {
-	snap, err := buildSnapshot(next)
+	apply, err := r.Prepare(next)
 	if err != nil {
 		return err
 	}
-	r.snapshot.Store(snap)
+	apply()
 	return nil
+}
+
+// Prepare checks next as Apply does and returns the function that swaps
+// it in. An error leaves the registry as it is.
+func (r *BindingRegistry) Prepare(next []apitypes.SubjectBinding) (apply func(), err error) {
+	snap, err := buildSnapshot(next)
+	if err != nil {
+		return nil, err
+	}
+	return func() { r.snapshot.Store(snap) }, nil
 }
 
 // ForIssuer returns the binding whose spec.issuer matches iss, or (nil,

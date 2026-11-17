@@ -12,10 +12,11 @@ import (
 
 	"github.com/bino-bi/sluice/internal/approval"
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/datasource"
-	"github.com/bino-bi/sluice/internal/policy"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/ratelimit"
+	"github.com/bino-bi/sluice/internal/transport/httpmw"
 	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 )
 
@@ -62,7 +63,7 @@ type TLSConfig struct {
 // Deps wires the admin server dependencies.
 type Deps struct {
 	Service   *queryservice.Service
-	Policies  *policy.Engine
+	Snapshots SnapshotSource
 	Sources   *datasource.Registry
 	Audit     AuditTailer
 	Catalogs  queryservice.CatalogLister
@@ -82,10 +83,18 @@ type PendingLister interface {
 	Pending() []approval.View
 }
 
+// SnapshotSource gives the published config snapshot (config.Registry).
+// Version, digest and the policy list come from it, so they work for
+// every policy engine. A nil value leaves them empty.
+type SnapshotSource interface {
+	Current() *config.Snapshot
+}
+
 // Reloader triggers a config reload. Implementations live alongside the
-// config watcher; a nil Reloader makes /admin/reload respond 501.
+// config watcher; a nil Reloader makes /admin/reload respond 501. The
+// warnings of an applied reload name what it did not apply.
 type Reloader interface {
-	Reload(ctx context.Context) error
+	Reload(ctx context.Context) (warnings []string, err error)
 }
 
 // AuditTailer returns the last N audit records. Only the file sink
@@ -97,10 +106,11 @@ type AuditTailer interface {
 
 // Server is the admin HTTP server.
 type Server struct {
-	cfg  Config
-	deps Deps
-	srv  *http.Server
-	lg   *slog.Logger
+	cfg   Config
+	deps  Deps
+	srv   *http.Server
+	lg    *slog.Logger
+	drain *httpmw.Drain
 
 	failedAuth *ratelimit.KeyedLimiter // failed logins per client IP
 }
@@ -116,10 +126,11 @@ func New(cfg Config, deps Deps) *Server {
 	if cfg.Token == "" && cfg.Enabled {
 		lg.Warn("admin: running without an auth token — do not expose this port")
 	}
-	s := &Server{cfg: cfg, deps: deps, lg: lg, failedAuth: ratelimit.NewKeyed(failedAuthSpec, 0, nil)}
+	s := &Server{cfg: cfg, deps: deps, lg: lg, drain: httpmw.NewDrain(), failedAuth: ratelimit.NewKeyed(failedAuthSpec, 0, nil)}
 	s.srv = &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           s.routes(),
+		Handler:           s.drain.Track(s.routes()),
+		BaseContext:       s.drain.BaseContext,
 		ReadTimeout:       cfg.ReadTimeout,
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -178,11 +189,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
-// Shutdown drains in-flight requests up to ShutdownTimeout.
+// Shutdown drains in-flight requests up to ShutdownTimeout, then cancels
+// the ones that are left. A drain timeout is logged, not returned.
 func (s *Server) Shutdown(parent context.Context) error {
-	ctx, cancel := context.WithTimeout(parent, s.cfg.ShutdownTimeout)
-	defer cancel()
-	return s.srv.Shutdown(ctx)
+	s.drain.Shutdown(parent, s.srv, s.cfg.ShutdownTimeout, s.lg, "admin")
+	return nil
 }
 
 func applyDefaults(cfg *Config) {

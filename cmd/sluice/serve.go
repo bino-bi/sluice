@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -32,7 +31,8 @@ queryservice) and starts the REST transport (always), MCP transport (when
 enabled in config), and admin transport (when enabled).
 
 Signals:
-  SIGINT / SIGTERM  begin graceful shutdown`,
+  SIGINT / SIGTERM  begin graceful shutdown
+  SIGHUP            reload the policy directory`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			parent := cmd.Context()
 			if parent == nil {
@@ -51,32 +51,13 @@ Signals:
 				deps.Close(shutdownCtx)
 			}()
 
-			if deps.watcher != nil {
-				// fsnotify watching is opt-in; SIGHUP and /admin/reload
-				// stay available regardless via the watcher's synchronous
-				// Reload path.
-				if deps.server.Policies.Reload {
-					deps.watcher.Start(ctx)
-				}
-				// SIGHUP: block-level reload handler. Unix-only; the admin
-				// /admin/reload endpoint is the cross-platform fallback.
-				hupCh := make(chan os.Signal, 1)
-				signal.Notify(hupCh, syscall.SIGHUP)
-				go func() {
-					for {
-						select {
-						case <-ctx.Done():
-							signal.Stop(hupCh)
-							return
-						case <-hupCh:
-							if err := deps.watcher.Reload(ctx); err != nil {
-								deps.log.Warn("SIGHUP reload failed",
-									"error", err.Error())
-							}
-						}
-					}
-				}()
+			// A reload that invalidates the stdio MCP credential stops serve.
+			ctx, cancel := context.WithCancelCause(ctx)
+			defer cancel(nil)
+			if deps.mcpPinned != nil {
+				recheckPinned(deps, deps.mcpPinned, cancel)
 			}
+			startReloads(ctx, deps)
 
 			deps.log.Info("sluice: starting",
 				"rest", deps.server.REST.Listen,
@@ -127,6 +108,9 @@ Signals:
 
 			// Block on the first signal or the first transport error.
 			err = g.Wait()
+			if cause := context.Cause(ctx); errors.Is(cause, errPinnedIdentity) {
+				return &exitError{Code: 1, Err: cause}
+			}
 			if err != nil && !errors.Is(err, context.Canceled) {
 				return &exitError{Code: 2, Err: err}
 			}

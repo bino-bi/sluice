@@ -22,8 +22,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 		Status:  "ok",
 		Version: version.Current().Version,
 	}
-	if s.deps.Policies != nil {
-		if snap := s.deps.Policies.Snapshot(); snap != nil {
+	if s.deps.Snapshots != nil {
+		if snap := s.deps.Snapshots.Current(); snap != nil {
 			resp.ConfigDigest = snap.Digest
 			resp.ConfigVer = snap.Version
 		}
