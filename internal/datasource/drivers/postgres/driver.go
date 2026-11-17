@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -25,10 +24,10 @@ const (
 	secretNamePrefix   = "sluice_pg_"
 )
 
-// driver holds parsed connection parts + optional resolved password.
-// Password resolution happens on every Attach (the SecretResolver cache
-// lives one layer up — internal/secrets — and is cheap to query), so we
-// do not hold secret bytes in driver state across connections.
+// driver holds parsed connection parts and the credential reference. The
+// password is resolved in Attach and lives only in the DuckDB secret.
+// Attach runs once per DuckDB instance, so a rotated password needs a
+// restart.
 type driver struct {
 	name     string
 	readonly bool
@@ -42,9 +41,6 @@ type driver struct {
 
 	// credentialsRef is the secret URI; resolved on demand.
 	credentialsRef string
-
-	mu        sync.Mutex
-	extLoaded map[*sql.Conn]bool
 }
 
 // Register installs the factory.
@@ -115,7 +111,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		user:           user,
 		sslmode:        sslmode,
 		credentialsRef: credRef,
-		extLoaded:      make(map[*sql.Conn]bool),
 	}, nil
 }
 
@@ -128,7 +123,7 @@ func (d *driver) Type() string { return Type }
 // Readonly implements pkgds.DataSource.
 func (d *driver) Readonly() bool { return d.readonly }
 
-// Attach installs the postgres_scanner extension (idempotent per conn),
+// Attach installs the postgres_scanner extension,
 // resolves the password, CREATE SECRETs it, and ATTACHes the catalog.
 func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOptions) error {
 	catalog := opts.CatalogName
@@ -139,15 +134,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 		return fmt.Errorf("postgres: catalog alias: %w", err)
 	}
 
-	d.mu.Lock()
-	if !d.extLoaded[conn] {
-		if err := common.EnsureExtension(ctx, conn, "postgres_scanner"); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("postgres: %w", err)
-		}
-		d.extLoaded[conn] = true
+	if err := common.EnsureExtension(ctx, conn, "postgres_scanner"); err != nil {
+		return fmt.Errorf("postgres: %w", err)
 	}
-	d.mu.Unlock()
 
 	password, err := d.resolvePassword(ctx, opts)
 	if err != nil {
@@ -271,11 +260,6 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 	return nil
 }
 
-// Close drops tracked per-connection state. The actual postgres_scanner
-// extension stays loaded for the lifetime of the DuckDB connection pool.
-func (d *driver) Close() error {
-	d.mu.Lock()
-	d.extLoaded = nil
-	d.mu.Unlock()
-	return nil
-}
+// Close has nothing to release: extensions, secrets and the catalog
+// belong to the DuckDB instance.
+func (d *driver) Close() error { return nil }

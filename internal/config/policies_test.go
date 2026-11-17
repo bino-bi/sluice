@@ -226,9 +226,22 @@ spec:
   headersRef: ` + ref + `
 `
 	}
+	md := func(name, ref string) string {
+		return `apiVersion: sluice.bino.bi/v1alpha1
+kind: DataSource
+metadata:
+  name: ` + name + `
+spec:
+  type: motherduck
+  database: ` + name + `
+  tokenRef: ` + ref + `
+`
+	}
 	cases := []struct {
 		name, docs, want string
 	}{
+		{"motherduck same token", md("a", "secret://env/T") + "---\n" + md("b", "secret://env/T"), ""},
+		{"motherduck other token", md("a", "secret://env/T") + "---\n" + md("b", "secret://env/U"), `DataSource "a" uses another token`},
 		{"s3 other buckets", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales-eu", "secret://env/B"), ""},
 		{"s3 same bucket, same keys", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales", "secret://env/A"), ""},
 		{"s3 same bucket, other keys", s3("a", "sales", "secret://env/A") + "---\n" + s3("b", "sales", "secret://env/B"), `reads bucket "sales" with another credentialsRef`},

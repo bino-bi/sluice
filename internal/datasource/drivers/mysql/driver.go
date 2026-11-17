@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	pkgds "github.com/bino-bi/sluice/pkg/datasource"
@@ -39,9 +38,6 @@ type driver struct {
 	sslmode  string
 
 	credentialsRef string
-
-	mu        sync.Mutex
-	extLoaded map[*sql.Conn]bool
 }
 
 // Register installs the factory.
@@ -115,7 +111,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		user:           user,
 		sslmode:        sslmode,
 		credentialsRef: credRef,
-		extLoaded:      make(map[*sql.Conn]bool),
 	}, nil
 }
 
@@ -138,15 +133,9 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 		return fmt.Errorf("mysql: catalog alias: %w", err)
 	}
 
-	d.mu.Lock()
-	if !d.extLoaded[conn] {
-		if err := common.EnsureExtension(ctx, conn, "mysql_scanner"); err != nil {
-			d.mu.Unlock()
-			return fmt.Errorf("mysql: %w", err)
-		}
-		d.extLoaded[conn] = true
+	if err := common.EnsureExtension(ctx, conn, "mysql_scanner"); err != nil {
+		return fmt.Errorf("mysql: %w", err)
 	}
-	d.mu.Unlock()
 
 	password, err := d.resolvePassword(ctx, opts)
 	if err != nil {
@@ -267,10 +256,6 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 	return nil
 }
 
-// Close drops tracked per-connection state.
-func (d *driver) Close() error {
-	d.mu.Lock()
-	d.extLoaded = nil
-	d.mu.Unlock()
-	return nil
-}
+// Close has nothing to release: extensions, secrets and the catalog
+// belong to the DuckDB instance.
+func (d *driver) Close() error { return nil }

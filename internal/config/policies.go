@@ -182,7 +182,8 @@ func checkSynthetic(sources []*apitypes.DataSource, files map[string]string) Val
 // apply to the same paths with other credentials. DuckDB secrets belong to
 // the whole instance and match by scope prefix, so one source could read
 // with the keys or headers of the other. The s3 secret scope is
-// s3://<bucket>/, the http secret scope is each URL.
+// s3://<bucket>/, the http secret scope is each URL. motherduck_token has
+// no scope at all.
 func checkSharedSecrets(sources []*apitypes.DataSource, files map[string]string) ValidationErrors {
 	var verrs ValidationErrors
 	fail := func(ds *apitypes.DataSource, msg string) {
@@ -203,6 +204,11 @@ func checkSharedSecrets(sources []*apitypes.DataSource, files map[string]string)
 					(sa.CredentialsRef != sb.CredentialsRef || sa.Endpoint != sb.Endpoint || sa.Region != sb.Region) {
 					fail(b, fmt.Sprintf("spec.bucket: DataSource %q reads bucket %q with another credentialsRef, endpoint or region. "+
 						"DuckDB would use one secret for both. Use one DataSource for the bucket", a.Metadata.Name, sb.Bucket))
+				}
+			case apitypes.DSMotherDuck:
+				if sa.TokenRef != sb.TokenRef {
+					fail(b, fmt.Sprintf("spec.tokenRef: DataSource %q uses another token. "+
+						"motherduck_token is one setting for the whole DuckDB instance. Use one token for all motherduck sources", a.Metadata.Name))
 				}
 			case apitypes.DSHTTP:
 				if sa.HeadersRef == sb.HeadersRef {

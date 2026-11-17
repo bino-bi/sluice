@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/bino-bi/sluice/internal/datasource/drivers/common"
 	"github.com/bino-bi/sluice/pkg/apitypes"
@@ -48,9 +47,6 @@ type driver struct {
 	needsExcel   bool
 
 	credentialsRef string
-
-	mu        sync.Mutex
-	extLoaded map[*sql.Conn]bool
 }
 
 // s3Credentials is the expected shape of the secret payload.
@@ -113,7 +109,6 @@ func newDriver(_ context.Context, spec pkgds.Spec) (pkgds.DataSource, error) {
 		views:          views,
 		needsExcel:     needsExcel,
 		credentialsRef: credRef,
-		extLoaded:      make(map[*sql.Conn]bool),
 	}, nil
 }
 
@@ -207,17 +202,11 @@ func (d *driver) Attach(ctx context.Context, conn *sql.Conn, opts pkgds.AttachOp
 	if d.needsExcel {
 		extensions = append(extensions, "excel")
 	}
-	d.mu.Lock()
-	if !d.extLoaded[conn] {
-		for _, ext := range extensions {
-			if err := common.EnsureExtension(ctx, conn, ext); err != nil {
-				d.mu.Unlock()
-				return fmt.Errorf("s3: %w", err)
-			}
+	for _, ext := range extensions {
+		if err := common.EnsureExtension(ctx, conn, ext); err != nil {
+			return fmt.Errorf("s3: %w", err)
 		}
-		d.extLoaded[conn] = true
 	}
-	d.mu.Unlock()
 
 	if err := d.createSecret(ctx, conn, opts); err != nil {
 		return err
@@ -357,10 +346,6 @@ func (d *driver) HealthCheck(ctx context.Context, conn *sql.Conn, opts pkgds.Hea
 	return nil
 }
 
-// Close drops tracked per-connection state.
-func (d *driver) Close() error {
-	d.mu.Lock()
-	d.extLoaded = nil
-	d.mu.Unlock()
-	return nil
-}
+// Close has nothing to release: extensions, secrets and the catalog
+// belong to the DuckDB instance.
+func (d *driver) Close() error { return nil }

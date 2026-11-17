@@ -16,8 +16,8 @@ import (
 //
 //  1. cmd/sluice constructs one DataSource per DataSource YAML entry via
 //     the factory returned by Lookup(type).
-//  2. internal/executor calls Attach on each fresh *sql.Conn before
-//     locking the DuckDB connection configuration.
+//  2. internal/executor calls Attach once per DuckDB instance, on the
+//     first connection, before it locks the configuration.
 //  3. internal/datasource runs HealthCheck on a ticker.
 //  4. internal/schema calls Schema lazily, with a TTL cache.
 //  5. On shutdown, Close releases driver-level resources.
@@ -32,10 +32,12 @@ type DataSource interface {
 	// Readonly reports whether the data source is attached read-only.
 	Readonly() bool
 
-	// Attach installs the data source into the DuckDB connection. Drivers
-	// typically: load required extensions, install per-catalog secrets,
-	// and execute ATTACH. Attach may be called concurrently for distinct
-	// connections.
+	// Attach installs the data source into the DuckDB instance through
+	// conn. Drivers typically: load required extensions, install
+	// per-catalog secrets, and execute ATTACH. Extensions, secrets,
+	// settings and the attached catalog belong to the whole instance, not
+	// to conn, and stay for the life of the process. Attach runs once,
+	// so credentials are read once and a rotation needs a restart.
 	Attach(ctx context.Context, conn *sql.Conn, opts AttachOptions) error
 
 	// Schema returns the visible schemas, tables, and columns. Drivers may

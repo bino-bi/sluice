@@ -145,7 +145,7 @@ Same threat profile as REST plus: MCP errors are returned as `CallToolResult{IsE
 - Each driver validates identifiers against `[A-Za-z_][A-Za-z0-9_$]*` before interpolating catalog names into `CREATE SECRET` / `ATTACH` statements.
 - `CREATE OR REPLACE SECRET` uses a named secret + empty ATTACH URL so passwords never appear in DuckDB's query log.
 - The `s3` driver creates one view per `allowedPaths` entry and nothing else. A bare entry is put under `s3://<bucket>/`, and an entry in another bucket is refused at load. Query-time reads are limited to `s3://<bucket>/` by the external access carve-out (4.4) and the function gate (4.3).
-- `motherduck.SET motherduck_token` is connection-local; the token is released when the `*sql.Conn` returns to the pool.
+- Attach runs once per DuckDB instance, on the first connection, before the configuration lock. Extensions, secrets, `motherduck_token` and the attached catalogs stay on the instance for the life of the process. Credentials are read once at start, so a rotated secret needs a restart. `motherduck_token` has no scope, so the policy load refuses two `motherduck` sources with another `tokenRef`.
 
 ## 5. Attack surface inventory
 

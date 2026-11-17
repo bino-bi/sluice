@@ -3,11 +3,9 @@
 // Package motherduck attaches a MotherDuck database via DuckDB's
 // motherduck extension. The driver:
 //
-//   - INSTALL/LOAD motherduck on first Attach,
-//   - resolves tokenRef via the SecretResolver and sets it as the
-//     connection-local `motherduck_token` variable (scoped to the
-//     *sql.Conn; SET statements on a sibling connection see a clean
-//     state),
+//   - INSTALL/LOAD motherduck,
+//   - resolves tokenRef via the SecretResolver and sets
+//     `motherduck_token`, which holds for the whole DuckDB instance,
 //   - runs ATTACH 'md:<database>' AS <catalog> (TYPE MOTHERDUCK, READ_ONLY).
 //
 // MotherDuck is the one MVP driver that talks to a hosted service. The
