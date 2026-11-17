@@ -25,7 +25,7 @@ func (s *Server) registerTools() {
 	sdkmcp.AddTool(s.mcp,
 		&sdkmcp.Tool{
 			Name:        "execute_sql",
-			Description: "Execute a SELECT against attached catalogs, subject to Sluice policies.",
+			Description: "Execute a SELECT against attached catalogs, subject to Sluice policies. Placeholders such as $1 are not supported: write literal values into the SQL.",
 		},
 		s.toolExecuteSQL,
 	)
@@ -213,7 +213,7 @@ func (s *Server) toolExplainAccess(ctx context.Context, req *sdkmcp.CallToolRequ
 	user, _ := userFrom(ctx)
 	input := queryservice.ExplainInput{User: user, Facts: requestFacts(ctx, req), Origin: queryservice.OriginMCP}
 	if in.Table != "" {
-		ref, err := parseTableRef(in.Table)
+		ref, err := parser.ParseTableName(in.Table)
 		if err != nil {
 			return s.toolErrorResult(ctx, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())), ExplainAccessOutput{}, nil
 		}
@@ -327,8 +327,9 @@ func renderExplain(o ExplainAccessOutput) string {
 // ExecuteSQLArgs is the typed argument schema for execute_sql. The SDK
 // generates the JSON schema from this struct.
 type ExecuteSQLArgs struct {
-	SQL      string `json:"sql" jsonschema:"SQL SELECT statement"`
-	RowLimit int64  `json:"row_limit,omitempty" jsonschema:"maximum rows to return (1..100000)"`
+	SQL       string `json:"sql" jsonschema:"SQL SELECT statement"`
+	RowLimit  int64  `json:"row_limit,omitempty" jsonschema:"maximum rows to return (1..100000)"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty" jsonschema:"query timeout in milliseconds, capped by the server limit"`
 }
 
 // ExecuteSQLOutput is the structured output for execute_sql.
@@ -345,6 +346,7 @@ func (s *Server) toolExecuteSQL(ctx context.Context, req *sdkmcp.CallToolRequest
 	qreq := queryservice.QueryRequest{
 		SQL:     in.SQL,
 		MaxRows: in.RowLimit,
+		Timeout: time.Duration(in.TimeoutMS) * time.Millisecond,
 		Format:  executor.FormatJSON,
 		User:    user,
 		Facts:   requestFacts(ctx, req),
@@ -526,7 +528,7 @@ type ColumnMetaInfo struct {
 
 func (s *Server) toolDescribeTable(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeTableArgs) (*sdkmcp.CallToolResult, DescribeTableOutput, error) {
 	user, _ := userFrom(ctx)
-	ref, err := parseTableRef(in.Table)
+	ref, err := parser.ParseTableName(in.Table)
 	if err != nil {
 		return s.toolErrorResult(ctx, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error())),
 			DescribeTableOutput{}, nil
@@ -551,22 +553,6 @@ func (s *Server) toolDescribeTable(ctx context.Context, req *sdkmcp.CallToolRequ
 			&sdkmcp.TextContent{Text: fmt.Sprintf("%d column(s)", len(out.Columns))},
 		},
 	}, out, nil
-}
-
-// parseTableRef splits "catalog.schema.table" into components. Two-part
-// names are accepted as catalog.table with an empty schema.
-func parseTableRef(s string) (parser.TableRef, error) {
-	parts := strings.Split(s, ".")
-	switch len(parts) {
-	case 3:
-		return parser.TableRef{Catalog: parts[0], Schema: parts[1], Table: parts[2]}, nil
-	case 2:
-		return parser.TableRef{Catalog: parts[0], Table: parts[1]}, nil
-	case 1:
-		return parser.TableRef{Table: parts[0]}, nil
-	default:
-		return parser.TableRef{}, fmt.Errorf("expected catalog[.schema].table, got %q", s)
-	}
 }
 
 func qualified(t parser.TableRef) string {

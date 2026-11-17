@@ -31,7 +31,7 @@ func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "table query parameter required"))
 		return
 	}
-	ref, err := parseTableRef(table)
+	ref, err := parser.ParseTableName(table)
 	if err != nil {
 		s.writeAPIError(w, r, pkgerr.Newf(pkgerr.CodeSyntax, "%s", err.Error()))
 		return
@@ -64,24 +64,4 @@ func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
-}
-
-// parseTableRef splits "catalog.schema.table".
-func parseTableRef(s string) (parser.TableRef, error) {
-	parts := strings.Split(s, ".")
-	switch len(parts) {
-	case 3:
-		return parser.TableRef{Catalog: parts[0], Schema: parts[1], Table: parts[2]}, nil
-	case 2:
-		return parser.TableRef{Catalog: parts[0], Table: parts[1]}, nil
-	case 1:
-		return parser.TableRef{Table: parts[0]}, nil
-	}
-	return parser.TableRef{}, &parseTableRefError{input: s}
-}
-
-type parseTableRefError struct{ input string }
-
-func (e *parseTableRefError) Error() string {
-	return "invalid table reference: " + e.input
 }

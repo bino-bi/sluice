@@ -121,10 +121,10 @@ Without a `tls` block, a listener serves plain HTTP and logs a warning. The exam
 
 | Signal | Effect |
 |---|---|
-| `SIGTERM`, `SIGINT` | Sluice stops. REST requests get 10 seconds to finish, admin requests 5. |
-| `SIGHUP` | Sluice [reloads](hot-reload.md) the policy directory. |
+| `SIGTERM`, `SIGINT` | Sluice stops. REST and MCP requests get 10 seconds to finish, admin requests 5. Then Sluice cancels the requests that still run and waits for them, before it closes the audit log and DuckDB. |
+| `SIGHUP` | Sluice [reloads](hot-reload.md) the policy directory. `sluice mcp` too. |
 
-Exit status 1 means a start error, 2 a listener error.
+Exit status 1 means a start error, 2 a listener error. Requests that do not finish in time are not an error: the log shows `drain timed out`.
 
 ## DuckDB extensions
 

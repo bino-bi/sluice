@@ -105,7 +105,7 @@ data: {
         }
       },
       {
-        "description": "Execute a SELECT against attached catalogs, subject to Sluice policies.",
+        "description": "Execute a SELECT against attached catalogs, subject to Sluice policies. Placeholders such as $1 are not supported: write literal values into the SQL.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -116,6 +116,10 @@ data: {
             "row_limit": {
               "type": "integer",
               "description": "maximum rows to return (1..100000)"
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "description": "query timeout in milliseconds, capped by the server limit"
             }
           },
           "required": ["sql"],

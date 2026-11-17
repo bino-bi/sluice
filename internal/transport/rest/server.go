@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/bino-bi/sluice/internal/datasource"
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
+	"github.com/bino-bi/sluice/internal/transport/httpmw"
 	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 )
 
@@ -75,10 +75,10 @@ type Deps struct {
 	// the authenticated status poll. Nil disables those routes.
 	Approvals ApprovalGateway
 
-	// GlobalLimiter and PerIPLimiter bound /v1/query traffic ahead of
-	// identity resolution. Nil disables the respective bucket.
-	GlobalLimiter keyLimiter
-	PerIPLimiter  keyLimiter
+	// GlobalLimiter and PerIPLimiter bound every route that runs identity,
+	// ahead of identity resolution. Nil disables the respective bucket.
+	GlobalLimiter httpmw.Limiter
+	PerIPLimiter  httpmw.Limiter
 
 	// AuthFailed is called for a request that fails the login, with the
 	// client address and a fixed reason. Nil means no call.
@@ -100,10 +100,11 @@ type ApprovalGateway interface {
 // Server wraps an *http.Server with the chi-like routing and graceful
 // shutdown semantics transports share.
 type Server struct {
-	cfg  Config
-	deps Deps
-	srv  *http.Server
-	lg   *slog.Logger
+	cfg   Config
+	deps  Deps
+	srv   *http.Server
+	lg    *slog.Logger
+	drain *httpmw.Drain
 }
 
 // New constructs a Server but does not start listening. Call
@@ -114,15 +115,15 @@ func New(cfg Config, deps Deps) *Server {
 	if lg == nil {
 		lg = slog.Default()
 	}
-	s := &Server{cfg: cfg, deps: deps, lg: lg}
+	s := &Server{cfg: cfg, deps: deps, lg: lg, drain: httpmw.NewDrain()}
 	s.srv = &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           s.routes(),
+		Handler:           s.drain.Track(s.routes()),
 		ReadTimeout:       cfg.ReadTimeout,
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
 		IdleTimeout:       cfg.IdleTimeout,
-		BaseContext:       func(net.Listener) context.Context { return context.Background() },
+		BaseContext:       s.drain.BaseContext,
 	}
 	return s
 }
@@ -181,12 +182,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
-// Shutdown drains in-flight requests up to ShutdownTimeout, then forces
-// close. Safe to call more than once.
+// Shutdown drains in-flight requests up to ShutdownTimeout. Then it
+// cancels the requests that still run, closes the listener and returns
+// once their handlers did. A drain timeout is logged, not returned.
 func (s *Server) Shutdown(parent context.Context) error {
-	ctx, cancel := context.WithTimeout(parent, s.cfg.ShutdownTimeout)
-	defer cancel()
-	return s.srv.Shutdown(ctx)
+	s.drain.Shutdown(parent, s.srv, s.cfg.ShutdownTimeout, s.lg, "rest")
+	return nil
 }
 
 func applyDefaults(cfg *Config) {

@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/approval"
@@ -58,7 +60,7 @@ type runtimeDeps struct {
 	exec         *executor.Executor
 	parseExec    *executor.Executor
 	schemaCache  schema.Cache
-	policyEng    *policy.Engine      // YAML engine; also the admin snapshot source
+	policyEng    *policy.Engine      // YAML engine; the engine or a composite member
 	policyEngine policy.PolicyEngine // engine passed to queryservice (yaml or composite)
 	rewrite      *rewriter.Rewriter
 	auditDisp    *audit.Dispatcher
@@ -80,10 +82,13 @@ type runtimeDeps struct {
 	synth        *build.Service // nil without a synthetic data source
 	telShutdown  func(context.Context) error
 
-	// applyPolicies makes the policies active that the watcher prepared
-	// for the snapshot it is about to publish. The watcher holds its
-	// reload lock from Validate to the end of Publish.
-	applyPolicies func()
+	// mcpPinned is the credential of the stdio MCP transport of serve.
+	// Nil without one.
+	mcpPinned *pinnedCred
+
+	// refuseApprovals fails a reload that loads an ApprovalPolicy. Set by
+	// `sluice mcp`, which serves no approval link.
+	refuseApprovals bool
 
 	// globalLimiter and perIPLimiter are the buckets ahead of the login.
 	// REST and MCP over HTTP share them, so a client has one budget for
@@ -415,9 +420,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 	deps.rest = rest.New(restCfg, restDeps)
 
 	if scfg.MCP.Enabled {
-		pinned, err := resolveMCPPinnedUser(ctx, scfg, deps.resolver, deps.identifier, deps.log)
+		deps.mcpPinned, err = resolveMCPPinnedUser(ctx, scfg, deps.resolver, deps.identifier, deps.log)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
+		}
+		var pinned *identity.UserCtx
+		if deps.mcpPinned != nil {
+			pinned = deps.mcpPinned.user
 		}
 		deps.mcp, err = newMCPServer(deps, mcp.TransportMode(scfg.MCP.Transport), scfg.MCP.AllowAnonymous, pinned)
 		if err != nil {
@@ -435,30 +444,13 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		ModuleDir: scfg.Policies.OPA.ModuleDir,
 		Registry:  deps.registry,
 		Logger:    deps.log,
-		// Compile before publish, for every engine: a snapshot or a Rego
-		// module that an engine refuses must not reach the other
-		// subscribers (bindings, limits, budgets) or the gateway ends up
-		// half-applied. applyReload makes the prepared policies active.
-		Validate: func(ctx context.Context, snap *config.Snapshot) error {
-			// A ReBAC tokenRef is read while the engine prepares.
-			deps.resolver.Invalidate()
-			apply, err := deps.policyEngine.Prepare(ctx, snap)
-			if err != nil {
-				return err
-			}
-			deps.applyPolicies = apply
-			return nil
-		},
+		// All or nothing: policies of every engine, identity, limits and
+		// budgets are prepared before anything is published.
+		Validate: deps.prepareReload,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("config watcher: %w", err)
 	}
-	deps.registry.Subscribe(func(_ *config.Snapshot, cur *config.Snapshot) {
-		if cur == nil {
-			return
-		}
-		deps.applyReload(ctx, cur)
-	})
 
 	// 17. Synthetic builds. Only with a synthetic data source, so its
 	//     metrics exist only then.
@@ -506,7 +498,7 @@ func buildRuntime(ctx context.Context, serverCfgPath, policyDir string) (*runtim
 		deps.admin = admin.New(adminCfg, admin.Deps{
 			Service:   deps.service,
 			Approvals: adminPendingLister(deps.approvals),
-			Policies:  deps.policyEng,
+			Snapshots: deps.registry,
 			Sources:   deps.sourceReg,
 			Catalogs:  registryCatalogLister{r: deps.sourceReg},
 			Logger:    deps.log,
@@ -529,71 +521,96 @@ func (d *runtimeDeps) authFailed(origin string) func(remoteIP, reason string) {
 	}
 }
 
-// applyReload applies a published snapshot to every hot-swappable
-// component. Never fatal: each failure logs and keeps the previous state,
-// so a bad reload cannot take the gateway down. Nil guards on every dep
-// keep the method usable from minimal test fixtures.
-func (d *runtimeDeps) applyReload(ctx context.Context, cur *config.Snapshot) {
+// prepareReload does every step of a reload of snap that can fail and
+// returns the apply that swaps all parts in. A part that fails fails the
+// reload, so the gateway never runs on a mix of two snapshots and the
+// caller of the reload sees the error. Nil guards on every dep keep the
+// method usable from minimal test fixtures.
+func (d *runtimeDeps) prepareReload(ctx context.Context, snap *config.Snapshot) (config.Prepared, error) {
 	if d.resolver != nil {
-		// Invalidate cached secrets so rotated hashRef / hmacSecretRef
-		// URIs return the new value on resolve.
+		// Read rotated hashRef / hmacSecretRef / ReBAC tokenRef values
+		// again.
 		d.resolver.Invalidate()
 	}
-	// The watcher prepared the policies of this snapshot in Validate. A
-	// snapshot that reaches here from another publisher is compiled now.
-	if apply := d.applyPolicies; apply != nil {
-		d.applyPolicies = nil
-		apply()
-	} else if d.policyEngine != nil {
-		if err := d.policyEngine.ApplySnapshot(ctx, cur); err != nil {
-			d.log.Warn("reload: policy engine rejected snapshot",
-				slog.String("error", err.Error()))
+	if d.refuseApprovals && len(snap.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+		return config.Prepared{}, errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link")
+	}
+	var steps []func()
+	if d.policyEngine != nil {
+		apply, err := d.policyEngine.Prepare(ctx, snap)
+		if err != nil {
+			return config.Prepared{}, err
 		}
+		steps = append(steps, apply)
 	}
 	if d.apikey != nil {
-		bindings, err := buildAPIKeyBindings(ctx, d.resolver, cur, d.log)
+		bindings, err := buildAPIKeyBindings(ctx, d.resolver, snap, d.log)
 		if err != nil {
-			d.log.Warn("reload: api-key bindings build failed",
-				slog.String("error", err.Error()))
-		} else {
-			d.apikey.SetBindings(bindings)
+			return config.Prepared{}, fmt.Errorf("api-key bindings: %w", err)
 		}
+		steps = append(steps, func() { d.apikey.SetBindings(bindings) })
 	}
 	if d.jwtID != nil && d.jwtBindings != nil {
-		// Secrets resolve before Apply so a resolution failure never
-		// half-applies; the swap order leaves at most a brief window of
-		// new bindings with old secrets, never the reverse.
-		hmac, err := buildHMACSecrets(ctx, d.resolver, cur)
+		hmac, err := buildHMACSecrets(ctx, d.resolver, snap)
 		if err != nil {
-			d.log.Warn("reload: hmac secret resolve failed; keeping previous jwt bindings",
-				slog.String("error", err.Error()))
-		} else if err := d.jwtBindings.Apply(derefBindings(cur.SubjectBindings)); err != nil {
-			d.log.Warn("reload: jwt bindings rejected; keeping previous",
-				slog.String("error", err.Error()))
-		} else {
-			d.jwtID.SetHMACSecrets(hmac)
+			return config.Prepared{}, fmt.Errorf("jwt bindings: %w", err)
 		}
+		applyBindings, err := d.jwtBindings.Prepare(derefBindings(snap.SubjectBindings))
+		if err != nil {
+			return config.Prepared{}, fmt.Errorf("jwt bindings: %w", err)
+		}
+		// Bindings first: at most a brief window of new bindings with old
+		// secrets, never the reverse.
+		steps = append(steps, applyBindings, func() { d.jwtID.SetHMACSecrets(hmac) })
 	}
 	if d.rateLimiter != nil {
-		bySub, byIss := buildRateSpecs(cur)
-		d.rateLimiter.SetSpecs(bySub, byIss)
+		bySub, byIss := buildRateSpecs(snap)
+		steps = append(steps, func() { d.rateLimiter.SetSpecs(bySub, byIss) })
 	}
 	if d.budget != nil {
-		d.budget.SetSpecs(buildBudgetSpecs(cur))
+		bySub, byIss := buildBudgetSpecs(snap)
+		steps = append(steps, func() { d.budget.SetSpecs(bySub, byIss) })
 	}
 	if d.rewriteCache != nil {
-		d.rewriteCache.Purge()
-	}
-	// ApprovalPolicies added on reload without a configured public base
-	// URL cannot be honoured (the broker was not built). Fail-closed:
-	// queries will pend and expire; log loudly.
-	if d.approvals == nil && len(cur.ByKind[apitypes.KindApprovalPolicy]) > 0 {
-		d.log.Error("reload added ApprovalPolicies but no approval broker is configured; " +
-			"set approval.publicBaseUrl and restart — matching queries will pend and expire")
+		steps = append(steps, d.rewriteCache.Purge)
 	}
 	if d.schemaCache != nil {
-		d.schemaCache.InvalidateAll()
+		steps = append(steps, d.schemaCache.InvalidateAll)
 	}
+
+	var warnings []string
+	// Data sources are attached once at start.
+	if d.snapshot != nil && dataSourcesChanged(d.snapshot.DataSources, snap.DataSources) {
+		warnings = append(warnings, "restart needed: data sources changed")
+	}
+	// The broker exists only when approval.publicBaseUrl was set at start.
+	// Matching queries fail with ERR_INTERNAL.
+	if d.approvals == nil && len(snap.ByKind[apitypes.KindApprovalPolicy]) > 0 {
+		warnings = append(warnings, "restart needed: ApprovalPolicies need approval.publicBaseUrl")
+	}
+	return config.Prepared{
+		Apply: func() {
+			for _, step := range steps {
+				step()
+			}
+		},
+		Warnings: warnings,
+	}, nil
+}
+
+// dataSourcesChanged reports whether next declares other data sources
+// than running, by name and content.
+func dataSourcesChanged(running, next []*apitypes.DataSource) bool {
+	index := func(list []*apitypes.DataSource) map[string]*apitypes.DataSource {
+		out := make(map[string]*apitypes.DataSource, len(list))
+		for _, ds := range list {
+			if ds != nil {
+				out[ds.Metadata.Name] = ds
+			}
+		}
+		return out
+	}
+	return !reflect.DeepEqual(index(running), index(next))
 }
 
 // auditTailer adapts the concrete file sink to the admin.AuditTailer
@@ -647,10 +664,10 @@ func reloaderFromWatcher(w *config.Watcher) admin.Reloader {
 	return reloaderFunc(w.Reload)
 }
 
-type reloaderFunc func(ctx context.Context) error
+type reloaderFunc func(ctx context.Context) ([]string, error)
 
 // Reload implements admin.Reloader.
-func (f reloaderFunc) Reload(ctx context.Context) error { return f(ctx) }
+func (f reloaderFunc) Reload(ctx context.Context) ([]string, error) { return f(ctx) }
 
 // Close releases every resource in reverse construction order. Safe to
 // call on a partial graph — missing components are skipped.

@@ -64,9 +64,16 @@ Approvals:
   This command serves no approval link, so it does not start when an
   ApprovalPolicy is loaded. Run "sluice serve" with mcp.enabled instead.
 
+Reload:
+  SIGHUP and, with policies.reload, a changed file reload the policy
+  directory as in "sluice serve". After each reload the stdio credential
+  is checked again. When it no longer resolves to the same identity (a
+  removed key, an expired JWT), the command stops with exit code 1. A
+  reload that adds an ApprovalPolicy fails.
+
 Exit codes:
   0  clean shutdown
-  1  startup / auth failure`,
+  1  startup / auth failure, or a credential a reload made invalid`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode, err := mcp.ParseTransport(transport)
 			if err != nil {
@@ -95,6 +102,9 @@ Exit codes:
 				return &exitError{Code: 1, Err: errors.New("an ApprovalPolicy is loaded, and `sluice mcp` serves no approval link: run `sluice serve` with mcp.enabled instead")}
 			}
 
+			runCtx, cancel := context.WithCancelCause(ctx)
+			defer cancel(nil)
+
 			// For stdio, resolve the static credential into a pinned identity
 			// now. For HTTP, the auth middleware runs per request instead.
 			var pinned *identity.UserCtx
@@ -110,6 +120,7 @@ Exit codes:
 						return &exitError{Code: 1, Err: fmt.Errorf("authenticate static credential: %w", err)}
 					}
 					pinned = u
+					recheckPinned(deps, &pinnedCred{user: u, jwt: token, apiKey: apiKey}, cancel)
 					deps.log.Info("mcp: authenticated static identity", "subject", u.Subject, "issuer", u.Issuer)
 				case allowAnon:
 					deps.log.Warn("mcp: running anonymous — every query is default-denied unless a policy grants the anonymous subject")
@@ -122,7 +133,13 @@ Exit codes:
 			if err != nil {
 				return &exitError{Code: 1, Err: err}
 			}
-			if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			deps.refuseApprovals = true
+			startReloads(runCtx, deps)
+			err = srv.Run(runCtx)
+			if cause := context.Cause(runCtx); errors.Is(cause, errPinnedIdentity) {
+				return &exitError{Code: 1, Err: cause}
+			}
+			if err != nil && !errors.Is(err, context.Canceled) {
 				return &exitError{Code: 1, Err: err}
 			}
 			return nil
@@ -178,7 +195,7 @@ func newMCPServer(deps *runtimeDeps, transport mcp.TransportMode, allowAnon bool
 // (nil, nil) for streamable_http (per-request auth) and for allowAnonymous
 // without refs (with a loud warning). No credential and no allowAnonymous
 // is an error — defense-in-depth behind ServerConfig.Validate.
-func resolveMCPPinnedUser(ctx context.Context, scfg *config.ServerConfig, r *secrets.Resolver, id identity.Identifier, log *slog.Logger) (*identity.UserCtx, error) {
+func resolveMCPPinnedUser(ctx context.Context, scfg *config.ServerConfig, r *secrets.Resolver, id identity.Identifier, log *slog.Logger) (*pinnedCred, error) {
 	switch scfg.MCP.Transport {
 	case "", "stdio":
 	default:
@@ -199,7 +216,7 @@ func resolveMCPPinnedUser(ctx context.Context, scfg *config.ServerConfig, r *sec
 			return nil, fmt.Errorf("authenticate static credential: %w", err)
 		}
 		log.Info("mcp: authenticated static identity", "subject", u.Subject, "issuer", u.Issuer)
-		return u, nil
+		return &pinnedCred{user: u, jwt: token, apiKey: apiKey}, nil
 	case scfg.MCP.AllowAnonymous:
 		log.Warn("mcp: running anonymous — every query is default-denied unless a policy grants the anonymous subject")
 		return nil, nil

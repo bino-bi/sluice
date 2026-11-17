@@ -216,12 +216,7 @@ func sqlHashHex(sql string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func subjectKeyOf(u *identity.UserCtx) string {
-	if u == nil {
-		return "\x00anonymous"
-	}
-	return u.Issuer + "\x00" + u.Subject
-}
+func subjectKeyOf(u *identity.UserCtx) string { return approval.UserSubjectKey(u) }
 
 func approvalSubject(u *identity.UserCtx) approval.Subject {
 	if u == nil {

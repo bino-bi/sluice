@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/bino-bi/sluice/internal/audit"
+	"github.com/bino-bi/sluice/internal/config"
 	"github.com/bino-bi/sluice/internal/executor"
 	"github.com/bino-bi/sluice/internal/parser"
 	"github.com/bino-bi/sluice/internal/policy"
@@ -223,11 +224,59 @@ func TestHandleReload_NotWired501(t *testing.T) {
 }
 
 type fakeReloader struct {
-	called int
-	err    error
+	called   int
+	warnings []string
+	err      error
 }
 
-func (f *fakeReloader) Reload(context.Context) error { f.called++; return f.err }
+func (f *fakeReloader) Reload(context.Context) ([]string, error) {
+	f.called++
+	return f.warnings, f.err
+}
+
+// A reload that applied, but not all of the files, says so.
+func TestHandleReload_Warnings(t *testing.T) {
+	t.Parallel()
+	rl := &fakeReloader{warnings: []string{"restart needed: data sources changed"}}
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{Reloader: rl})
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/admin/reload", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"warnings":["restart needed: data sources changed"]`) {
+		t.Fatalf("status %d body %s, want 200 with the warning", w.Code, w.Body.String())
+	}
+}
+
+// Version, digest and the policy list come from the published snapshot,
+// not from the YAML engine, so they work with every engine.
+func TestSnapshotFromRegistry(t *testing.T) {
+	t.Parallel()
+	reg := config.NewRegistry()
+	reg.Publish(&config.Snapshot{
+		Digest: "d1",
+		Policies: []pkgapi.Object{
+			&pkgapi.SQLAccessPolicy{Metadata: pkgapi.ObjectMeta{Name: "low", Priority: 10}},
+			&pkgapi.SQLAccessPolicy{Metadata: pkgapi.ObjectMeta{Name: "high", Priority: 90},
+				Spec: pkgapi.SQLAccessSpec{EnforcementMode: pkgapi.EnforcementAudit}},
+			&pkgapi.DataSource{Metadata: pkgapi.ObjectMeta{Name: "pg"}},
+		},
+	})
+	srv := admin.New(admin.Config{Listen: ":0", Enabled: true}, admin.Deps{Snapshots: reg})
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	if body := get("/admin/healthz"); !strings.Contains(body, `"config_digest":"d1"`) || !strings.Contains(body, `"config_version":1`) {
+		t.Errorf("healthz = %s, want digest d1 and version 1", body)
+	}
+	want := `"policies":{"SqlAccessPolicy":[{"name":"high","priority":90,"enforcement":"Audit"},{"name":"low","priority":10,"enforcement":"Enforce"}]}`
+	if body := get("/admin/policies"); !strings.Contains(body, want) {
+		t.Errorf("policies = %s, want %s", body, want)
+	}
+}
 
 func TestHandleReload_Wired200(t *testing.T) {
 	t.Parallel()

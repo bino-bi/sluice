@@ -99,7 +99,7 @@ spec:
 	}
 
 	// No Start() was called: this is the manual (SIGHUP / admin) path.
-	if err := deps.watcher.Reload(ctx); err != nil {
+	if _, err := deps.watcher.Reload(ctx); err != nil {
 		t.Fatalf("manual reload: %v", err)
 	}
 	after := deps.registry.Current().Digest
@@ -175,7 +175,7 @@ spec:
 	if err := os.WriteFile(module, []byte("package sluice\nmain := {\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := deps.watcher.Reload(ctx); !errors.Is(err, policy.ErrSnapshotInvalid) {
+	if _, err := deps.watcher.Reload(ctx); !errors.Is(err, policy.ErrSnapshotInvalid) {
 		t.Fatalf("reload with a broken module: err = %v, want ErrSnapshotInvalid", err)
 	}
 	if got := deps.registry.Current().Version; got != published {
@@ -189,7 +189,7 @@ spec:
 	if err := os.WriteFile(module, []byte(goodModule), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := deps.watcher.Reload(ctx); err != nil {
+	if _, err := deps.watcher.Reload(ctx); err != nil {
 		t.Fatalf("reload with the repaired module: %v", err)
 	}
 	// The engine carries the published version: the policy cache keys on

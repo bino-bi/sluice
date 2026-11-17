@@ -16,6 +16,7 @@ import (
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/queryservice"
 	"github.com/bino-bi/sluice/internal/telemetry"
+	"github.com/bino-bi/sluice/internal/transport/httpmw"
 	"github.com/bino-bi/sluice/internal/transport/tlsutil"
 	"github.com/bino-bi/sluice/internal/version"
 )
@@ -95,8 +96,8 @@ type Deps struct {
 	// ahead of identity resolution. The composition root passes the
 	// buckets of the REST transport, so a client has one budget for both
 	// listeners. Nil disables the respective bucket.
-	GlobalLimiter keyLimiter
-	PerIPLimiter  keyLimiter
+	GlobalLimiter httpmw.Limiter
+	PerIPLimiter  httpmw.Limiter
 
 	// AuthFailed is called for a Streamable HTTP request that fails the
 	// login, with the client address and a fixed reason. Nil means no
@@ -106,13 +107,21 @@ type Deps struct {
 
 // Server wraps sdkmcp.Server and optional HTTP listener.
 type Server struct {
-	cfg  Config
-	deps Deps
-	mcp  *sdkmcp.Server
-	http *http.Server
-	tls  *tls.Config
-	lg   *slog.Logger
+	cfg   Config
+	deps  Deps
+	mcp   *sdkmcp.Server
+	http  *http.Server
+	tls   *tls.Config
+	lg    *slog.Logger
+	drain *httpmw.Drain
 }
+
+// maxBodyBytes caps a Streamable HTTP request body, as on REST. The SDK
+// reads the whole body into memory.
+const maxBodyBytes = 1 << 20
+
+// shutdownTimeout bounds the drain of the Streamable HTTP listener.
+const shutdownTimeout = 10 * time.Second
 
 // New constructs and configures the MCP server with the four MVP tools.
 // Call Run to start serving.
@@ -128,6 +137,10 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	// net/http binds port 80 on every interface for an empty address.
 	if cfg.Transport == TransportStreamableHTTP && cfg.HTTPListen == "" {
 		return nil, errors.New("mcp: the streamable_http transport needs mcp.listen")
+	}
+	// Every HTTP request is authenticated; there is nothing to fall back to.
+	if cfg.Transport == TransportStreamableHTTP && deps.Identifier == nil {
+		return nil, errors.New("mcp: Deps.Identifier is required for the streamable_http transport")
 	}
 	if cfg.SessionIdleMax <= 0 {
 		cfg.SessionIdleMax = 10 * time.Minute
@@ -148,7 +161,7 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		Version: version.Current().Version,
 	}
 	srv := sdkmcp.NewServer(impl, nil)
-	s := &Server{cfg: cfg, deps: deps, mcp: srv, lg: lg}
+	s := &Server{cfg: cfg, deps: deps, mcp: srv, lg: lg, drain: httpmw.NewDrain()}
 	// Read the TLS files now: an error then stops the start before any
 	// other listener runs.
 	if cfg.Transport == TransportStreamableHTTP && cfg.TLS != nil {
@@ -175,13 +188,15 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// Shutdown terminates the Streamable HTTP server if one is running. Stdio
-// closes implicitly when Run returns.
+// Shutdown drains the Streamable HTTP server if one is running, then
+// cancels the requests that are left. Stdio closes implicitly when Run
+// returns.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.http == nil {
 		return nil
 	}
-	return s.http.Shutdown(ctx)
+	s.drain.Shutdown(ctx, s.http, shutdownTimeout, s.lg, "mcp")
+	return nil
 }
 
 func (s *Server) runStdio(ctx context.Context) error {
@@ -227,12 +242,15 @@ func (s *Server) httpHandler() http.Handler {
 	// Authenticate every HTTP request before it reaches the SDK handler:
 	// an expired or revoked credential gets 401, not an anonymous call.
 	// The rate limit runs first, so a flood costs no login.
-	mux.Handle("/", s.rateLimitMW(s.authMiddleware(withRequestCtx(handler))))
+	limit := httpmw.RateLimit(s.deps.PerIPLimiter, s.deps.GlobalLimiter, s.denyRateLimited)
+	mux.Handle("/", limit(s.authMiddleware(withRequestCtx(handler))))
 
 	var h http.Handler = mux
 	if s.cfg.Tracing {
 		h = telemetry.HTTPMiddleware("mcp")(h)
 	}
+	h = httpmw.Recover("mcp", s.lg, writeInternalError)(h)
+	h = httpmw.BodyCap(maxBodyBytes)(h)
 	return h
 }
 
@@ -271,7 +289,8 @@ func cancelWithRequest(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 func (s *Server) runStreamable(ctx context.Context) error {
 	s.http = &http.Server{
 		Addr:              s.cfg.HTTPListen,
-		Handler:           s.httpHandler(),
+		Handler:           s.drain.Track(s.httpHandler()),
+		BaseContext:       s.drain.BaseContext,
 		ReadTimeout:       s.cfg.ReadTimeout,
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
 		WriteTimeout:      s.cfg.WriteTimeout,
@@ -301,8 +320,7 @@ func (s *Server) runStreamable(ctx context.Context) error {
 		}
 		return nil
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return s.http.Shutdown(shutdownCtx)
+		s.drain.Shutdown(context.Background(), s.http, shutdownTimeout, s.lg, "mcp")
+		return nil
 	}
 }

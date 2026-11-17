@@ -4,14 +4,12 @@ package rest
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/bino-bi/sluice/internal/identity"
 	"github.com/bino-bi/sluice/internal/telemetry"
+	"github.com/bino-bi/sluice/internal/transport/httpmw"
 )
 
 // routes composes the HTTP handler: middleware stack + route table. The
@@ -30,11 +28,13 @@ func (s *Server) routes() http.Handler {
 		Logger:     s.lg,
 		OnFailure:  s.deps.AuthFailed,
 	})
-	// The transport-level rate buckets run before identity so a flood
-	// cannot exhaust JWKS fetches / key hashing; health and approval
-	// capability endpoints stay unlimited (probes must not 429).
-	mux.Handle("POST /v1/query", s.rateLimitMW(authMW(http.HandlerFunc(s.handleQuery))))
-	mux.Handle("POST /v1/sample", s.rateLimitMW(authMW(http.HandlerFunc(s.handleSample))))
+	// The transport-level rate buckets run before identity on every route
+	// that runs it, so a flood cannot exhaust JWKS fetches / key hashing;
+	// health and approval capability endpoints stay unlimited (probes
+	// must not 429).
+	limit := httpmw.RateLimit(s.deps.PerIPLimiter, s.deps.GlobalLimiter, s.denyRateLimited)
+	mux.Handle("POST /v1/query", limit(authMW(http.HandlerFunc(s.handleQuery))))
+	mux.Handle("POST /v1/sample", limit(authMW(http.HandlerFunc(s.handleSample))))
 
 	// Approval capability endpoints. Accept/reject are PUBLIC — the
 	// capability token in the request IS the authorisation, so no identity
@@ -47,7 +47,7 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("POST /v1/approvals/{id}/accept", s.handleApprovalDecision(true))
 		mux.HandleFunc("GET /v1/approvals/{id}/reject", handleApprovalPage(false))
 		mux.HandleFunc("POST /v1/approvals/{id}/reject", s.handleApprovalDecision(false))
-		mux.Handle("GET /v1/approvals/{id}", authMW(http.HandlerFunc(s.handleApprovalStatus)))
+		mux.Handle("GET /v1/approvals/{id}", limit(authMW(http.HandlerFunc(s.handleApprovalStatus))))
 	}
 
 	// Outermost wrapping: request-id → body-cap → timeout → panic
@@ -59,85 +59,16 @@ func (s *Server) routes() http.Handler {
 	if s.cfg.Tracing {
 		h = telemetry.HTTPMiddleware("rest")(h)
 	}
-	h = s.panicRecovery(h)
-	h = s.requestTimeout(h)
-	h = s.bodyCap(h)
-	h = s.requestID(h)
+	h = httpmw.Recover("rest", s.lg, writeInternalError)(h)
+	h = httpmw.Timeout(s.cfg.RequestTimeout)(h)
+	h = httpmw.BodyCap(s.cfg.MaxBodyBytes)(h)
+	h = httpmw.RequestID("X-Request-Id")(h)
 	return h
 }
 
-// requestID attaches an X-Request-Id response header and a ULID-ish token
-// for logs. Kept alongside tracing: the id is echoed in responses, while
-// the otel trace id lives in the span.
-func (s *Server) requestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get("X-Request-Id")
-		if rid == "" {
-			rid = newRequestID()
-		}
-		w.Header().Set("X-Request-Id", rid)
-		ctx := context.WithValue(r.Context(), requestIDKey{}, rid)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// bodyCap rejects oversized bodies early so the transport never allocates
-// more than Config.MaxBodyBytes regardless of the handler.
-func (s *Server) bodyCap(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil && r.ContentLength != 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// requestTimeout caps the entire handler chain at Config.RequestTimeout.
-// We use context deadlines rather than http.TimeoutHandler so streaming
-// renderers can flush partial output before cancellation.
-func (s *Server) requestTimeout(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
-		defer cancel()
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// panicRecovery logs the panic and returns ERR_INTERNAL. Without this a
-// panic in a handler would reset the connection and leak the stack trace.
-func (s *Server) panicRecovery(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-					// A deliberate abort of a started response.
-					panic(rec)
-				}
-				s.lg.ErrorContext(r.Context(), "rest: panic recovered",
-					"path", r.URL.Path,
-					"recover", rec,
-				)
-				writeInternalError(w)
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
-}
-
-// newRequestID returns a short random hex token.
-func newRequestID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-// requestIDKey keys the request ID on the context.
-type requestIDKey struct{}
-
 // RequestIDFromContext returns the request ID attached by the middleware.
 func RequestIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(requestIDKey{}).(string)
-	return v
+	return httpmw.RequestIDFromContext(ctx)
 }
 
 // acceptHeader returns the inspected Accept header with whitespace trimmed.

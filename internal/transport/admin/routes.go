@@ -3,15 +3,15 @@
 package admin
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 
 	"github.com/bino-bi/sluice/internal/telemetry"
+	"github.com/bino-bi/sluice/internal/transport/httpmw"
 )
 
 // routes composes the admin router. Every protected handler lives behind
-// adminAuth. Middleware order: request-id → body cap → auth → handler.
+// adminAuth. Middleware order: request-id → body cap → panic recovery →
+// auth → handler.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -29,33 +29,15 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /metrics", s.adminAuth(telemetry.MetricsHandler()))
 
 	var h http.Handler = mux
-	h = s.bodyCap(h)
-	h = s.requestID(h)
+	h = httpmw.Recover("admin", s.lg, writeInternalError)(h)
+	h = httpmw.BodyCap(s.cfg.MaxBodyBytes)(h)
+	h = httpmw.RequestID("X-Admin-Request-Id")(h)
 	return h
 }
 
-func (s *Server) requestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get("X-Admin-Request-Id")
-		if rid == "" {
-			rid = newRequestID()
-		}
-		w.Header().Set("X-Admin-Request-Id", rid)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) bodyCap(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil && r.ContentLength != 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func newRequestID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+// writeInternalError is the response to a recovered panic.
+func writeInternalError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	_, _ = w.Write([]byte(`{"code":"ERR_INTERNAL","message":"internal error"}`))
 }

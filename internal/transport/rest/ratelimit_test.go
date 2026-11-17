@@ -144,3 +144,25 @@ func TestRateLimit_RefusedRequestReportsNoFailedLogin(t *testing.T) {
 		t.Errorf("failed logins reported = %d, want 1", calls)
 	}
 }
+
+// The approval status poll runs identity, so the buckets must sit in
+// front of it as on /v1/query.
+func TestApprovalStatus_RateLimitedBeforeIdentity(t *testing.T) {
+	t.Parallel()
+	id := &countingIdentifier{}
+	srv := rest.New(rest.Config{Listen: ":0"}, rest.Deps{
+		Identifier:    id,
+		Approvals:     &gwBroker{},
+		GlobalLimiter: ratelimit.NewKeyed(ratelimit.Spec{RPS: 1, Burst: 1}, 1, func() time.Time { return time.Unix(0, 0) }),
+	})
+	for i, want := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/approvals/apr_1", nil))
+		if w.Code != want {
+			t.Fatalf("request %d: got %d want %d", i+1, w.Code, want)
+		}
+	}
+	if id.calls != 1 {
+		t.Fatalf("identifier calls: got %d want 1", id.calls)
+	}
+}

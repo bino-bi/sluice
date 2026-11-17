@@ -11,8 +11,9 @@ import (
 )
 
 type reloadResponse struct {
-	Ok     bool   `json:"ok"`
-	Digest string `json:"digest,omitempty"`
+	Ok       bool     `json:"ok"`
+	Digest   string   `json:"digest,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // handleReload triggers a config reload when a Reloader is wired. 501
@@ -24,7 +25,8 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"ERR_INTERNAL","message":"reload not enabled"}`))
 		return
 	}
-	if err := s.deps.Reloader.Reload(r.Context()); err != nil {
+	warnings, err := s.deps.Reloader.Reload(r.Context())
+	if err != nil {
 		// Policy-document failures get their own code so callers can
 		// tell "fix the policy file" apart from a broken config load.
 		code := pkgerr.CodeConfigInvalid
@@ -34,9 +36,9 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, pkgerr.Wrap(code, err))
 		return
 	}
-	resp := reloadResponse{Ok: true}
-	if s.deps.Policies != nil {
-		if snap := s.deps.Policies.Snapshot(); snap != nil {
+	resp := reloadResponse{Ok: true, Warnings: warnings}
+	if s.deps.Snapshots != nil {
+		if snap := s.deps.Snapshots.Current(); snap != nil {
 			resp.Digest = snap.Digest
 		}
 	}

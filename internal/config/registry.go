@@ -54,13 +54,21 @@ func (r *Registry) Subscribe(fn Subscriber) (unsubscribe func()) {
 // previous snapshot is passed to each subscriber as old (nil on first call).
 // Publish assigns an increasing Version so downstream components can detect
 // out-of-order or replayed snapshots.
-func (r *Registry) Publish(next *Snapshot) {
+func (r *Registry) Publish(next *Snapshot) { r.PublishWith(next, nil) }
+
+// PublishWith is Publish with apply run after next got its Version and
+// before Current returns it. A caller uses it to make the state it
+// prepared for next active, so that version and state move together.
+func (r *Registry) PublishWith(next *Snapshot, apply func()) {
 	r.mu.Lock()
 	r.version++
 	next.Version = r.version
 	subsCopy := append([]subscription(nil), r.subs...)
 	r.mu.Unlock()
 
+	if apply != nil {
+		apply()
+	}
 	old := r.current.Swap(next)
 
 	for _, s := range subsCopy {
