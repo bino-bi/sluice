@@ -91,3 +91,31 @@ approval:
 		t.Error("mcp runtime accepts a reload with an ApprovalPolicy")
 	}
 }
+
+// Without approval.publicBaseUrl `sluice mcp` names the real cause too,
+// not the missing base URL of a broker it does not build.
+func TestBuildRuntimeFor_MCPRefusesApprovalPoliciesWithoutBaseURL(t *testing.T) {
+	if !parserbackend.Implemented {
+		t.Skip("buildRuntime refuses the stub parser backend (-tags=pure_parser)")
+	}
+	cfg, policyDir := stageTestConfig(t, filepath.Join(t.TempDir(), "audit"), "")
+	const policyYAML = `
+apiVersion: sluice.bino.bi/v1alpha1
+kind: ApprovalPolicy
+metadata: { name: approve-pii-reads, priority: 100 }
+spec:
+  match:
+    any:
+      - resources: { tables: [people] }
+  when:
+    columnsAccessed: ["ssn"]
+  reason: "needs a data steward"
+`
+	if err := os.WriteFile(filepath.Join(policyDir, "approval.yaml"), []byte(policyYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := buildRuntimeFor(context.Background(), runMCP, cfg, policyDir)
+	if err == nil || !strings.Contains(err.Error(), "serves no approval link") {
+		t.Fatalf("err = %v, want the refusal of sluice mcp", err)
+	}
+}

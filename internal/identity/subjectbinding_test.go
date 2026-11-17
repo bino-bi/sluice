@@ -123,7 +123,7 @@ func TestAPIKeyBindings(t *testing.T) {
 }
 
 // TestAPIKeyBindings_SkipsBadRef exercises the "one rotated-out key
-// should not blank the table" invariant — a bindings list with one good
+// should not blank the table" invariant: a bindings list with one good
 // and one broken entry returns the good entry and logs a warning for
 // the bad one, without surfacing an error.
 func TestAPIKeyBindings_SkipsBadRef(t *testing.T) {
