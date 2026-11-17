@@ -188,7 +188,7 @@ func jitterDecimal(value any, k float64) (any, bool) {
 		return nil, false
 	}
 	j := jitterBig(n, k)
-	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(width.Uint())), nil)
+	limit := new(big.Int).Exp(big.NewInt(10), new(big.Int).SetUint64(width.Uint()), nil)
 	limit.Sub(limit, big.NewInt(1))
 	if j.CmpAbs(limit) > 0 {
 		j.Set(limit)
